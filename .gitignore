@@ -40,4 +40,4 @@ tmp/
 temp/
 
 # Application specific
-ccdash
+/ccdash

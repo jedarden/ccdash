@@ -1,36 +1,72 @@
-# ccdash
+# 📊 ccdash
 
-Version: **0.1.0**
+**Version:** `0.1.4`
 
-A lightweight TUI (Terminal User Interface) dashboard for monitoring system resources, Claude Code token usage, and tmux sessions.
+> A lightweight TUI (Terminal User Interface) dashboard for monitoring system resources, Claude Code token usage, and tmux sessions.
 
-## What is ccdash?
+---
 
-ccdash is a real-time dashboard application that provides:
+## 🎯 What is ccdash?
 
-- **System Resource Monitoring**: Track CPU usage, memory consumption, disk space, and network activity
-- **Claude Code Token Tracking**: Monitor token usage across your Claude Code projects by reading from `~/.claude/projects`
-- **Tmux Session Management**: View active tmux sessions and their status (optional, works without tmux)
+**ccdash** is a real-time dashboard application that provides:
 
-All in a beautiful, terminal-based interface built with Bubble Tea.
+- 🖥️ **System Resource Monitoring** - Track CPU usage, memory consumption, disk space, and network activity
+- 🤖 **Claude Code Token Tracking** - Monitor token usage across your Claude Code projects by reading from `~/.claude/projects`
+- 🪟 **Tmux Session Management** - View active tmux sessions and their status (optional, works without tmux)
 
-## Key Features
+All in a beautiful, terminal-based interface built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-- Real-time system metrics display
-- Token usage analytics from Claude Code projects
-- Tmux session monitoring (when available)
-- Lightweight and fast - minimal system overhead
-- Beautiful TUI with clean, organized layout
-- Keyboard-driven navigation
-- No external dependencies beyond Go and optional tmux
+---
 
-## Requirements
+## ✨ Key Features
 
-- **Go 1.21 or higher**
-- **~/.claude/projects directory** (for Claude Code token tracking)
-- **tmux** (optional, for session monitoring features)
+- ⚡ Real-time system metrics display
+- 📈 Token usage analytics from Claude Code projects
+- 🔄 Tmux session monitoring (when available)
+- 🪶 Lightweight and fast - minimal system overhead
+- 🎨 Beautiful TUI with clean, organized layout
+- ⌨️ Keyboard-driven navigation
+- 📦 No external dependencies beyond Go and optional tmux
 
-## Installation
+---
+
+## 📋 Requirements
+
+- **Go 1.21 or higher** 🔧
+- **`~/.claude/projects` directory** (for Claude Code token tracking) 📂
+- **tmux** (optional, for session monitoring features) 🪟
+
+---
+
+## 🚀 Installation
+
+### Pre-built Binary (Recommended)
+
+Download the latest release from the [releases page](https://github.com/jedarden/ccdash/releases):
+
+```bash
+# Download the latest release (Linux example)
+curl -LO https://github.com/jedarden/ccdash/releases/download/v0.1.4/ccdash-linux-amd64
+curl -LO https://github.com/jedarden/ccdash/releases/download/v0.1.4/ccdash-linux-amd64.sha256
+
+# Verify the checksum
+sha256sum -c ccdash-linux-amd64.sha256
+
+# Make it executable
+chmod +x ccdash-linux-amd64
+
+# Move to your PATH (optional)
+sudo mv ccdash-linux-amd64 /usr/local/bin/ccdash
+
+# Run it
+ccdash
+```
+
+### Using Go Install
+
+```bash
+go install github.com/jedarden/ccdash/cmd/ccdash@latest
+```
 
 ### From Source
 
@@ -43,12 +79,6 @@ cd ccdash
 make install
 ```
 
-### Using Go Install
-
-```bash
-go install github.com/jedarden/ccdash/cmd/ccdash@latest
-```
-
 ### Manual Build
 
 ```bash
@@ -59,7 +89,9 @@ make build
 ./bin/ccdash
 ```
 
-## Usage
+---
+
+## 💻 Usage
 
 Simply run the application:
 
@@ -67,14 +99,30 @@ Simply run the application:
 ccdash
 ```
 
-### Keyboard Controls
+### ⌨️ Keyboard Controls
 
-- `q` or `Ctrl+C` - Quit
-- `r` - Refresh metrics
-- `Tab` - Switch between panels
-- Arrow keys - Navigate within panels
+| Key | Action |
+|-----|--------|
+| `q` or `Ctrl+C` | Quit the application |
+| `r` | Refresh metrics immediately |
+| `h` | Cycle through help mode (explains each panel) |
 
-## Development
+### 🎨 Display Features
+
+- **Smart Layout**: Automatically adjusts to terminal size
+  - Ultra-wide (≥240 cols): 3 panels side-by-side
+  - Wide (120-239 cols): 2 panels top, 1 bottom
+  - Narrow (<120 cols): Panels stacked vertically
+- **Tmux Status Indicators**:
+  - 🟢 WORKING - Claude Code actively processing
+  - 🔴 READY - Waiting for user input at prompt
+  - 🟡 ACTIVE - User actively in session
+  - ⚠️ ERROR - Error state detected
+- **Help Mode**: Press `h` to cycle through detailed explanations for each panel
+
+---
+
+## 🛠️ Development
 
 ### Building
 
@@ -100,7 +148,9 @@ make deps
 make clean
 ```
 
-## Project Structure
+---
+
+## 📁 Project Structure
 
 ```
 ccdash/
@@ -112,15 +162,21 @@ ccdash/
 └── README.md            # This file
 ```
 
-## Contributing
+---
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
-## License
+---
+
+## 📄 License
 
 MIT License - see LICENSE file for details
 
-## Acknowledgments
+---
+
+## 🙏 Acknowledgments
 
 Built with:
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
