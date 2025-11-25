@@ -150,7 +150,13 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics.TotalTokens = metrics.InputTokens + metrics.OutputTokens +
 		metrics.CacheReadTokens + metrics.CacheCreationTokens
 
-	// Calculate cost (using Claude Sonnet 4.5 pricing as baseline)
+	// Convert model set to sorted slice (needed for cost calculation)
+	for model := range modelSet {
+		metrics.Models = append(metrics.Models, model)
+	}
+	sort.Strings(metrics.Models)
+
+	// Calculate cost based on model-specific pricing
 	metrics.TotalCost = tc.calculateCost(*metrics)
 
 	// Sort timestamps for rate calculations
@@ -175,12 +181,6 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		// Calculate 60-second window rate
 		metrics.Rate = tc.calculate60sRate(allTimestamps)
 	}
-
-	// Convert model set to sorted slice
-	for model := range modelSet {
-		metrics.Models = append(metrics.Models, model)
-	}
-	sort.Strings(metrics.Models)
 
 	metrics.Available = true
 	return metrics, nil
@@ -310,25 +310,81 @@ func (tc *TokenCollector) calculate60sRate(timestamps []timestampedTokens) float
 	return float64(totalTokens) / minutes
 }
 
-// calculateCost estimates the cost based on Claude Sonnet 4.5 pricing
+// ModelPricing contains pricing rates for a Claude model
+type ModelPricing struct {
+	InputPerMillion       float64
+	OutputPerMillion      float64
+	CacheReadPerMillion   float64
+	CacheCreatePerMillion float64
+}
+
+// Model pricing constants (as of November 2025)
+var modelPricing = map[string]ModelPricing{
+	// Claude Opus 4.5 pricing
+	"claude-opus-4-5-20251101": {
+		InputPerMillion:       5.0,
+		OutputPerMillion:      25.0,
+		CacheReadPerMillion:   0.50,
+		CacheCreatePerMillion: 6.25,
+	},
+	// Claude Sonnet 4.5 pricing
+	"claude-sonnet-4-5-20250929": {
+		InputPerMillion:       3.0,
+		OutputPerMillion:      15.0,
+		CacheReadPerMillion:   0.30,
+		CacheCreatePerMillion: 3.75,
+	},
+	// Claude Haiku 4.5 pricing
+	"claude-haiku-4-5-20250929": {
+		InputPerMillion:       1.0,
+		OutputPerMillion:      5.0,
+		CacheReadPerMillion:   0.10,
+		CacheCreatePerMillion: 1.25,
+	},
+}
+
+// defaultPricing uses Claude Sonnet 4.5 as the fallback
+var defaultPricing = ModelPricing{
+	InputPerMillion:       3.0,
+	OutputPerMillion:      15.0,
+	CacheReadPerMillion:   0.30,
+	CacheCreatePerMillion: 3.75,
+}
+
+// getPricingForModel returns the pricing for a given model name
+func getPricingForModel(model string) ModelPricing {
+	// Check exact match first
+	if pricing, ok := modelPricing[model]; ok {
+		return pricing
+	}
+
+	// Check for model family prefix matches
+	if strings.Contains(model, "opus-4-5") || strings.Contains(model, "opus-4.5") {
+		return modelPricing["claude-opus-4-5-20251101"]
+	}
+	if strings.Contains(model, "haiku-4-5") || strings.Contains(model, "haiku-4.5") {
+		return modelPricing["claude-haiku-4-5-20250929"]
+	}
+	if strings.Contains(model, "sonnet-4-5") || strings.Contains(model, "sonnet-4.5") {
+		return modelPricing["claude-sonnet-4-5-20250929"]
+	}
+
+	return defaultPricing
+}
+
+// calculateCost estimates the cost based on model-specific pricing
 func (tc *TokenCollector) calculateCost(metrics TokenMetrics) float64 {
-	// Claude Sonnet 4.5 pricing (as of 2025):
-	// Input: $3 per million tokens
-	// Output: $15 per million tokens
-	// Cache reads: $0.30 per million tokens
-	// Cache creation: $3.75 per million tokens (1.25x input price)
+	// Determine pricing based on model used
+	pricing := defaultPricing
+	if len(metrics.Models) > 0 {
+		// Use the first model's pricing (typically there's only one model per session)
+		pricing = getPricingForModel(metrics.Models[0])
+	}
 
-	const (
-		inputCostPerMillion    = 3.0
-		outputCostPerMillion   = 15.0
-		cacheReadCostPerMillion = 0.30
-		cacheCreateCostPerMillion = 3.75
-	)
-
-	inputCost := float64(metrics.InputTokens) * inputCostPerMillion / 1_000_000
-	outputCost := float64(metrics.OutputTokens) * outputCostPerMillion / 1_000_000
-	cacheReadCost := float64(metrics.CacheReadTokens) * cacheReadCostPerMillion / 1_000_000
-	cacheCreateCost := float64(metrics.CacheCreationTokens) * cacheCreateCostPerMillion / 1_000_000
+	inputCost := float64(metrics.InputTokens) * pricing.InputPerMillion / 1_000_000
+	outputCost := float64(metrics.OutputTokens) * pricing.OutputPerMillion / 1_000_000
+	cacheReadCost := float64(metrics.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
+	cacheCreateCost := float64(metrics.CacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
 
 	return inputCost + outputCost + cacheReadCost + cacheCreateCost
 }
