@@ -241,24 +241,18 @@ func (c *ClaudeUsageCollector) dirExists(path string) bool {
 	return info.IsDir()
 }
 
-// estimateCost provides a rough cost estimate
-// Pricing for Claude Sonnet 4.5 (as of 2025):
-// - Input: $3 per million tokens
-// - Output: $15 per million tokens
-// - Cache writes: $3.75 per million tokens
-// - Cache reads: $0.30 per million tokens
+// estimateCost provides a cost estimate based on model-specific pricing
 func (c *ClaudeUsageCollector) estimateCost(metrics *TokenMetrics) float64 {
-	const (
-		inputPrice        = 3.0 / 1_000_000   // $3 per 1M tokens
-		outputPrice       = 15.0 / 1_000_000  // $15 per 1M tokens
-		cacheWritePrice   = 3.75 / 1_000_000  // $3.75 per 1M tokens
-		cacheReadPrice    = 0.30 / 1_000_000  // $0.30 per 1M tokens
-	)
+	// Determine pricing based on model used
+	pricing := defaultPricing
+	if len(metrics.Models) > 0 {
+		pricing = getPricingForModel(metrics.Models[0])
+	}
 
-	cost := float64(metrics.InputTokens) * inputPrice
-	cost += float64(metrics.OutputTokens) * outputPrice
-	cost += float64(metrics.CacheCreationTokens) * cacheWritePrice
-	cost += float64(metrics.CacheReadTokens) * cacheReadPrice
+	cost := float64(metrics.InputTokens) * pricing.InputPerMillion / 1_000_000
+	cost += float64(metrics.OutputTokens) * pricing.OutputPerMillion / 1_000_000
+	cost += float64(metrics.CacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
+	cost += float64(metrics.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
 
 	return cost
 }

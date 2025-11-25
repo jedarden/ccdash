@@ -454,6 +454,131 @@ func floatEquals(a, b, tolerance float64) bool {
 	return diff < tolerance
 }
 
+func TestGetPricingForModel(t *testing.T) {
+	tests := []struct {
+		name              string
+		model             string
+		expectedInput     float64
+		expectedOutput    float64
+		expectedCacheRead float64
+	}{
+		{
+			name:              "Opus 4.5 exact match",
+			model:             "claude-opus-4-5-20251101",
+			expectedInput:     5.0,
+			expectedOutput:    25.0,
+			expectedCacheRead: 0.50,
+		},
+		{
+			name:              "Opus 4.5 prefix match",
+			model:             "claude-opus-4-5-20251115",
+			expectedInput:     5.0,
+			expectedOutput:    25.0,
+			expectedCacheRead: 0.50,
+		},
+		{
+			name:              "Sonnet 4.5 exact match",
+			model:             "claude-sonnet-4-5-20250929",
+			expectedInput:     3.0,
+			expectedOutput:    15.0,
+			expectedCacheRead: 0.30,
+		},
+		{
+			name:              "Haiku 4.5 exact match",
+			model:             "claude-haiku-4-5-20250929",
+			expectedInput:     1.0,
+			expectedOutput:    5.0,
+			expectedCacheRead: 0.10,
+		},
+		{
+			name:              "Unknown model uses default (Sonnet 4.5)",
+			model:             "claude-unknown-model",
+			expectedInput:     3.0,
+			expectedOutput:    15.0,
+			expectedCacheRead: 0.30,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pricing := getPricingForModel(tt.model)
+			if pricing.InputPerMillion != tt.expectedInput {
+				t.Errorf("InputPerMillion = %f; want %f", pricing.InputPerMillion, tt.expectedInput)
+			}
+			if pricing.OutputPerMillion != tt.expectedOutput {
+				t.Errorf("OutputPerMillion = %f; want %f", pricing.OutputPerMillion, tt.expectedOutput)
+			}
+			if pricing.CacheReadPerMillion != tt.expectedCacheRead {
+				t.Errorf("CacheReadPerMillion = %f; want %f", pricing.CacheReadPerMillion, tt.expectedCacheRead)
+			}
+		})
+	}
+}
+
+func TestCalculateCostWithModels(t *testing.T) {
+	collector := NewTokenCollector()
+
+	tests := []struct {
+		name     string
+		metrics  TokenMetrics
+		expected float64
+	}{
+		{
+			name: "Opus 4.5 pricing",
+			metrics: TokenMetrics{
+				InputTokens:         1_000_000,
+				OutputTokens:        1_000_000,
+				CacheReadTokens:     0,
+				CacheCreationTokens: 0,
+				Models:              []string{"claude-opus-4-5-20251101"},
+			},
+			expected: 30.0, // $5 input + $25 output
+		},
+		{
+			name: "Sonnet 4.5 pricing",
+			metrics: TokenMetrics{
+				InputTokens:         1_000_000,
+				OutputTokens:        1_000_000,
+				CacheReadTokens:     0,
+				CacheCreationTokens: 0,
+				Models:              []string{"claude-sonnet-4-5-20250929"},
+			},
+			expected: 18.0, // $3 input + $15 output
+		},
+		{
+			name: "Haiku 4.5 pricing",
+			metrics: TokenMetrics{
+				InputTokens:         1_000_000,
+				OutputTokens:        1_000_000,
+				CacheReadTokens:     0,
+				CacheCreationTokens: 0,
+				Models:              []string{"claude-haiku-4-5-20250929"},
+			},
+			expected: 6.0, // $1 input + $5 output
+		},
+		{
+			name: "Opus 4.5 with cache",
+			metrics: TokenMetrics{
+				InputTokens:         100_000,  // $0.50
+				OutputTokens:        50_000,   // $1.25
+				CacheReadTokens:     200_000,  // $0.10
+				CacheCreationTokens: 100_000,  // $0.625
+				Models:              []string{"claude-opus-4-5-20251101"},
+			},
+			expected: 2.475,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := collector.calculateCost(tt.metrics)
+			if !floatEquals(result, tt.expected, 0.0001) {
+				t.Errorf("calculateCost() = %f; want %f", result, tt.expected)
+			}
+		})
+	}
+}
+
 // Benchmark tests
 func BenchmarkFormatTokens(b *testing.B) {
 	for i := 0; i < b.N; i++ {

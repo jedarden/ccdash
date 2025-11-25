@@ -491,28 +491,18 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		cols = 2
 	}
 
-	// Limit sessions based on available height for short terminals
+	// Calculate available lines for sessions
+	// height includes borders, subtract: title(1) + blank(1) + total(1) + padding(2) = 5 lines overhead
+	availableLines := height - 5
+	if availableLines < 1 {
+		availableLines = 1
+	}
+
+	// Calculate how many sessions we can display
 	maxSessions := len(d.tmuxMetrics.Sessions)
-	if height <= 20 {
-		// Very short terminal: show minimal sessions (borders=2, title=1, total=1, status=1, padding=2 = 7 lines used)
-		availableLines := height - 9
-		if availableLines < 2 {
-			availableLines = 2
-		}
-		maxDisplayed := availableLines * cols
-		if maxSessions > maxDisplayed {
-			maxSessions = maxDisplayed
-		}
-	} else if height < 25 {
-		// Short terminals
-		availableLines := height - 8
-		if availableLines < 3 {
-			availableLines = 3
-		}
-		maxDisplayed := availableLines * cols
-		if maxSessions > maxDisplayed {
-			maxSessions = maxDisplayed
-		}
+	maxDisplayed := availableLines * cols
+	if maxSessions > maxDisplayed {
+		maxSessions = maxDisplayed
 	}
 
 	// Calculate cell width
