@@ -272,8 +272,14 @@ func (d *Dashboard) renderUltraWide() string {
 	tokenPanel := d.renderTokenPanel(tokenWidth, panelHeight)
 	tmuxPanel := d.renderTmuxPanel(tmuxWidth, panelHeight)
 
-	// Ensure all panels align at top with equal heights
-	// No separators - panel borders provide visual separation
+	// Force all panels to exactly the same height using lipgloss
+	// This ensures borders align even if content varies
+	uniformHeight := lipgloss.NewStyle().Height(panelHeight)
+	systemPanel = uniformHeight.Render(systemPanel)
+	tokenPanel = uniformHeight.Render(tokenPanel)
+	tmuxPanel = uniformHeight.Render(tmuxPanel)
+
+	// Join horizontally with top alignment
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		systemPanel,
 		tokenPanel,
