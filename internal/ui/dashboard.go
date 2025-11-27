@@ -256,6 +256,12 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 		maxCoreLines := 6
 		totalCores := len(d.systemMetrics.CPU.PerCore)
 
+		// Determine label width based on total cores (for alignment)
+		labelWidth := 1
+		if totalCores >= 10 {
+			labelWidth = 2
+		}
+
 		// Determine cores per line
 		var coresPerLine int
 		if totalCores <= 6 {
@@ -276,10 +282,9 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 		var barWidth int
 		if coresPerLine == 1 {
 			// Single core per line - stretch to full width
-			// Format: "N:[|||||||...  XX%]"
-			// Overhead: 2-3 for number, 2 for ":[", 5 for " XX%]" = ~9-10 chars
-			maxCoreDigits := 2 // Support up to 99 cores
-			barWidth = availableWidth - maxCoreDigits - 7 // -7 for ":[ XX%]"
+			// Format: "NN:[|||||||... XXX%]" with consistent label width
+			// Overhead: labelWidth for number, 2 for ":[", 1 for "]" = labelWidth+3 chars
+			barWidth = availableWidth - labelWidth - 3
 			if barWidth < 10 {
 				barWidth = 10
 			}
@@ -288,8 +293,8 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 			// Account for spaces between cores
 			spacesBetween := coresPerLine - 1
 			widthPerCore := (availableWidth - spacesBetween) / coresPerLine
-			// Subtract label overhead
-			barWidth = widthPerCore - 9 // -9 for "N:[ XX%]"
+			// Subtract label overhead: labelWidth for number, 2 for ":[", 1 for "]"
+			barWidth = widthPerCore - labelWidth - 3
 			if barWidth < 5 {
 				barWidth = 5
 			}
@@ -318,9 +323,10 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 				coreLine.WriteString(" ")
 			}
 			// Render progress bar for this core with calculated width
+			// Use consistent label width for alignment
 			percent := d.systemMetrics.CPU.PerCore[i]
 			miniBar := d.renderMiniBar(percent, barWidth)
-			coreLine.WriteString(fmt.Sprintf("%d:[%s]", i, miniBar))
+			coreLine.WriteString(fmt.Sprintf("%*d:[%s]", labelWidth, i, miniBar))
 		}
 		// Add remaining cores on current line
 		if coreLine.Len() > 0 {
@@ -482,35 +488,38 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		return style.Width(width).Height(height).Render(content)
 	}
 
-	// Render sessions in grid layout
-	// Determine grid columns based on width
-	cols := 1
-	if width >= 160 {
-		cols = 3
-	} else if width >= 100 {
-		cols = 2
-	}
-
 	// Calculate available lines for sessions
-	// height includes borders, subtract: title(1) + blank(1) + total(1) + padding(2) = 5 lines overhead
-	availableLines := height - 5
+	// height includes borders, subtract: title(1) + total(1) + borders(2) = 4 lines overhead
+	availableLines := height - 4
 	if availableLines < 1 {
 		availableLines = 1
 	}
 
+	sessionCount := len(d.tmuxMetrics.Sessions)
+	contentWidth := width - 4 // -4 for borders (2) and padding (2)
+
+	// Determine columns dynamically based on session count and available space
+	// Start with 1 column, expand to 2 if sessions won't fit
+	cols := 1
+	if sessionCount > availableLines {
+		cols = 2 // Spill over to 2 columns
+	}
+	// Use 3 columns only if width is sufficient and we have many sessions
+	if width >= 160 && sessionCount > availableLines*2 {
+		cols = 3
+	}
+
+	// Calculate cell width
+	cellWidth := (contentWidth - (cols - 1)) / cols
+
 	// Calculate how many sessions we can display
-	maxSessions := len(d.tmuxMetrics.Sessions)
 	maxDisplayed := availableLines * cols
+	maxSessions := sessionCount
 	if maxSessions > maxDisplayed {
 		maxSessions = maxDisplayed
 	}
 
-	// Calculate cell width
-	// Width includes borders and padding, so subtract them
-	contentWidth := width - 4 // -4 for borders (2) and padding (2)
-	cellWidth := (contentWidth - (cols - 1)) / cols
-
-	// Render sessions in vertical columns (not horizontal rows)
+	// Render sessions in vertical columns (fill first column, then second, etc.)
 	rowCount := (maxSessions + cols - 1) / cols
 	for row := 0; row < rowCount; row++ {
 		var rowCells []string
@@ -519,8 +528,8 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 			if idx < maxSessions {
 				session := d.tmuxMetrics.Sessions[idx]
 				cellContent := d.renderSessionCell(session, cellWidth)
-				// Apply explicit width constraint using lipgloss MaxWidth
-				cellStyle := lipgloss.NewStyle().MaxWidth(cellWidth)
+				// Apply explicit width constraint using lipgloss
+				cellStyle := lipgloss.NewStyle().Width(cellWidth)
 				cell := cellStyle.Render(cellContent)
 				rowCells = append(rowCells, cell)
 			} else {
@@ -529,7 +538,7 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 				rowCells = append(rowCells, emptyCell)
 			}
 		}
-		// Join cells with no separator for single column, or with space for multiple
+		// Join cells with space separator for multiple columns
 		separator := ""
 		if cols > 1 {
 			separator = " "
@@ -542,8 +551,8 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	}
 
 	// Show "... and X more" if sessions were limited
-	if maxSessions < len(d.tmuxMetrics.Sessions) {
-		remaining := len(d.tmuxMetrics.Sessions) - maxSessions
+	if maxSessions < sessionCount {
+		remaining := sessionCount - maxSessions
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("... +%d more", remaining)))
 	}
 
@@ -873,6 +882,7 @@ func (d *Dashboard) renderBar(percent float64, width int) string {
 
 // renderMiniBar creates a compact progress bar with percentage inside
 // Format: "||| 42%" for use in CPU core display
+// Returns a fixed-width string to ensure bracket alignment
 func (d *Dashboard) renderMiniBar(percent float64, barWidth int) string {
 	// Determine color based on threshold
 	var color string
@@ -886,14 +896,20 @@ func (d *Dashboard) renderMiniBar(percent float64, barWidth int) string {
 		color = "#00ff00" // Green
 	}
 
-	// Format percentage as "42%" (3 chars max for <100%)
-	percentText := fmt.Sprintf("%.0f%%", percent)
+	// Format percentage with fixed width (4 chars: "XXX%" or " XX%")
+	percentText := fmt.Sprintf("%3.0f%%", percent)
+
+	// Reserve space for percentage text (4 chars) + 1 space
+	percentSpace := 5
+	barAvailableWidth := barWidth - percentSpace
+	if barAvailableWidth < 1 {
+		barAvailableWidth = 1
+	}
 
 	// Calculate fill width
-	availableWidth := barWidth
-	fillWidth := int(percent / 100.0 * float64(availableWidth))
-	if fillWidth > availableWidth {
-		fillWidth = availableWidth
+	fillWidth := int(percent / 100.0 * float64(barAvailableWidth))
+	if fillWidth > barAvailableWidth {
+		fillWidth = barAvailableWidth
 	}
 	if fillWidth < 0 {
 		fillWidth = 0
@@ -901,7 +917,7 @@ func (d *Dashboard) renderMiniBar(percent float64, barWidth int) string {
 
 	// Create filled and empty portions
 	filled := strings.Repeat("|", fillWidth)
-	empty := strings.Repeat(" ", availableWidth-fillWidth)
+	empty := strings.Repeat(" ", barAvailableWidth-fillWidth)
 
 	// Apply styling
 	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))

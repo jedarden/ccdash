@@ -46,7 +46,10 @@ func TestFormatCost(t *testing.T) {
 		{"very small", 0.0001, "$0.0001"},
 		{"cents", 0.42, "$0.42"},
 		{"dollars", 12.34, "$12.34"},
-		{"large", 1234.56, "$1234.56"},
+		{"hundreds", 999.99, "$999.99"},
+		{"large", 1234.56, "$1,234.56"},
+		{"thousands", 12345.67, "$12,345.67"},
+		{"millions", 1234567.89, "$1,234,567.89"},
 	}
 
 	for _, tt := range tests {
