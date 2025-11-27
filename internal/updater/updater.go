@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -218,7 +219,7 @@ func (u *Updater) PerformUpdate(info *UpdateInfo) error {
 	return syscall.Exec(execPath, os.Args, os.Environ())
 }
 
-// PerformUpdateWithRestart downloads the update and restarts in-place
+// PerformUpdateWithRestart downloads the update and restarts using multiple methods
 func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 	if !info.UpdateAvailable || info.DownloadURL == "" {
 		return fmt.Errorf("no update available or download URL not found")
@@ -268,32 +269,95 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 	}
 
 	// Replace the binary - need to handle "text file busy" error
-	// by removing the old file first, then copying new one
-	if err := os.Remove(realExecPath); err != nil && !os.IsNotExist(err) {
-		// Try renaming old binary first
-		backupPath := realExecPath + ".old"
-		if renameErr := os.Rename(realExecPath, backupPath); renameErr != nil {
+	// by renaming old file first, then moving new one
+	backupPath := realExecPath + ".old"
+
+	// Remove any existing backup
+	os.Remove(backupPath)
+
+	// Rename current binary to backup
+	if err := os.Rename(realExecPath, backupPath); err != nil {
+		// If rename fails, try direct copy (may fail with "text file busy")
+		if copyErr := copyFile(tmpPath, realExecPath); copyErr != nil {
 			os.Remove(tmpPath)
-			return fmt.Errorf("failed to backup old binary: %w", renameErr)
+			return fmt.Errorf("failed to replace binary: rename failed: %v, copy failed: %v", err, copyErr)
 		}
-		defer os.Remove(backupPath)
+	} else {
+		// Move new binary to target location
+		if err := os.Rename(tmpPath, realExecPath); err != nil {
+			// Rename failed, try copy
+			if copyErr := copyFile(tmpPath, realExecPath); copyErr != nil {
+				// Restore backup
+				os.Rename(backupPath, realExecPath)
+				os.Remove(tmpPath)
+				return fmt.Errorf("failed to install update: %w", copyErr)
+			}
+		}
 	}
 
-	// Copy new binary to target location
-	if err := copyFile(tmpPath, realExecPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to install update: %w", err)
-	}
+	// Cleanup
 	os.Remove(tmpPath)
+	os.Remove(backupPath)
 
 	// Make sure the new binary is executable
 	if err := os.Chmod(realExecPath, 0755); err != nil {
 		return fmt.Errorf("failed to set permissions on new binary: %w", err)
 	}
 
-	// Use syscall.Exec to replace current process with new binary
-	// This preserves the terminal and restarts ccdash in-place
-	return syscall.Exec(realExecPath, os.Args, os.Environ())
+	// Try multiple restart methods
+	return u.restartApplication(realExecPath)
+}
+
+// restartApplication tries multiple methods to restart the application
+func (u *Updater) restartApplication(execPath string) error {
+	args := os.Args
+	env := os.Environ()
+
+	// Method 1: syscall.Exec (replaces current process)
+	// This is the cleanest method but may fail in some environments
+	execErr := syscall.Exec(execPath, args, env)
+
+	// If we get here, syscall.Exec failed - try other methods
+
+	// Method 2: Start new process and exit
+	cmd := exec.Command(execPath, args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = env
+
+	if err := cmd.Start(); err == nil {
+		// New process started, exit current one
+		os.Exit(0)
+	}
+
+	// Method 3: Use nohup to start detached process
+	nohupCmd := exec.Command("nohup", append([]string{execPath}, args[1:]...)...)
+	nohupCmd.Env = env
+	if err := nohupCmd.Start(); err == nil {
+		os.Exit(0)
+	}
+
+	// Method 4: Use shell to restart
+	shellCmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("sleep 0.1 && exec %s", execPath))
+	shellCmd.Stdin = os.Stdin
+	shellCmd.Stdout = os.Stdout
+	shellCmd.Stderr = os.Stderr
+	if err := shellCmd.Start(); err == nil {
+		os.Exit(0)
+	}
+
+	// Method 5: Use bash with exec
+	bashCmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("exec %s", execPath))
+	bashCmd.Stdin = os.Stdin
+	bashCmd.Stdout = os.Stdout
+	bashCmd.Stderr = os.Stderr
+	if err := bashCmd.Run(); err == nil {
+		os.Exit(0)
+	}
+
+	// All methods failed, return the original exec error
+	return fmt.Errorf("all restart methods failed, syscall.Exec error: %v", execErr)
 }
 
 // copyFile copies a file from src to dst
