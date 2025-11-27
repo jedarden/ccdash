@@ -80,6 +80,34 @@ vet:
 ## lint: Run all quality checks (fmt, vet)
 lint: fmt vet
 
+## release: Build release binaries for all platforms
+release:
+	@echo "Building release binaries..."
+	@mkdir -p dist
+	@# Linux amd64
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-amd64 ./cmd/ccdash
+	@# Linux arm64
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-arm64 ./cmd/ccdash
+	@# macOS amd64
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o dist/$(BINARY_NAME)-darwin-amd64 ./cmd/ccdash
+	@# macOS arm64 (Apple Silicon)
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o dist/$(BINARY_NAME)-darwin-arm64 ./cmd/ccdash
+	@# Windows amd64
+	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o dist/$(BINARY_NAME)-windows-amd64.exe ./cmd/ccdash
+	@echo "Release binaries created in dist/"
+	@ls -la dist/
+
+## release-zip: Build release binaries and create zip archives
+release-zip: release
+	@echo "Creating zip archives..."
+	@cd dist && for f in $(BINARY_NAME)-*; do \
+		if [ -f "$$f" ]; then \
+			zip "$${f}.zip" "$$f"; \
+		fi; \
+	done
+	@echo "Zip archives created"
+	@ls -la dist/*.zip
+
 ## help: Display this help message
 help:
 	@echo "Available targets:"
