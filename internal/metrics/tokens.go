@@ -418,13 +418,20 @@ func FormatTokens(count int64) string {
 	return string(result)
 }
 
-// FormatCost formats a cost value as currency
+// FormatCost formats a cost value as currency with comma separators
 func FormatCost(cost float64) string {
 	if cost == 0 {
 		return "$0.00"
 	}
 	if cost < 0.01 {
 		return fmt.Sprintf("$%.4f", cost)
+	}
+
+	// Format with commas for costs >= $1,000
+	if cost >= 1000 {
+		wholePart := int64(cost)
+		decimalPart := cost - float64(wholePart)
+		return fmt.Sprintf("$%s.%02d", FormatTokens(wholePart), int(decimalPart*100+0.5))
 	}
 	return fmt.Sprintf("$%.2f", cost)
 }
