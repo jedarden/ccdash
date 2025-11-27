@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jedarden/ccdash/internal/metrics"
+	"github.com/jedarden/ccdash/internal/updater"
 )
 
 // Layout mode constants
@@ -43,6 +44,12 @@ type Dashboard struct {
 	lastUpdate    time.Time
 	err           error
 	helpMode      int // 0=none, 1=system, 2=tokens, 3=tmux
+
+	// Update checking
+	updater      *updater.Updater
+	updateInfo   *updater.UpdateInfo
+	updating     bool
+	updateStatus string
 }
 
 // NewDashboard creates a new dashboard model
@@ -52,6 +59,7 @@ func NewDashboard(version string) *Dashboard {
 		systemCollector: metrics.NewSystemCollector(),
 		tokenCollector:  metrics.NewTokenCollector(),
 		tmuxCollector:   metrics.NewTmuxCollector(),
+		updater:         updater.NewUpdater(version),
 		lastUpdate:      time.Now(),
 	}
 }
@@ -61,7 +69,26 @@ func (d *Dashboard) Init() tea.Cmd {
 	return tea.Batch(
 		d.tick(),
 		d.collectMetrics(),
+		d.checkForUpdates(),
 	)
+}
+
+// updateCheckMsg carries update check results
+type updateCheckMsg struct {
+	info *updater.UpdateInfo
+}
+
+// updateCompleteMsg indicates update was applied
+type updateCompleteMsg struct {
+	err error
+}
+
+// checkForUpdates returns a command that checks for updates
+func (d *Dashboard) checkForUpdates() tea.Cmd {
+	return func() tea.Msg {
+		info := d.updater.CheckForUpdate()
+		return updateCheckMsg{info: info}
+	}
 }
 
 // Update handles messages
@@ -83,10 +110,18 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cycle through help modes: 0 -> 1 -> 2 -> 3 -> 0
 			d.helpMode = (d.helpMode + 1) % 4
 			return d, nil
+		case "u", "U":
+			// Perform update if available
+			if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
+				d.updating = true
+				d.updateStatus = "Downloading update..."
+				return d, d.performUpdate()
+			}
+			return d, nil
 		}
 
 	case tickMsg:
-		return d, tea.Batch(d.tick(), d.collectMetrics())
+		return d, tea.Batch(d.tick(), d.collectMetrics(), d.checkForUpdates())
 
 	case metricsMsg:
 		d.systemMetrics = msg.system
@@ -95,12 +130,35 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.lastUpdate = time.Now()
 		return d, nil
 
+	case updateCheckMsg:
+		d.updateInfo = msg.info
+		return d, nil
+
+	case updateCompleteMsg:
+		d.updating = false
+		if msg.err != nil {
+			d.updateStatus = fmt.Sprintf("Update failed: %v", msg.err)
+		} else {
+			d.updateStatus = "Update complete! Restarting..."
+			// The app should restart automatically
+			return d, tea.Quit
+		}
+		return d, nil
+
 	case errMsg:
 		d.err = msg.err
 		return d, nil
 	}
 
 	return d, nil
+}
+
+// performUpdate returns a command that applies the update
+func (d *Dashboard) performUpdate() tea.Cmd {
+	return func() tea.Msg {
+		err := d.updater.PerformUpdateWithRestart(d.updateInfo)
+		return updateCompleteMsg{err: err}
+	}
 }
 
 // View renders the dashboard
@@ -247,10 +305,17 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 		lines = append(lines, errorStyle.Render("Load: N/A"))
 	}
 
-	// CPU Total
+	// Calculate content width (panel width minus borders and padding)
+	contentWidth := width - 4 // -2 for borders, -2 for padding
+
+	// CPU Total - use same calculation method as Mem/Swap for consistent bar width
 	if d.systemMetrics.CPU.Error == nil {
-		// Compact format: "CPU [|||||| 45.2%]" on one line
-		lines = append(lines, fmt.Sprintf("CPU %s", d.renderBar(d.systemMetrics.CPU.TotalPercent, width-8)))
+		// Format: "CPU [|||||| XX.X%]" - "CPU " is 4 chars
+		cpuBarWidth := contentWidth - 4 // Subtract "CPU " prefix
+		if cpuBarWidth < 10 {
+			cpuBarWidth = 10
+		}
+		lines = append(lines, fmt.Sprintf("CPU %s", d.renderBar(d.systemMetrics.CPU.TotalPercent, cpuBarWidth)))
 
 		// CPU per-core - use up to 6 lines for CPU display
 		maxCoreLines := 6
@@ -258,7 +323,9 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 
 		// Determine label width based on total cores (for alignment)
 		labelWidth := 1
-		if totalCores >= 10 {
+		if totalCores >= 100 {
+			labelWidth = 3
+		} else if totalCores >= 10 {
 			labelWidth = 2
 		}
 
@@ -268,35 +335,34 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 			coresPerLine = 1 // One core per line - bars stretch full width
 		} else {
 			// Multiple cores per line - calculate how many fit
-			// Assume minimum 15 chars per core (e.g., "0:[||| 42%] ")
-			minCharsPerCore := 15
-			coresPerLine = (width - 4) / minCharsPerCore
+			// Each core needs: labelWidth + ":[" + barContent + "]" + space
+			// Minimum reasonable bar content is about 12 chars
+			minCharsPerCore := labelWidth + 3 + 12 // label + ":[]" + min bar
+			coresPerLine = contentWidth / minCharsPerCore
 			if coresPerLine < 2 {
 				coresPerLine = 2 // At least 2 per line when splitting
 			}
 		}
 
-		// Calculate bar width based on cores per line
-		// Available width divided by cores per line, minus label overhead
-		availableWidth := width - 4 // Account for panel padding
+		// Calculate bar width for cores - align brackets by using fixed widths
 		var barWidth int
 		if coresPerLine == 1 {
-			// Single core per line - stretch to full width
-			// Format: "NN:[|||||||... XXX%]" with consistent label width
-			// Overhead: labelWidth for number, 2 for ":[", 1 for "]" = labelWidth+3 chars
-			barWidth = availableWidth - labelWidth - 3
+			// Single core per line - match memory/swap calculation for consistency
+			// Format: "NN:[||||... XXX%]"
+			// labelWidth + ":[]" = labelWidth + 3 chars overhead
+			barWidth = contentWidth - labelWidth - 3
 			if barWidth < 10 {
 				barWidth = 10
 			}
 		} else {
 			// Multiple cores per line - split width evenly
-			// Account for spaces between cores
+			// Account for spaces between cores (1 space separator)
 			spacesBetween := coresPerLine - 1
-			widthPerCore := (availableWidth - spacesBetween) / coresPerLine
-			// Subtract label overhead: labelWidth for number, 2 for ":[", 1 for "]"
+			widthPerCore := (contentWidth - spacesBetween) / coresPerLine
+			// Subtract label overhead: labelWidth + ":[]"
 			barWidth = widthPerCore - labelWidth - 3
-			if barWidth < 5 {
-				barWidth = 5
+			if barWidth < 8 {
+				barWidth = 8
 			}
 		}
 
@@ -323,7 +389,8 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 				coreLine.WriteString(" ")
 			}
 			// Render progress bar for this core with calculated width
-			// Use consistent label width for alignment
+			// Use consistent label width for alignment - brackets align because
+			// we use fixed-width labels and fixed-width bar content
 			percent := d.systemMetrics.CPU.PerCore[i]
 			miniBar := d.renderMiniBar(percent, barWidth)
 			coreLine.WriteString(fmt.Sprintf("%*d:[%s]", labelWidth, i, miniBar))
@@ -340,12 +407,13 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 		lines = append(lines, errorStyle.Render("CPU: N/A"))
 	}
 
-	// Memory - always compact (one line) - use shorter bar to prevent wrapping
+	// Memory - always compact (one line)
 	if d.systemMetrics.Memory.Error == nil {
 		memUsed := metrics.FormatBytes(d.systemMetrics.Memory.Used)
 		memTotal := metrics.FormatBytes(d.systemMetrics.Memory.Total)
-		// Calculate bar width: total width - "Mem " - " " - "XX.XG/XX.XG" - margins
-		barWidth := width - 8 - len(memUsed) - len(memTotal)
+		// Format: "Mem [||||...] XX.XX GB/XX.XX GB"
+		// Calculate bar width: contentWidth - "Mem " (4) - " " (1) - "used/total" - margins
+		barWidth := contentWidth - 5 - len(memUsed) - 1 - len(memTotal)
 		if barWidth < 10 {
 			barWidth = 10
 		}
@@ -360,7 +428,8 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 	if d.systemMetrics.Swap.Error == nil && d.systemMetrics.Swap.Total > 0 {
 		swpUsed := metrics.FormatBytes(d.systemMetrics.Swap.Used)
 		swpTotal := metrics.FormatBytes(d.systemMetrics.Swap.Total)
-		barWidth := width - 8 - len(swpUsed) - len(swpTotal)
+		// Use same calculation as Memory for consistency
+		barWidth := contentWidth - 5 - len(swpUsed) - 1 - len(swpTotal)
 		if barWidth < 10 {
 			barWidth = 10
 		}
@@ -420,6 +489,8 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 
 	lines = append(lines, fmt.Sprintf("Total: %s",
 		boldStyle.Render(metrics.FormatTokens(d.tokenMetrics.TotalTokens))))
+
+	// Total cost with emphasis
 	lines = append(lines, fmt.Sprintf("Cost:  %s",
 		costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
 
@@ -439,22 +510,91 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lines = append(lines, fmt.Sprintf("Started: %s ago", formatDuration(duration)))
 	}
 
-	// Models with label and indentation - one per line
-	if len(d.tokenMetrics.Models) > 0 {
-		lines = append(lines, "Models:")
-		indent := "  "
-		for _, model := range d.tokenMetrics.Models {
-			// Truncate if model name is too long
-			maxLen := width - len(indent) - 4
-			if len(model) > maxLen {
-				model = model[:maxLen-3] + "..."
+	// Per-model breakdown with costs (sorted by cost, highest first)
+	if len(d.tokenMetrics.ModelUsages) > 0 {
+		lines = append(lines, "") // Empty line separator
+		lines = append(lines, boldStyle.Render("Per-Model Costs:"))
+
+		contentWidth := width - 6 // Account for padding and borders
+		for _, usage := range d.tokenMetrics.ModelUsages {
+			// Format: "  model-name: $X.XX (XXX,XXX tok)"
+			modelName := usage.Model
+
+			// Shorten common model name patterns for display
+			displayName := shortenModelName(modelName)
+
+			// Truncate if still too long
+			maxNameLen := contentWidth - 20 // Leave room for cost and tokens
+			if len(displayName) > maxNameLen && maxNameLen > 3 {
+				displayName = displayName[:maxNameLen-3] + "..."
 			}
-			lines = append(lines, dimStyle.Render(indent+model))
+
+			costStr := metrics.FormatCost(usage.Cost)
+			tokStr := metrics.FormatTokens(usage.TotalTokens)
+
+			// Color-code by model type
+			var modelStyle lipgloss.Style
+			if strings.Contains(modelName, "opus") {
+				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b6b")) // Red for Opus
+			} else if strings.Contains(modelName, "sonnet") {
+				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
+			} else if strings.Contains(modelName, "haiku") {
+				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
+			} else {
+				modelStyle = dimStyle
+			}
+
+			line := fmt.Sprintf("  %s: %s (%s)",
+				modelStyle.Render(displayName),
+				costStyle.Render(costStr),
+				dimStyle.Render(tokStr+" tok"))
+			lines = append(lines, line)
 		}
 	}
 
 	content := strings.Join(lines, "\n")
 	return style.Width(width).Height(height).Render(content)
+}
+
+// shortenModelName shortens common Claude model names for display
+func shortenModelName(name string) string {
+	// Common patterns to shorten
+	replacements := map[string]string{
+		"claude-opus-4-5-20251101":    "Opus 4.5",
+		"claude-sonnet-4-5-20250929":  "Sonnet 4.5",
+		"claude-haiku-4-5-20250929":   "Haiku 4.5",
+		"claude-3-5-sonnet-20241022":  "Sonnet 3.5",
+		"claude-3-5-haiku-20241022":   "Haiku 3.5",
+		"claude-3-opus-20240229":      "Opus 3",
+		"claude-3-sonnet-20240229":    "Sonnet 3",
+		"claude-3-haiku-20240307":     "Haiku 3",
+	}
+
+	if short, ok := replacements[name]; ok {
+		return short
+	}
+
+	// Try partial matches
+	if strings.Contains(name, "opus-4-5") || strings.Contains(name, "opus-4.5") {
+		return "Opus 4.5"
+	}
+	if strings.Contains(name, "sonnet-4-5") || strings.Contains(name, "sonnet-4.5") {
+		return "Sonnet 4.5"
+	}
+	if strings.Contains(name, "haiku-4-5") || strings.Contains(name, "haiku-4.5") {
+		return "Haiku 4.5"
+	}
+	if strings.Contains(name, "opus") {
+		return "Opus"
+	}
+	if strings.Contains(name, "sonnet") {
+		return "Sonnet"
+	}
+	if strings.Contains(name, "haiku") {
+		return "Haiku"
+	}
+
+	return name
 }
 
 // renderTmuxPanel renders the tmux sessions panel
@@ -807,8 +947,25 @@ Display: Vertically aligned`
 func (d *Dashboard) renderStatusBar() string {
 	// Compact format: time + version, github, dimensions, shortcuts - all on one line
 	left := fmt.Sprintf("%s v%s", d.lastUpdate.Format("15:04:05"), d.version)
-	middle := dimStyle.Render("github.com/jedarden/ccdash")
-	right := fmt.Sprintf("%dx%d h:help q:quit r:refresh", d.width, d.height)
+
+	// Show update status or normal middle content
+	var middle string
+	if d.updating {
+		middle = warningStyle.Render(d.updateStatus)
+	} else if d.updateStatus != "" {
+		middle = errorStyle.Render(d.updateStatus)
+	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
+		middle = successStyle.Render(fmt.Sprintf("⬆ v%s available! Press u to update", d.updateInfo.LatestVersion))
+	} else {
+		middle = dimStyle.Render("github.com/jedarden/ccdash")
+	}
+
+	// Build shortcuts - include 'u' if update available
+	shortcuts := "h:help q:quit r:refresh"
+	if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
+		shortcuts = "u:update h:help q:quit r:refresh"
+	}
+	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
 	// Calculate spacing (account for statusBarStyle padding of 2 chars)
 	totalContent := lipgloss.Width(left) + lipgloss.Width(middle) + lipgloss.Width(right)
@@ -816,8 +973,12 @@ func (d *Dashboard) renderStatusBar() string {
 
 	if availableSpace < 4 {
 		// Not enough space, use ultra-compact format
-		return statusBarStyle.Render(fmt.Sprintf("%s v%s %dx%d h q r",
-			d.lastUpdate.Format("15:04"), d.version, d.width, d.height))
+		compactShortcuts := "h q r"
+		if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
+			compactShortcuts = "u h q r"
+		}
+		return statusBarStyle.Render(fmt.Sprintf("%s v%s %dx%d %s",
+			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))
 	}
 
 	// Distribute space evenly on both sides of middle

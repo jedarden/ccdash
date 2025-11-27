@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	golang.org/x/term v0.37.0
 )
 
 require (
@@ -34,6 +35,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/text v0.3.8 // indirect
 )

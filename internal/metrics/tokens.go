@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+// ModelUsage tracks token usage and cost for a specific model
+type ModelUsage struct {
+	Model               string  `json:"model"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	Cost                float64 `json:"cost"`
+}
+
 // TokenMetrics represents aggregated token usage metrics
 type TokenMetrics struct {
 	InputTokens         int64         `json:"input_tokens"`
@@ -25,6 +36,7 @@ type TokenMetrics struct {
 	EarliestTimestamp   time.Time     `json:"earliest_timestamp"`
 	LatestTimestamp     time.Time     `json:"latest_timestamp"`
 	Models              []string      `json:"models"`
+	ModelUsages         []ModelUsage  `json:"model_usages"`      // Per-model breakdown
 	Available           bool          `json:"available"`
 	Error               string        `json:"error,omitempty"`
 	LastUpdate          time.Time     `json:"last_update"`
@@ -132,9 +144,10 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	// Aggregate data from all files
 	var allTimestamps []timestampedTokens
 	modelSet := make(map[string]bool)
+	aggregatedModelMetrics := make(map[string]*perModelMetrics)
 
 	for _, file := range files {
-		fileMetrics, timestamps := tc.parseJSONLFile(file)
+		fileMetrics, timestamps, fileModelMetrics := tc.parseJSONLFile(file)
 		metrics.InputTokens += fileMetrics.InputTokens
 		metrics.OutputTokens += fileMetrics.OutputTokens
 		metrics.CacheReadTokens += fileMetrics.CacheReadTokens
@@ -143,6 +156,17 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 
 		for _, model := range fileMetrics.Models {
 			modelSet[model] = true
+		}
+
+		// Aggregate per-model metrics across files
+		for model, mm := range fileModelMetrics {
+			if _, exists := aggregatedModelMetrics[model]; !exists {
+				aggregatedModelMetrics[model] = &perModelMetrics{}
+			}
+			aggregatedModelMetrics[model].inputTokens += mm.inputTokens
+			aggregatedModelMetrics[model].outputTokens += mm.outputTokens
+			aggregatedModelMetrics[model].cacheReadTokens += mm.cacheReadTokens
+			aggregatedModelMetrics[model].cacheCreationTokens += mm.cacheCreationTokens
 		}
 	}
 
@@ -156,8 +180,37 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	}
 	sort.Strings(metrics.Models)
 
-	// Calculate cost based on model-specific pricing
-	metrics.TotalCost = tc.calculateCost(*metrics)
+	// Build per-model usage with costs
+	metrics.ModelUsages = make([]ModelUsage, 0, len(aggregatedModelMetrics))
+	var totalCost float64
+	for model, mm := range aggregatedModelMetrics {
+		pricing := getPricingForModel(model)
+		inputCost := float64(mm.inputTokens) * pricing.InputPerMillion / 1_000_000
+		outputCost := float64(mm.outputTokens) * pricing.OutputPerMillion / 1_000_000
+		cacheReadCost := float64(mm.cacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
+		cacheCreateCost := float64(mm.cacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
+		modelCost := inputCost + outputCost + cacheReadCost + cacheCreateCost
+
+		usage := ModelUsage{
+			Model:               model,
+			InputTokens:         mm.inputTokens,
+			OutputTokens:        mm.outputTokens,
+			CacheReadTokens:     mm.cacheReadTokens,
+			CacheCreationTokens: mm.cacheCreationTokens,
+			TotalTokens:         mm.inputTokens + mm.outputTokens + mm.cacheReadTokens + mm.cacheCreationTokens,
+			Cost:                modelCost,
+		}
+		metrics.ModelUsages = append(metrics.ModelUsages, usage)
+		totalCost += modelCost
+	}
+
+	// Sort model usages by cost (highest first)
+	sort.Slice(metrics.ModelUsages, func(i, j int) bool {
+		return metrics.ModelUsages[i].Cost > metrics.ModelUsages[j].Cost
+	})
+
+	// Set total cost from per-model calculations
+	metrics.TotalCost = totalCost
 
 	// Sort timestamps for rate calculations
 	sort.Slice(allTimestamps, func(i, j int) bool {
@@ -200,15 +253,24 @@ func (tc *TokenCollector) findProjectDir(cwd string) string {
 	return ""
 }
 
+// perModelMetrics tracks metrics for a single model during parsing
+type perModelMetrics struct {
+	inputTokens         int64
+	outputTokens        int64
+	cacheReadTokens     int64
+	cacheCreationTokens int64
+}
+
 // parseJSONLFile parses a single JSONL file and extracts token metrics
-func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []timestampedTokens) {
+func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []timestampedTokens, map[string]*perModelMetrics) {
 	metrics := TokenMetrics{}
 	var timestamps []timestampedTokens
 	modelSet := make(map[string]bool)
+	modelMetrics := make(map[string]*perModelMetrics)
 
 	file, err := os.Open(filename)
 	if err != nil {
-		return metrics, timestamps
+		return metrics, timestamps, modelMetrics
 	}
 	defer file.Close()
 
@@ -256,9 +318,21 @@ func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []times
 			timestamp: timestamp,
 		})
 
-		// Track model
+		// Track model and per-model metrics
 		if msg.Message.Model != "" {
 			modelSet[msg.Message.Model] = true
+
+			// Initialize per-model metrics if needed
+			if _, exists := modelMetrics[msg.Message.Model]; !exists {
+				modelMetrics[msg.Message.Model] = &perModelMetrics{}
+			}
+
+			// Accumulate per-model tokens
+			mm := modelMetrics[msg.Message.Model]
+			mm.inputTokens += usage.InputTokens
+			mm.outputTokens += usage.OutputTokens
+			mm.cacheReadTokens += usage.CacheReadInputTokens
+			mm.cacheCreationTokens += cacheCreation
 		}
 	}
 
@@ -267,7 +341,7 @@ func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []times
 		metrics.Models = append(metrics.Models, model)
 	}
 
-	return metrics, timestamps
+	return metrics, timestamps, modelMetrics
 }
 
 // calculate60sRate calculates the token rate over the last 60 seconds
