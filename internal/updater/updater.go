@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -218,7 +218,7 @@ func (u *Updater) PerformUpdate(info *UpdateInfo) error {
 	return syscall.Exec(execPath, os.Args, os.Environ())
 }
 
-// PerformUpdateWithRestart downloads the update and creates a restart script
+// PerformUpdateWithRestart downloads the update and restarts in-place
 func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 	if !info.UpdateAvailable || info.DownloadURL == "" {
 		return fmt.Errorf("no update available or download URL not found")
@@ -228,6 +228,12 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Resolve symlinks to get the real path
+	realExecPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		realExecPath = execPath
 	}
 
 	// Download new binary to temp file
@@ -261,27 +267,33 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Create a restart script that will:
-	// 1. Wait a moment for this process to exit
-	// 2. Replace the binary
-	// 3. Start the new version
-	restartScript := fmt.Sprintf(`#!/bin/bash
-sleep 0.5
-cp "%s" "%s"
-rm "%s"
-exec "%s"
-`, tmpPath, execPath, tmpPath, execPath)
-
-	scriptPath := "/tmp/ccdash-restart.sh"
-	if err := os.WriteFile(scriptPath, []byte(restartScript), 0755); err != nil {
-		return fmt.Errorf("failed to create restart script: %w", err)
+	// Replace the binary - need to handle "text file busy" error
+	// by removing the old file first, then copying new one
+	if err := os.Remove(realExecPath); err != nil && !os.IsNotExist(err) {
+		// Try renaming old binary first
+		backupPath := realExecPath + ".old"
+		if renameErr := os.Rename(realExecPath, backupPath); renameErr != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("failed to backup old binary: %w", renameErr)
+		}
+		defer os.Remove(backupPath)
 	}
 
-	// Start the restart script in background
-	cmd := exec.Command("/bin/bash", scriptPath)
-	cmd.Start()
+	// Copy new binary to target location
+	if err := copyFile(tmpPath, realExecPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to install update: %w", err)
+	}
+	os.Remove(tmpPath)
 
-	return nil
+	// Make sure the new binary is executable
+	if err := os.Chmod(realExecPath, 0755); err != nil {
+		return fmt.Errorf("failed to set permissions on new binary: %w", err)
+	}
+
+	// Use syscall.Exec to replace current process with new binary
+	// This preserves the terminal and restarts ccdash in-place
+	return syscall.Exec(realExecPath, os.Args, os.Environ())
 }
 
 // copyFile copies a file from src to dst
