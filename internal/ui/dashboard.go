@@ -231,12 +231,38 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 
 // renderUltraWide renders 3 panels side-by-side
 func (d *Dashboard) renderUltraWide() string {
-	// Custom widths: system=65, token=48, tmux=90 (wider for session details)
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
-	totalPanelWidth := d.width - 6 // 202 - 6 = 196 for padding
-	systemWidth := (totalPanelWidth * 32) / 100  // ~62 chars at 196 width
-	tokenWidth := (totalPanelWidth * 24) / 100   // ~47 chars at 196 width
-	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth // Remaining space
+	totalPanelWidth := d.width - 6
+
+	// Token panel needs minimum width to avoid wrapping long lines like:
+	// "  Opus 4.5: $XX.XX (XXX,XXX tok)" = ~38 chars + borders/padding = ~45
+	// Prioritize token panel width, then tmux, system is most flexible
+
+	// For 190 width: totalPanelWidth = 184
+	// Token: 48 chars (26%), System: 55 chars (30%), Tmux: 81 chars (44%)
+	tokenWidth := 48
+	if totalPanelWidth < 180 {
+		tokenWidth = 42 // Narrower for smaller terminals
+	} else if totalPanelWidth >= 200 {
+		tokenWidth = 52 // Wider for larger terminals
+	}
+
+	// System panel - can compress CPU bars, so it's most flexible
+	// Minimum ~50 chars for readable CPU bars
+	systemWidth := 55
+	if totalPanelWidth < 180 {
+		systemWidth = 50
+	} else if totalPanelWidth >= 200 {
+		systemWidth = 62
+	}
+
+	// Tmux gets remaining space
+	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
+	if tmuxWidth < 60 {
+		// If tmux is too narrow, steal from system
+		systemWidth -= (60 - tmuxWidth)
+		tmuxWidth = 60
+	}
 
 	// Calculate panel content height (subtract status bar and borders)
 	// Total height - status bar (1) - panel borders (2) = content height
