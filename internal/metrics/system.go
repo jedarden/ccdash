@@ -8,6 +8,7 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/net"
 )
 
 // SystemMetrics holds all collected system metrics with timestamp
@@ -17,6 +18,7 @@ type SystemMetrics struct {
 	Memory     MemoryMetrics
 	Swap       SwapMetrics
 	DiskIO     DiskIOMetrics
+	NetIO      NetIOMetrics
 	LastUpdate time.Time
 }
 
@@ -58,11 +60,21 @@ type DiskIOMetrics struct {
 	Error            error
 }
 
+// NetIOMetrics holds network I/O rate information
+type NetIOMetrics struct {
+	RecvBytesPerSec float64
+	SentBytesPerSec float64
+	Error           error
+}
+
 // SystemCollector collects system metrics
 type SystemCollector struct {
 	// Previous disk I/O counters for rate calculation
 	prevIOCounters map[string]disk.IOCountersStat
 	prevIOTime     time.Time
+	// Previous network I/O counters for rate calculation
+	prevNetCounters []net.IOCountersStat
+	prevNetTime     time.Time
 }
 
 // NewSystemCollector creates a new SystemCollector instance
@@ -95,6 +107,9 @@ func (sc *SystemCollector) Collect() SystemMetrics {
 
 	// Collect disk I/O metrics
 	metrics.DiskIO = sc.collectDiskIO()
+
+	// Collect network I/O metrics
+	metrics.NetIO = sc.collectNetIO()
 
 	return metrics
 }
@@ -208,6 +223,45 @@ func (sc *SystemCollector) collectDiskIO() DiskIOMetrics {
 	sc.prevIOTime = now
 
 	return ioMetrics
+}
+
+// collectNetIO collects network I/O rate metrics
+func (sc *SystemCollector) collectNetIO() NetIOMetrics {
+	netMetrics := NetIOMetrics{}
+
+	// Get current network I/O counters
+	netCounters, err := net.IOCounters(false) // false = aggregate all interfaces
+	if err != nil {
+		netMetrics.Error = fmt.Errorf("failed to collect network I/O: %w", err)
+		return netMetrics
+	}
+
+	if len(netCounters) == 0 {
+		netMetrics.Error = fmt.Errorf("no network interfaces found")
+		return netMetrics
+	}
+
+	now := time.Now()
+	duration := now.Sub(sc.prevNetTime).Seconds()
+
+	// Calculate rates if we have previous data
+	if len(sc.prevNetCounters) > 0 && duration > 0 {
+		// Use aggregate stats (first element when pernic=false)
+		current := netCounters[0]
+		prev := sc.prevNetCounters[0]
+
+		recvBytes := current.BytesRecv - prev.BytesRecv
+		sentBytes := current.BytesSent - prev.BytesSent
+
+		netMetrics.RecvBytesPerSec = float64(recvBytes) / duration
+		netMetrics.SentBytesPerSec = float64(sentBytes) / duration
+	}
+
+	// Store current counters for next collection
+	sc.prevNetCounters = netCounters
+	sc.prevNetTime = now
+
+	return netMetrics
 }
 
 // FormatBytes formats bytes as human-readable string (KB/MB/GB/TB)

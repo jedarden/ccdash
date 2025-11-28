@@ -479,6 +479,15 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 		lines = append(lines, errorStyle.Render("Disk I/O | N/A"))
 	}
 
+	// Net I/O - verbose format with pipe separators
+	if d.systemMetrics.NetIO.Error == nil {
+		lines = append(lines, fmt.Sprintf("Net I/O  | Recv: %s | Sent: %s",
+			metrics.FormatRate(d.systemMetrics.NetIO.RecvBytesPerSec),
+			metrics.FormatRate(d.systemMetrics.NetIO.SentBytesPerSec)))
+	} else {
+		lines = append(lines, errorStyle.Render("Net I/O  | N/A"))
+	}
+
 	content := strings.Join(lines, "\n")
 	return style.Width(width).Height(height).Render(content)
 }
