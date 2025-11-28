@@ -998,7 +998,7 @@ func (d *Dashboard) renderStatusBar() string {
 	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
 		middle = successStyle.Render(fmt.Sprintf("⬆ v%s available! Press u to update", d.updateInfo.LatestVersion))
 	} else {
-		middle = dimStyle.Render("github.com/jedarden/ccdash")
+		middle = dimStyle.Render("https://github.com/jedarden/ccdash")
 	}
 
 	// Build shortcuts - include 'u' if update available
