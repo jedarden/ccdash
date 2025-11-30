@@ -271,13 +271,13 @@ func FormatBytes(bytes uint64) string {
 		return fmt.Sprintf("%d B", bytes)
 	}
 
+	units := []string{"KB", "MB", "GB", "TB", "PB"}
 	div, exp := uint64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
+	for n := bytes / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
 
-	units := []string{"KB", "MB", "GB", "TB", "PB"}
 	return fmt.Sprintf("%.2f %s", float64(bytes)/float64(div), units[exp])
 }
 
@@ -288,12 +288,12 @@ func FormatRate(bytesPerSec float64) string {
 		return fmt.Sprintf("%.2f B/s", bytesPerSec)
 	}
 
+	units := []string{"KB/s", "MB/s", "GB/s", "TB/s", "PB/s"}
 	div, exp := unit, 0
-	for n := bytesPerSec / unit; n >= unit; n /= unit {
+	for n := bytesPerSec / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
 
-	units := []string{"KB/s", "MB/s", "GB/s", "TB/s", "PB/s"}
 	return fmt.Sprintf("%.2f %s", bytesPerSec/div, units[exp])
 }
