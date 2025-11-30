@@ -225,13 +225,17 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 		return fmt.Errorf("no update available or download URL not found")
 	}
 
-	// Get current executable path
+	// Find all locations where ccdash is installed
+	allLocations := findAllBinaryLocations()
+	if len(allLocations) == 0 {
+		return fmt.Errorf("failed to find any ccdash binary locations")
+	}
+
+	// Get current executable path for restart
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
-
-	// Resolve symlinks to get the real path
 	realExecPath, err := filepath.EvalSymlinks(execPath)
 	if err != nil {
 		realExecPath = execPath
@@ -268,44 +272,61 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Replace the binary - need to handle "text file busy" error
-	// by renaming old file first, then moving new one
-	backupPath := realExecPath + ".old"
+	// Update all found locations
+	var updateErrors []string
+	var updatedCount int
+
+	for _, targetPath := range allLocations {
+		if err := updateBinaryAt(tmpPath, targetPath); err != nil {
+			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", targetPath, err))
+		} else {
+			updatedCount++
+		}
+	}
+
+	// Cleanup temp file
+	os.Remove(tmpPath)
+
+	// If no locations were updated successfully, return error
+	if updatedCount == 0 {
+		return fmt.Errorf("failed to update any binary location: %v", updateErrors)
+	}
+
+	// Try multiple restart methods using the current executable path
+	return u.restartApplication(realExecPath)
+}
+
+// updateBinaryAt updates the binary at the specified path
+func updateBinaryAt(srcPath, targetPath string) error {
+	backupPath := targetPath + ".old"
 
 	// Remove any existing backup
 	os.Remove(backupPath)
 
 	// Rename current binary to backup
-	if err := os.Rename(realExecPath, backupPath); err != nil {
+	if err := os.Rename(targetPath, backupPath); err != nil {
 		// If rename fails, try direct copy (may fail with "text file busy")
-		if copyErr := copyFile(tmpPath, realExecPath); copyErr != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("failed to replace binary: rename failed: %v, copy failed: %v", err, copyErr)
+		if copyErr := copyFile(srcPath, targetPath); copyErr != nil {
+			return fmt.Errorf("rename failed: %v, copy failed: %v", err, copyErr)
 		}
 	} else {
-		// Move new binary to target location
-		if err := os.Rename(tmpPath, realExecPath); err != nil {
-			// Rename failed, try copy
-			if copyErr := copyFile(tmpPath, realExecPath); copyErr != nil {
-				// Restore backup
-				os.Rename(backupPath, realExecPath)
-				os.Remove(tmpPath)
-				return fmt.Errorf("failed to install update: %w", copyErr)
-			}
+		// Copy new binary to target location (can't rename as we need srcPath for other locations)
+		if err := copyFile(srcPath, targetPath); err != nil {
+			// Restore backup
+			os.Rename(backupPath, targetPath)
+			return fmt.Errorf("failed to install update: %w", err)
 		}
 	}
 
-	// Cleanup
-	os.Remove(tmpPath)
+	// Cleanup backup
 	os.Remove(backupPath)
 
 	// Make sure the new binary is executable
-	if err := os.Chmod(realExecPath, 0755); err != nil {
-		return fmt.Errorf("failed to set permissions on new binary: %w", err)
+	if err := os.Chmod(targetPath, 0755); err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Try multiple restart methods
-	return u.restartApplication(realExecPath)
+	return nil
 }
 
 // restartApplication tries multiple methods to restart the application
@@ -358,6 +379,66 @@ func (u *Updater) restartApplication(execPath string) error {
 
 	// All methods failed, return the original exec error
 	return fmt.Errorf("all restart methods failed, syscall.Exec error: %v", execErr)
+}
+
+// findAllBinaryLocations finds all locations where ccdash binary exists
+// This includes the current executable and common installation paths
+func findAllBinaryLocations() []string {
+	locations := make(map[string]bool)
+
+	// 1. Get the currently running executable (most important)
+	if execPath, err := os.Executable(); err == nil {
+		if realPath, err := filepath.EvalSymlinks(execPath); err == nil {
+			locations[realPath] = true
+		} else {
+			locations[execPath] = true
+		}
+	}
+
+	// 2. Check PATH for all ccdash binaries
+	if pathEnv := os.Getenv("PATH"); pathEnv != "" {
+		for _, dir := range strings.Split(pathEnv, string(os.PathListSeparator)) {
+			candidate := filepath.Join(dir, "ccdash")
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				if realPath, err := filepath.EvalSymlinks(candidate); err == nil {
+					locations[realPath] = true
+				} else {
+					locations[candidate] = true
+				}
+			}
+		}
+	}
+
+	// 3. Check common installation directories
+	homeDir, _ := os.UserHomeDir()
+	commonPaths := []string{
+		"/usr/local/bin/ccdash",
+		"/usr/bin/ccdash",
+		"/opt/homebrew/bin/ccdash",
+		filepath.Join(homeDir, "bin", "ccdash"),
+		filepath.Join(homeDir, ".local", "bin", "ccdash"),
+		filepath.Join(homeDir, "go", "bin", "ccdash"),
+	}
+
+	for _, path := range commonPaths {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if realPath, err := filepath.EvalSymlinks(path); err == nil {
+				locations[realPath] = true
+			} else {
+				locations[path] = true
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]string, 0, len(locations))
+	for loc := range locations {
+		result = append(result, loc)
+	}
+	return result
 }
 
 // copyFile copies a file from src to dst
