@@ -35,6 +35,7 @@ type TokenMetrics struct {
 	TimeSpan            time.Duration `json:"time_span"`
 	EarliestTimestamp   time.Time     `json:"earliest_timestamp"`
 	LatestTimestamp     time.Time     `json:"latest_timestamp"`
+	LookbackFrom        time.Time     `json:"lookback_from"`     // Start of measurement period
 	Models              []string      `json:"models"`
 	ModelUsages         []ModelUsage  `json:"model_usages"`      // Per-model breakdown
 	Available           bool          `json:"available"`
@@ -45,22 +46,69 @@ type TokenMetrics struct {
 // TokenCollector collects and aggregates token usage from Claude Code sessions
 type TokenCollector struct {
 	projectsDir string
+	lookbackFrom time.Time // Only include data from this time onwards
 }
 
-// NewTokenCollector creates a new TokenCollector
+// GetMondayNineAM returns the most recent Monday at 9am local time
+// If today is Monday before 9am, returns last Monday's 9am
+func GetMondayNineAM() time.Time {
+	now := time.Now()
+	// Find the most recent Monday
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7 // Sunday becomes 7 for easier math
+	}
+	daysUntilMonday := weekday - 1 // Days since Monday (Mon=0, Tue=1, ...)
+
+	// Start of Monday (midnight)
+	monday := now.AddDate(0, 0, -daysUntilMonday)
+	monday = time.Date(monday.Year(), monday.Month(), monday.Day(), 9, 0, 0, 0, monday.Location())
+
+	// If we haven't reached 9am on Monday yet, go back to previous Monday
+	if monday.After(now) {
+		monday = monday.AddDate(0, 0, -7)
+	}
+
+	return monday
+}
+
+// NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
 func NewTokenCollector() *TokenCollector {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return &TokenCollector{projectsDir: ""}
+		return &TokenCollector{projectsDir: "", lookbackFrom: GetMondayNineAM()}
 	}
 	return &TokenCollector{
-		projectsDir: filepath.Join(home, ".claude", "projects"),
+		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		lookbackFrom: GetMondayNineAM(),
+	}
+}
+
+// NewTokenCollectorWithLookback creates a TokenCollector with a custom lookback time
+func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return &TokenCollector{projectsDir: "", lookbackFrom: lookbackFrom}
+	}
+	return &TokenCollector{
+		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		lookbackFrom: lookbackFrom,
 	}
 }
 
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
-	return &TokenCollector{projectsDir: path}
+	return &TokenCollector{projectsDir: path, lookbackFrom: GetMondayNineAM()}
+}
+
+// SetLookback sets the lookback time filter
+func (tc *TokenCollector) SetLookback(t time.Time) {
+	tc.lookbackFrom = t
+}
+
+// GetLookback returns the current lookback time
+func (tc *TokenCollector) GetLookback() time.Time {
+	return tc.lookbackFrom
 }
 
 // claudeMessage represents the structure of Claude API messages in JSONL
@@ -100,9 +148,10 @@ type timestampedTokens struct {
 // Collect gathers token metrics from all JSONL files in the projects directory
 func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics := &TokenMetrics{
-		Available:  false,
-		LastUpdate: time.Now(),
-		Models:     []string{},
+		Available:    false,
+		LastUpdate:   time.Now(),
+		LookbackFrom: tc.lookbackFrom,
+		Models:       []string{},
 	}
 
 	// Check if projects directory exists
@@ -294,6 +343,11 @@ func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []times
 		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
 		if err != nil {
 			timestamp = time.Now()
+		}
+
+		// Skip entries before lookback time
+		if !tc.lookbackFrom.IsZero() && timestamp.Before(tc.lookbackFrom) {
+			continue
 		}
 
 		// Aggregate token counts

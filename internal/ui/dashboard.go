@@ -23,6 +23,13 @@ const (
 // tickMsg is sent every 2 seconds to trigger refresh
 type tickMsg time.Time
 
+// LookbackPreset represents a predefined lookback period
+type LookbackPreset struct {
+	Name        string
+	Description string
+	GetTime     func() time.Time
+}
+
 // Dashboard is the main Bubble Tea model
 type Dashboard struct {
 	width         int
@@ -45,6 +52,14 @@ type Dashboard struct {
 	err           error
 	helpMode      int // 0=none, 1=system, 2=tokens, 3=tmux
 
+	// Lookback picker state
+	lookbackMode          bool   // true when lookback picker is open
+	lookbackPresets       []LookbackPreset
+	lookbackSelectedIndex int
+	lookbackCustomMode    bool      // true when editing custom date/time
+	lookbackCustomDate    time.Time // the custom date being edited
+	lookbackEditField     int       // 0=year, 1=month, 2=day, 3=hour, 4=minute
+
 	// Update checking
 	updater      *updater.Updater
 	updateInfo   *updater.UpdateInfo
@@ -52,15 +67,66 @@ type Dashboard struct {
 	updateStatus string
 }
 
-// NewDashboard creates a new dashboard model
+// NewDashboard creates a new dashboard model with default Monday 9am lookback
 func NewDashboard(version string) *Dashboard {
+	presets := []LookbackPreset{
+		{
+			Name:        "Monday 9am",
+			Description: "Since this week's Monday at 9:00 AM",
+			GetTime:     metrics.GetMondayNineAM,
+		},
+		{
+			Name:        "Today",
+			Description: "Since midnight today",
+			GetTime: func() time.Time {
+				now := time.Now()
+				return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			},
+		},
+		{
+			Name:        "24 hours",
+			Description: "Last 24 hours",
+			GetTime: func() time.Time {
+				return time.Now().Add(-24 * time.Hour)
+			},
+		},
+		{
+			Name:        "7 days",
+			Description: "Last 7 days",
+			GetTime: func() time.Time {
+				return time.Now().AddDate(0, 0, -7)
+			},
+		},
+		{
+			Name:        "30 days",
+			Description: "Last 30 days",
+			GetTime: func() time.Time {
+				return time.Now().AddDate(0, 0, -30)
+			},
+		},
+		{
+			Name:        "All time",
+			Description: "Show all available data",
+			GetTime: func() time.Time {
+				return time.Time{} // Zero time = no filter
+			},
+		},
+		{
+			Name:        "Custom...",
+			Description: "Set a custom date and time",
+			GetTime:     nil, // Special case: opens custom picker
+		},
+	}
+
 	return &Dashboard{
-		version:         version,
-		systemCollector: metrics.NewSystemCollector(),
-		tokenCollector:  metrics.NewTokenCollector(),
-		tmuxCollector:   metrics.NewTmuxCollector(),
-		updater:         updater.NewUpdater(version),
-		lastUpdate:      time.Now(),
+		version:            version,
+		systemCollector:    metrics.NewSystemCollector(),
+		tokenCollector:     metrics.NewTokenCollector(),
+		tmuxCollector:      metrics.NewTmuxCollector(),
+		updater:            updater.NewUpdater(version),
+		lastUpdate:         time.Now(),
+		lookbackPresets:    presets,
+		lookbackCustomDate: time.Now().AddDate(0, 0, -1), // Default custom to yesterday
 	}
 }
 
@@ -101,6 +167,11 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case tea.KeyMsg:
+		// Handle lookback picker mode
+		if d.lookbackMode {
+			return d.handleLookbackKey(msg)
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return d, tea.Quit
@@ -109,6 +180,11 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			// Cycle through help modes: 0 -> 1 -> 2 -> 3 -> 0
 			d.helpMode = (d.helpMode + 1) % 4
+			return d, nil
+		case "l", "L":
+			// Open lookback picker
+			d.lookbackMode = true
+			d.helpMode = 0 // Close help if open
 			return d, nil
 		case "u", "U":
 			// Perform update if available
@@ -161,6 +237,88 @@ func (d *Dashboard) performUpdate() tea.Cmd {
 	}
 }
 
+// handleLookbackKey handles keyboard input when lookback picker is open
+func (d *Dashboard) handleLookbackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if d.lookbackCustomMode {
+		// Custom date/time editing mode
+		switch msg.String() {
+		case "esc":
+			d.lookbackCustomMode = false
+			return d, nil
+		case "enter":
+			// Apply custom date and close picker
+			d.tokenCollector.SetLookback(d.lookbackCustomDate)
+			d.lookbackCustomMode = false
+			d.lookbackMode = false
+			return d, d.collectMetrics()
+		case "tab", "right":
+			d.lookbackEditField = (d.lookbackEditField + 1) % 5
+			return d, nil
+		case "shift+tab", "left":
+			d.lookbackEditField = (d.lookbackEditField + 4) % 5
+			return d, nil
+		case "up":
+			d.adjustCustomDate(1)
+			return d, nil
+		case "down":
+			d.adjustCustomDate(-1)
+			return d, nil
+		}
+		return d, nil
+	}
+
+	// Preset selection mode
+	switch msg.String() {
+	case "esc", "l", "q":
+		d.lookbackMode = false
+		return d, nil
+	case "up", "k":
+		if d.lookbackSelectedIndex > 0 {
+			d.lookbackSelectedIndex--
+		}
+		return d, nil
+	case "down", "j":
+		if d.lookbackSelectedIndex < len(d.lookbackPresets)-1 {
+			d.lookbackSelectedIndex++
+		}
+		return d, nil
+	case "enter", " ":
+		preset := d.lookbackPresets[d.lookbackSelectedIndex]
+		if preset.GetTime == nil {
+			// Custom mode - enter custom date picker
+			d.lookbackCustomMode = true
+			d.lookbackEditField = 0
+			return d, nil
+		}
+		// Apply preset and close picker
+		d.tokenCollector.SetLookback(preset.GetTime())
+		d.lookbackMode = false
+		return d, d.collectMetrics()
+	}
+	return d, nil
+}
+
+// adjustCustomDate adjusts the custom date based on current edit field
+func (d *Dashboard) adjustCustomDate(delta int) {
+	switch d.lookbackEditField {
+	case 0: // Year
+		d.lookbackCustomDate = d.lookbackCustomDate.AddDate(delta, 0, 0)
+	case 1: // Month
+		d.lookbackCustomDate = d.lookbackCustomDate.AddDate(0, delta, 0)
+	case 2: // Day
+		d.lookbackCustomDate = d.lookbackCustomDate.AddDate(0, 0, delta)
+	case 3: // Hour
+		d.lookbackCustomDate = d.lookbackCustomDate.Add(time.Duration(delta) * time.Hour)
+	case 4: // Minute
+		d.lookbackCustomDate = d.lookbackCustomDate.Add(time.Duration(delta) * time.Minute)
+	}
+
+	// Clamp to not be in the future
+	if d.lookbackCustomDate.After(time.Now()) {
+		d.lookbackCustomDate = time.Now()
+	}
+}
+
 // View renders the dashboard
 func (d *Dashboard) View() string {
 	if d.width == 0 {
@@ -169,8 +327,11 @@ func (d *Dashboard) View() string {
 
 	var content string
 
-	// Check if in help mode
-	if d.helpMode > 0 {
+	// Check if in lookback picker mode
+	if d.lookbackMode {
+		content = d.renderLookbackPicker()
+	} else if d.helpMode > 0 {
+		// Check if in help mode
 		content = d.renderHelpView()
 	} else {
 		switch d.layoutMode {
@@ -545,10 +706,17 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lines = append(lines, fmt.Sprintf("Avg: %s", metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate)))
 	}
 
-	// Session duration (how long ago session started)
+	// Lookback period info
+	if !d.tokenMetrics.LookbackFrom.IsZero() {
+		lookbackStr := d.tokenMetrics.LookbackFrom.Format("Mon 3:04pm")
+		spanDuration := time.Since(d.tokenMetrics.LookbackFrom)
+		lines = append(lines, fmt.Sprintf("Since: %s (%s)", lookbackStr, formatDuration(spanDuration)))
+	}
+
+	// Session duration (how long ago first activity in the lookback period)
 	if !d.tokenMetrics.EarliestTimestamp.IsZero() {
 		duration := time.Since(d.tokenMetrics.EarliestTimestamp)
-		lines = append(lines, fmt.Sprintf("Started: %s ago", formatDuration(duration)))
+		lines = append(lines, fmt.Sprintf("Active: %s ago", formatDuration(duration)))
 	}
 
 	// Per-model breakdown with costs (sorted by cost, highest first)
@@ -823,7 +991,130 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	return line
 }
 
-// renderHelpView renders the help screen for the current help mode
+// renderLookbackPicker renders the lookback time picker overlay
+func (d *Dashboard) renderLookbackPicker() string {
+	panelHeight := d.height - 3
+	panelWidth := 60
+	if panelWidth > d.width-4 {
+		panelWidth = d.width - 4
+	}
+
+	var lines []string
+
+	// Title
+	lines = append(lines, boldStyle.Render("📅 Token Usage Lookback"))
+	lines = append(lines, "")
+
+	if d.lookbackCustomMode {
+		// Custom date/time picker
+		lines = append(lines, "Set custom start date/time:")
+		lines = append(lines, "")
+
+		// Date/time fields
+		year := d.lookbackCustomDate.Year()
+		month := int(d.lookbackCustomDate.Month())
+		day := d.lookbackCustomDate.Day()
+		hour := d.lookbackCustomDate.Hour()
+		minute := d.lookbackCustomDate.Minute()
+
+		// Highlight selected field
+		fieldStyle := dimStyle
+		selectedStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("#00aaff")).
+			Foreground(lipgloss.Color("#000000")).
+			Bold(true)
+
+		yearStr := fmt.Sprintf(" %04d ", year)
+		monthStr := fmt.Sprintf(" %02d ", month)
+		dayStr := fmt.Sprintf(" %02d ", day)
+		hourStr := fmt.Sprintf(" %02d ", hour)
+		minStr := fmt.Sprintf(" %02d ", minute)
+
+		if d.lookbackEditField == 0 {
+			yearStr = selectedStyle.Render(yearStr)
+		} else {
+			yearStr = fieldStyle.Render(yearStr)
+		}
+		if d.lookbackEditField == 1 {
+			monthStr = selectedStyle.Render(monthStr)
+		} else {
+			monthStr = fieldStyle.Render(monthStr)
+		}
+		if d.lookbackEditField == 2 {
+			dayStr = selectedStyle.Render(dayStr)
+		} else {
+			dayStr = fieldStyle.Render(dayStr)
+		}
+		if d.lookbackEditField == 3 {
+			hourStr = selectedStyle.Render(hourStr)
+		} else {
+			hourStr = fieldStyle.Render(hourStr)
+		}
+		if d.lookbackEditField == 4 {
+			minStr = selectedStyle.Render(minStr)
+		} else {
+			minStr = fieldStyle.Render(minStr)
+		}
+
+		lines = append(lines, fmt.Sprintf("  Date: %s-%s-%s", yearStr, monthStr, dayStr))
+		lines = append(lines, fmt.Sprintf("  Time: %s:%s", hourStr, minStr))
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("  ↑/↓: adjust value  ←/→/Tab: change field"))
+		lines = append(lines, dimStyle.Render("  Enter: apply  Esc: back to presets"))
+	} else {
+		// Preset selection
+		lines = append(lines, "Select a lookback period:")
+		lines = append(lines, "")
+
+		for i, preset := range d.lookbackPresets {
+			prefix := "  "
+			style := dimStyle
+			if i == d.lookbackSelectedIndex {
+				prefix = "▶ "
+				style = successStyle
+			}
+
+			// Show time for presets with GetTime
+			timeStr := ""
+			if preset.GetTime != nil {
+				t := preset.GetTime()
+				if !t.IsZero() {
+					timeStr = fmt.Sprintf(" (%s)", t.Format("Jan 2 3:04pm"))
+				}
+			}
+
+			lines = append(lines, fmt.Sprintf("%s%s%s",
+				prefix,
+				style.Render(preset.Name),
+				dimStyle.Render(timeStr)))
+			lines = append(lines, fmt.Sprintf("   %s", dimStyle.Render(preset.Description)))
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("  ↑/↓/j/k: navigate  Enter/Space: select  Esc/l: close"))
+	}
+
+	// Build the picker panel
+	content := strings.Join(lines, "\n")
+
+	pickerStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#ffaa00")).
+		Padding(1, 2).
+		Width(panelWidth).
+		Height(panelHeight)
+
+	picker := pickerStyle.Render(content)
+
+	// Center the picker on screen
+	leftPad := (d.width - panelWidth) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+
+	return lipgloss.NewStyle().PaddingLeft(leftPad).Render(picker)
+}
+
 func (d *Dashboard) renderHelpView() string {
 	panelHeight := d.height - 3
 	totalPanelWidth := d.width - 2 // Match normal view width calculation
@@ -865,12 +1156,15 @@ Tokens:
 Rates:
   Rate: Current tok/min (60s window)
   Avg: Session average tok/min
-  Started: Session duration
 
-Models: Claude models used (one per line)
-  Example: claude-sonnet-4-5-20250929
+Time:
+  Since: Lookback start (default: Mon 9am)
+  Active: Time since first activity
 
-Data aggregated from all JSONL files in projects dir.`
+Lookback: Press 'l' to open lookback picker
+  Choose presets or set custom date/time
+
+Models: Per-model breakdown with costs`
 
 	case 3: // TMUX Sessions
 		title = "TMUX Sessions Panel"
@@ -1002,9 +1296,9 @@ func (d *Dashboard) renderStatusBar() string {
 	}
 
 	// Build shortcuts - include 'u' if update available
-	shortcuts := "h:help q:quit r:refresh"
+	shortcuts := "l:lookback h:help q:quit r:refresh"
 	if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
-		shortcuts = "u:update h:help q:quit r:refresh"
+		shortcuts = "u:update l:lookback h:help q:quit r:refresh"
 	}
 	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
@@ -1014,9 +1308,9 @@ func (d *Dashboard) renderStatusBar() string {
 
 	if availableSpace < 4 {
 		// Not enough space, use ultra-compact format
-		compactShortcuts := "h q r"
+		compactShortcuts := "l h q r"
 		if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-			compactShortcuts = "u h q r"
+			compactShortcuts = "u l h q r"
 		}
 		return statusBarStyle.Render(fmt.Sprintf("%s v%s %dx%d %s",
 			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))

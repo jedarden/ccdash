@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	version = "0.3.8"
+	version = "0.4.0"
 )
 
 func main() {
@@ -72,6 +72,8 @@ func printHelp() {
 	fmt.Println("KEYBOARD SHORTCUTS:")
 	fmt.Println("  q, Ctrl+C    Quit the dashboard")
 	fmt.Println("  r            Refresh metrics immediately")
+	fmt.Println("  h            Cycle through help panels")
+	fmt.Println("  l            Open token usage lookback picker")
 	fmt.Println("  1            Focus on System Resources panel")
 	fmt.Println("  2            Focus on Token Usage panel")
 	fmt.Println("  3            Focus on TMUX Sessions panel")
