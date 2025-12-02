@@ -663,8 +663,26 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 
 	var lines []string
 
-	// Title (with emoji like unified-dashboard)
-	lines = append(lines, successStyle.Render("💰 Token Usage"))
+	// Title with lookback info aligned right
+	title := successStyle.Render("💰 Token Usage")
+	lookbackInfo := ""
+	if d.tokenMetrics != nil && !d.tokenMetrics.LookbackFrom.IsZero() {
+		lookbackInfo = dimStyle.Render(d.tokenMetrics.LookbackFrom.Format("Mon 3:04pm"))
+	} else if d.tokenMetrics != nil {
+		lookbackInfo = dimStyle.Render("All time")
+	}
+
+	// Calculate content width and spacing for right alignment
+	contentWidth := width - 4 // Account for borders and padding
+	titleLen := lipgloss.Width(title)
+	lookbackLen := lipgloss.Width(lookbackInfo)
+	spacing := contentWidth - titleLen - lookbackLen
+	if spacing < 1 {
+		spacing = 1
+	}
+
+	headerLine := title + strings.Repeat(" ", spacing) + lookbackInfo
+	lines = append(lines, headerLine)
 
 	if !d.tokenMetrics.Available {
 		lines = append(lines, errorStyle.Render("Not Available"))
@@ -706,14 +724,13 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lines = append(lines, fmt.Sprintf("Avg: %s", metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate)))
 	}
 
-	// Lookback period info
+	// Time span info
 	if !d.tokenMetrics.LookbackFrom.IsZero() {
-		lookbackStr := d.tokenMetrics.LookbackFrom.Format("Mon 3:04pm")
 		spanDuration := time.Since(d.tokenMetrics.LookbackFrom)
-		lines = append(lines, fmt.Sprintf("Since: %s (%s)", lookbackStr, formatDuration(spanDuration)))
+		lines = append(lines, fmt.Sprintf("Span: %s", formatDuration(spanDuration)))
 	}
 
-	// Session duration (how long ago first activity in the lookback period)
+	// First activity within lookback period
 	if !d.tokenMetrics.EarliestTimestamp.IsZero() {
 		duration := time.Since(d.tokenMetrics.EarliestTimestamp)
 		lines = append(lines, fmt.Sprintf("Active: %s ago", formatDuration(duration)))
