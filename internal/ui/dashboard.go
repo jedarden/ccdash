@@ -693,55 +693,83 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		return style.Width(width).Height(height).Render(content)
 	}
 
-	// Token counts - always compact format
-	lines = append(lines, fmt.Sprintf("In:  %s", metrics.FormatTokens(d.tokenMetrics.InputTokens)))
-	lines = append(lines, fmt.Sprintf("Out: %s", metrics.FormatTokens(d.tokenMetrics.OutputTokens)))
+	// Token counts - aligned format
+	// Determine which optional fields are present to calculate max label width
+	contentWidth = width - 6 // Account for padding and borders
+	hasCacheRead := d.tokenMetrics.CacheReadTokens > 0
+	hasCacheCreate := d.tokenMetrics.CacheCreationTokens > 0
+	hasRate := d.tokenMetrics.Rate > 0
+	hasAvg := d.tokenMetrics.SessionAvgRate > 0
+	hasSpan := !d.tokenMetrics.LookbackFrom.IsZero()
+	hasActive := !d.tokenMetrics.EarliestTimestamp.IsZero()
+
+	// Calculate max label width based on which fields are shown
+	// Labels: In, Out, Cache Read, Cache Create, Total, Cost, Rate, Avg, Span, Active
+	maxLabelWidth := 5 // "Total" or "Cost:" minimum
+	if hasCacheRead && len("Cache Read") > maxLabelWidth {
+		maxLabelWidth = len("Cache Read")
+	}
+	if hasCacheCreate && len("Cache Create") > maxLabelWidth {
+		maxLabelWidth = len("Cache Create")
+	}
+	if hasActive && len("Active") > maxLabelWidth {
+		maxLabelWidth = len("Active")
+	}
+
+	// Helper to format aligned line
+	formatAligned := func(label, value string) string {
+		padding := maxLabelWidth - len(label)
+		// Reduce padding for narrow panes
+		if contentWidth < 35 {
+			padding = 0
+		} else if contentWidth < 40 {
+			padding = padding / 2
+		}
+		return fmt.Sprintf("%s:%s %s", label, strings.Repeat(" ", padding), value)
+	}
+
+	lines = append(lines, formatAligned("In", metrics.FormatTokens(d.tokenMetrics.InputTokens)))
+	lines = append(lines, formatAligned("Out", metrics.FormatTokens(d.tokenMetrics.OutputTokens)))
 
 	// Cache on separate lines
-	if d.tokenMetrics.CacheReadTokens > 0 {
-		lines = append(lines, fmt.Sprintf("Cache Read: %s",
-			metrics.FormatTokens(d.tokenMetrics.CacheReadTokens)))
+	if hasCacheRead {
+		lines = append(lines, formatAligned("Cache Read", metrics.FormatTokens(d.tokenMetrics.CacheReadTokens)))
 	}
-	if d.tokenMetrics.CacheCreationTokens > 0 {
-		lines = append(lines, fmt.Sprintf("Cache Create: %s",
-			metrics.FormatTokens(d.tokenMetrics.CacheCreationTokens)))
+	if hasCacheCreate {
+		lines = append(lines, formatAligned("Cache Create", metrics.FormatTokens(d.tokenMetrics.CacheCreationTokens)))
 	}
 
-	lines = append(lines, fmt.Sprintf("Total: %s",
-		boldStyle.Render(metrics.FormatTokens(d.tokenMetrics.TotalTokens))))
+	lines = append(lines, formatAligned("Total", boldStyle.Render(metrics.FormatTokens(d.tokenMetrics.TotalTokens))))
 
 	// Total cost with emphasis
-	lines = append(lines, fmt.Sprintf("Cost:  %s",
-		costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
+	lines = append(lines, formatAligned("Cost", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
 
 	// Compact rates
-	if d.tokenMetrics.Rate > 0 {
-		lines = append(lines, fmt.Sprintf("Rate: %s", metrics.FormatTokenRate(d.tokenMetrics.Rate)))
+	if hasRate {
+		lines = append(lines, formatAligned("Rate", metrics.FormatTokenRate(d.tokenMetrics.Rate)))
 	}
 
 	// Session average
-	if d.tokenMetrics.SessionAvgRate > 0 {
-		lines = append(lines, fmt.Sprintf("Avg: %s", metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate)))
+	if hasAvg {
+		lines = append(lines, formatAligned("Avg", metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate)))
 	}
 
 	// Time span info
-	if !d.tokenMetrics.LookbackFrom.IsZero() {
+	if hasSpan {
 		spanDuration := time.Since(d.tokenMetrics.LookbackFrom)
-		lines = append(lines, fmt.Sprintf("Span: %s", formatDuration(spanDuration)))
+		lines = append(lines, formatAligned("Span", formatDuration(spanDuration)))
 	}
 
 	// First activity within lookback period
-	if !d.tokenMetrics.EarliestTimestamp.IsZero() {
+	if hasActive {
 		duration := time.Since(d.tokenMetrics.EarliestTimestamp)
-		lines = append(lines, fmt.Sprintf("Active: %s ago", formatDuration(duration)))
+		lines = append(lines, formatAligned("Active", formatDuration(duration)+" ago"))
 	}
 
 	// Per-model breakdown with costs (sorted by cost, highest first)
 	if len(d.tokenMetrics.ModelUsages) > 0 {
 		lines = append(lines, "") // Empty line separator
 		lines = append(lines, boldStyle.Render("Per-Model Costs:"))
-
-		contentWidth := width - 6 // Account for padding and borders
 
 		// First pass: calculate max display name length for alignment
 		maxNameLen := 0
