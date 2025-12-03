@@ -742,18 +742,29 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lines = append(lines, boldStyle.Render("Per-Model Costs:"))
 
 		contentWidth := width - 6 // Account for padding and borders
-		for _, usage := range d.tokenMetrics.ModelUsages {
-			// Format: "  model-name: $X.XX (XXX,XXX tok)"
-			modelName := usage.Model
 
-			// Shorten common model name patterns for display
-			displayName := shortenModelName(modelName)
+		// First pass: calculate max display name length for alignment
+		maxNameLen := 0
+		displayNames := make([]string, len(d.tokenMetrics.ModelUsages))
+		for i, usage := range d.tokenMetrics.ModelUsages {
+			displayName := shortenModelName(usage.Model)
 
 			// Truncate if still too long
-			maxNameLen := contentWidth - 20 // Leave room for cost and tokens
-			if len(displayName) > maxNameLen && maxNameLen > 3 {
-				displayName = displayName[:maxNameLen-3] + "..."
+			maxAllowedLen := contentWidth - 20 // Leave room for cost and tokens
+			if len(displayName) > maxAllowedLen && maxAllowedLen > 3 {
+				displayName = displayName[:maxAllowedLen-3] + "..."
 			}
+
+			displayNames[i] = displayName
+			if len(displayName) > maxNameLen {
+				maxNameLen = len(displayName)
+			}
+		}
+
+		// Second pass: render with alignment
+		for i, usage := range d.tokenMetrics.ModelUsages {
+			displayName := displayNames[i]
+			modelName := usage.Model
 
 			costStr := metrics.FormatCost(usage.Cost)
 			tokStr := metrics.FormatTokens(usage.TotalTokens)
@@ -770,8 +781,19 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 				modelStyle = dimStyle
 			}
 
-			line := fmt.Sprintf("  %s: %s (%s)",
+			// Calculate padding for alignment
+			// When pane is narrow, reduce padding first
+			padding := maxNameLen - len(displayName)
+			// If content width is tight, reduce alignment padding
+			if contentWidth < 35 {
+				padding = 0 // No alignment padding for narrow panes
+			} else if contentWidth < 40 {
+				padding = padding / 2 // Reduce padding for somewhat narrow panes
+			}
+
+			line := fmt.Sprintf("  %s:%s %s (%s)",
 				modelStyle.Render(displayName),
+				strings.Repeat(" ", padding),
 				costStyle.Render(costStr),
 				dimStyle.Render(tokStr+" tok"))
 			lines = append(lines, line)
