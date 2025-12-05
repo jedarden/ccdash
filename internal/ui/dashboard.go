@@ -883,8 +883,42 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 
 	var lines []string
 
-	// Title (with emoji like unified-dashboard)
-	lines = append(lines, successStyle.Render("📺 TMUX Sessions"))
+	// Calculate content width for right-alignment
+	contentWidth := width - 4 // Account for borders and padding
+
+	// Count sessions by status
+	statusCounts := make(map[metrics.SessionStatus]int)
+	for _, session := range d.tmuxMetrics.Sessions {
+		statusCounts[session.Status]++
+	}
+
+	// Build status summary (right-justified)
+	var statusParts []string
+	if count := statusCounts[metrics.StatusWorking]; count > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("🟢%d", count))
+	}
+	if count := statusCounts[metrics.StatusReady]; count > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("🔴%d", count))
+	}
+	if count := statusCounts[metrics.StatusActive]; count > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("🟡%d", count))
+	}
+	if count := statusCounts[metrics.StatusError]; count > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("⚠️%d", count))
+	}
+	statusSummary := strings.Join(statusParts, " ")
+
+	// Title with total count and status summary right-justified
+	title := successStyle.Render(fmt.Sprintf("📺 TMUX Sessions (%d)", d.tmuxMetrics.Total))
+	titleLen := lipgloss.Width(title)
+	summaryLen := lipgloss.Width(statusSummary)
+	spacing := contentWidth - titleLen - summaryLen
+	if spacing < 1 {
+		spacing = 1
+	}
+
+	headerLine := title + strings.Repeat(" ", spacing) + statusSummary
+	lines = append(lines, headerLine)
 
 	if !d.tmuxMetrics.Available {
 		lines = append(lines, errorStyle.Render("Not Available"))
@@ -895,9 +929,6 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		return style.Width(width).Height(height).Render(content)
 	}
 
-	// Session count
-	lines = append(lines, fmt.Sprintf("Total: %d", d.tmuxMetrics.Total))
-
 	if len(d.tmuxMetrics.Sessions) == 0 {
 		lines = append(lines, "No active sessions")
 		content := strings.Join(lines, "\n")
@@ -905,8 +936,8 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	}
 
 	// Calculate available lines for sessions
-	// height includes borders, subtract: title(1) + total(1) + borders(2) = 4 lines overhead
-	availableLines := height - 4
+	// height includes borders, subtract: title(1) + borders(2) = 3 lines overhead
+	availableLines := height - 3
 	if availableLines < 1 {
 		availableLines = 1
 	}

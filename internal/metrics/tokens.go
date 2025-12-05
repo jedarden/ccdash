@@ -45,8 +45,11 @@ type TokenMetrics struct {
 
 // TokenCollector collects and aggregates token usage from Claude Code sessions
 type TokenCollector struct {
-	projectsDir string
+	projectsDir  string
 	lookbackFrom time.Time // Only include data from this time onwards
+	cache        *TokenCache
+	// Track file line counts for incremental processing
+	fileLineCache map[string]int64
 }
 
 // GetMondayNineAM returns the most recent Monday at 9am local time
@@ -76,11 +79,18 @@ func GetMondayNineAM() time.Time {
 func NewTokenCollector() *TokenCollector {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return &TokenCollector{projectsDir: "", lookbackFrom: GetMondayNineAM()}
+		return &TokenCollector{
+			projectsDir:   "",
+			lookbackFrom:  GetMondayNineAM(),
+			cache:         NewTokenCache(),
+			fileLineCache: make(map[string]int64),
+		}
 	}
 	return &TokenCollector{
-		projectsDir:  filepath.Join(home, ".claude", "projects"),
-		lookbackFrom: GetMondayNineAM(),
+		projectsDir:   filepath.Join(home, ".claude", "projects"),
+		lookbackFrom:  GetMondayNineAM(),
+		cache:         NewTokenCache(),
+		fileLineCache: make(map[string]int64),
 	}
 }
 
@@ -88,17 +98,29 @@ func NewTokenCollector() *TokenCollector {
 func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return &TokenCollector{projectsDir: "", lookbackFrom: lookbackFrom}
+		return &TokenCollector{
+			projectsDir:   "",
+			lookbackFrom:  lookbackFrom,
+			cache:         NewTokenCache(),
+			fileLineCache: make(map[string]int64),
+		}
 	}
 	return &TokenCollector{
-		projectsDir:  filepath.Join(home, ".claude", "projects"),
-		lookbackFrom: lookbackFrom,
+		projectsDir:   filepath.Join(home, ".claude", "projects"),
+		lookbackFrom:  lookbackFrom,
+		cache:         NewTokenCache(),
+		fileLineCache: make(map[string]int64),
 	}
 }
 
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
-	return &TokenCollector{projectsDir: path, lookbackFrom: GetMondayNineAM()}
+	return &TokenCollector{
+		projectsDir:   path,
+		lookbackFrom:  GetMondayNineAM(),
+		cache:         NewTokenCache(),
+		fileLineCache: make(map[string]int64),
+	}
 }
 
 // SetLookback sets the lookback time filter
@@ -146,6 +168,8 @@ type timestampedTokens struct {
 }
 
 // Collect gathers token metrics from all JSONL files in the projects directory
+// Uses two-tier processing: files within lookback window are processed first (real-time),
+// then historical data is loaded from cache for entries outside the lookback window.
 func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics := &TokenMetrics{
 		Available:    false,
@@ -190,11 +214,15 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		return metrics, nil
 	}
 
-	// Aggregate data from all files
+	// TWO-TIER PROCESSING:
+	// Tier 1: Process entries within lookback window (real-time, fresh data)
+	// Tier 2: Use cached data for historical entries (outside lookback window)
+
 	var allTimestamps []timestampedTokens
 	modelSet := make(map[string]bool)
 	aggregatedModelMetrics := make(map[string]*perModelMetrics)
 
+	// Tier 1: Process files for entries within lookback window
 	for _, file := range files {
 		fileMetrics, timestamps, fileModelMetrics := tc.parseJSONLFile(file)
 		metrics.InputTokens += fileMetrics.InputTokens
@@ -217,6 +245,15 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 			aggregatedModelMetrics[model].cacheReadTokens += mm.cacheReadTokens
 			aggregatedModelMetrics[model].cacheCreationTokens += mm.cacheCreationTokens
 		}
+
+		// Tier 2: Cache historical data from this file for future use
+		// This processes entries BEFORE the lookback window and caches them
+		tc.cacheHistoricalData(file)
+	}
+
+	// Save cache periodically (every collection cycle)
+	if tc.cache != nil {
+		tc.cache.Save()
 	}
 
 	// Calculate total tokens
@@ -498,6 +535,100 @@ func getPricingForModel(model string) ModelPricing {
 	}
 
 	return defaultPricing
+}
+
+// cacheHistoricalData processes and caches entries before the lookback window
+// This implements Tier 2 of the two-tier processing system
+func (tc *TokenCollector) cacheHistoricalData(filename string) {
+	if tc.cache == nil || tc.lookbackFrom.IsZero() {
+		return // No cache or no lookback filter = nothing to cache
+	}
+
+	// Check file modification time
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return
+	}
+
+	// Skip if cache is fresh
+	if !tc.cache.IsStale(filename, fileInfo.ModTime()) {
+		return
+	}
+
+	// Parse file for historical entries (before lookback)
+	file, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	cached := &CachedTokenData{
+		Models:       make(map[string]int64),
+		ModelCosts:   make(map[string]float64),
+		LastModified: fileInfo.ModTime(),
+	}
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	var lineCount int64
+	for scanner.Scan() {
+		lineCount++
+
+		var msg claudeMessage
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+
+		if msg.Type != "assistant" || msg.Message.Usage.OutputTokens == 0 {
+			continue
+		}
+
+		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
+		if err != nil {
+			continue
+		}
+
+		// Only cache entries BEFORE the lookback window
+		if timestamp.After(tc.lookbackFrom) || timestamp.Equal(tc.lookbackFrom) {
+			continue
+		}
+
+		usage := msg.Message.Usage
+		cached.InputTokens += usage.InputTokens
+		cached.OutputTokens += usage.OutputTokens
+		cached.CacheReadTokens += usage.CacheReadInputTokens
+
+		cacheCreation := usage.CacheCreationInputTokens
+		if cacheCreation == 0 {
+			cacheCreation = usage.CacheCreation.Ephemeral5mInputTokens +
+				usage.CacheCreation.Ephemeral1hInputTokens
+		}
+		cached.CacheCreationTokens += cacheCreation
+
+		// Track per-model data
+		if msg.Message.Model != "" {
+			totalTokens := usage.InputTokens + usage.OutputTokens + usage.CacheReadInputTokens + cacheCreation
+			cached.Models[msg.Message.Model] += totalTokens
+
+			// Calculate cost for this model
+			pricing := getPricingForModel(msg.Message.Model)
+			inputCost := float64(usage.InputTokens) * pricing.InputPerMillion / 1_000_000
+			outputCost := float64(usage.OutputTokens) * pricing.OutputPerMillion / 1_000_000
+			cacheReadCost := float64(usage.CacheReadInputTokens) * pricing.CacheReadPerMillion / 1_000_000
+			cacheCreateCost := float64(cacheCreation) * pricing.CacheCreatePerMillion / 1_000_000
+			cached.ModelCosts[msg.Message.Model] += inputCost + outputCost + cacheReadCost + cacheCreateCost
+		}
+	}
+
+	cached.LastProcessedLine = lineCount
+	tc.cache.Set(filename, cached)
+}
+
+// GetCache returns the token cache (useful for accessing historical data)
+func (tc *TokenCollector) GetCache() *TokenCache {
+	return tc.cache
 }
 
 // calculateCost estimates the cost based on model-specific pricing
