@@ -943,7 +943,7 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	}
 
 	sessionCount := len(d.tmuxMetrics.Sessions)
-	contentWidth := width - 4 // -4 for borders (2) and padding (2)
+	contentWidth = width - 4 // -4 for borders (2) and padding (2)
 
 	// Determine columns dynamically based on session count and available space
 	// Start with 1 column, expand to 2 if sessions won't fit
