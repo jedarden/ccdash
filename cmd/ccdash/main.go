@@ -10,9 +10,9 @@ import (
 	"golang.org/x/term"
 )
 
-const (
-	version = "0.5.0"
-)
+// version is set at build time via -ldflags "-X main.version=vX.X.X"
+// If not set, defaults to "dev" for local development builds
+var version = "dev"
 
 func main() {
 	// Parse command-line flags

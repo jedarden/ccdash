@@ -13,8 +13,11 @@ GOMOD=$(GOCMD) mod
 GOINSTALL=$(GOCMD) install
 GOCLEAN=$(GOCMD) clean
 
-# Build flags
-LDFLAGS=-ldflags "-s -w"
+# Version - set via environment variable or defaults to git tag/dev
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+# Build flags - inject version at build time
+LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 
 # Default target
 all: build
@@ -79,6 +82,19 @@ vet:
 
 ## lint: Run all quality checks (fmt, vet)
 lint: fmt vet
+
+## release: Build release binaries for all platforms (requires VERSION env var)
+release:
+	@if [ "$(VERSION)" = "dev" ]; then echo "Error: VERSION must be set (e.g., make release VERSION=v0.6.0)"; exit 1; fi
+	@echo "Building release $(VERSION) for all platforms..."
+	@mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-linux-amd64 ./cmd/ccdash
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-linux-arm64 ./cmd/ccdash
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-darwin-amd64 ./cmd/ccdash
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-darwin-arm64 ./cmd/ccdash
+	@cd bin && for f in ccdash-*; do sha256sum "$$f" > "$$f.sha256" 2>/dev/null || shasum -a 256 "$$f" > "$$f.sha256"; done
+	@echo "Release binaries built in bin/"
+	@ls -la bin/
 
 ## help: Display this help message
 help:
