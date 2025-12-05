@@ -30,14 +30,14 @@ type TokenMetrics struct {
 	CacheCreationTokens int64         `json:"cache_creation_tokens"`
 	TotalTokens         int64         `json:"total_tokens"`
 	TotalCost           float64       `json:"total_cost"`
-	Rate                float64       `json:"rate"`              // tokens/min over 60s window
-	SessionAvgRate      float64       `json:"session_avg_rate"`  // average tokens/min for entire session
+	Rate                float64       `json:"rate"`             // tokens/min over 60s window
+	SessionAvgRate      float64       `json:"session_avg_rate"` // average tokens/min for entire session
 	TimeSpan            time.Duration `json:"time_span"`
 	EarliestTimestamp   time.Time     `json:"earliest_timestamp"`
 	LatestTimestamp     time.Time     `json:"latest_timestamp"`
-	LookbackFrom        time.Time     `json:"lookback_from"`     // Start of measurement period
+	LookbackFrom        time.Time     `json:"lookback_from"` // Start of measurement period
 	Models              []string      `json:"models"`
-	ModelUsages         []ModelUsage  `json:"model_usages"`      // Per-model breakdown
+	ModelUsages         []ModelUsage  `json:"model_usages"` // Per-model breakdown
 	Available           bool          `json:"available"`
 	Error               string        `json:"error,omitempty"`
 	LastUpdate          time.Time     `json:"last_update"`
@@ -48,8 +48,6 @@ type TokenCollector struct {
 	projectsDir  string
 	lookbackFrom time.Time // Only include data from this time onwards
 	cache        *TokenCache
-	// Track file line counts for incremental processing
-	fileLineCache map[string]int64
 }
 
 // GetMondayNineAM returns the most recent Monday at 9am local time
@@ -80,17 +78,15 @@ func NewTokenCollector() *TokenCollector {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return &TokenCollector{
-			projectsDir:   "",
-			lookbackFrom:  GetMondayNineAM(),
-			cache:         NewTokenCache(),
-			fileLineCache: make(map[string]int64),
+			projectsDir:  "",
+			lookbackFrom: GetMondayNineAM(),
+			cache:        NewTokenCache(),
 		}
 	}
 	return &TokenCollector{
-		projectsDir:   filepath.Join(home, ".claude", "projects"),
-		lookbackFrom:  GetMondayNineAM(),
-		cache:         NewTokenCache(),
-		fileLineCache: make(map[string]int64),
+		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		lookbackFrom: GetMondayNineAM(),
+		cache:        NewTokenCache(),
 	}
 }
 
@@ -99,27 +95,24 @@ func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return &TokenCollector{
-			projectsDir:   "",
-			lookbackFrom:  lookbackFrom,
-			cache:         NewTokenCache(),
-			fileLineCache: make(map[string]int64),
+			projectsDir:  "",
+			lookbackFrom: lookbackFrom,
+			cache:        NewTokenCache(),
 		}
 	}
 	return &TokenCollector{
-		projectsDir:   filepath.Join(home, ".claude", "projects"),
-		lookbackFrom:  lookbackFrom,
-		cache:         NewTokenCache(),
-		fileLineCache: make(map[string]int64),
+		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		lookbackFrom: lookbackFrom,
+		cache:        NewTokenCache(),
 	}
 }
 
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
 	return &TokenCollector{
-		projectsDir:   path,
-		lookbackFrom:  GetMondayNineAM(),
-		cache:         NewTokenCache(),
-		fileLineCache: make(map[string]int64),
+		projectsDir:  path,
+		lookbackFrom: GetMondayNineAM(),
+		cache:        NewTokenCache(),
 	}
 }
 
@@ -157,19 +150,12 @@ type usageData struct {
 
 // cacheCreation contains detailed cache creation token breakdown
 type cacheCreation struct {
-	Ephemeral5mInputTokens  int64 `json:"ephemeral_5m_input_tokens"`
-	Ephemeral1hInputTokens  int64 `json:"ephemeral_1h_input_tokens"`
-}
-
-// timestampedTokens represents tokens with their timestamp for rate calculation
-type timestampedTokens struct {
-	tokens    int64
-	timestamp time.Time
+	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
 }
 
 // Collect gathers token metrics from all JSONL files in the projects directory
-// Uses two-tier processing: files within lookback window are processed first (real-time),
-// then historical data is loaded from cache for entries outside the lookback window.
+// Uses SQLite for efficient lookback queries - data is indexed by timestamp
 func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics := &TokenMetrics{
 		Available:    false,
@@ -214,115 +200,203 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		return metrics, nil
 	}
 
-	// TWO-TIER PROCESSING:
-	// Tier 1: Process entries within lookback window (real-time, fresh data)
-	// Tier 2: Use cached data for historical entries (outside lookback window)
-
-	var allTimestamps []timestampedTokens
-	modelSet := make(map[string]bool)
-	aggregatedModelMetrics := make(map[string]*perModelMetrics)
-
-	// Tier 1: Process files for entries within lookback window
+	// Step 1: Ingest any new data from JSONL files into SQLite
 	for _, file := range files {
-		fileMetrics, timestamps, fileModelMetrics := tc.parseJSONLFile(file)
-		metrics.InputTokens += fileMetrics.InputTokens
-		metrics.OutputTokens += fileMetrics.OutputTokens
-		metrics.CacheReadTokens += fileMetrics.CacheReadTokens
-		metrics.CacheCreationTokens += fileMetrics.CacheCreationTokens
-		allTimestamps = append(allTimestamps, timestamps...)
-
-		for _, model := range fileMetrics.Models {
-			modelSet[model] = true
-		}
-
-		// Aggregate per-model metrics across files
-		for model, mm := range fileModelMetrics {
-			if _, exists := aggregatedModelMetrics[model]; !exists {
-				aggregatedModelMetrics[model] = &perModelMetrics{}
-			}
-			aggregatedModelMetrics[model].inputTokens += mm.inputTokens
-			aggregatedModelMetrics[model].outputTokens += mm.outputTokens
-			aggregatedModelMetrics[model].cacheReadTokens += mm.cacheReadTokens
-			aggregatedModelMetrics[model].cacheCreationTokens += mm.cacheCreationTokens
-		}
-
-		// Tier 2: Cache historical data from this file for future use
-		// This processes entries BEFORE the lookback window and caches them
-		tc.cacheHistoricalData(file)
+		tc.ingestJSONLFile(file)
 	}
 
-	// Save cache periodically (every collection cycle)
-	if tc.cache != nil {
-		tc.cache.Save()
+	// Step 2: Query SQLite for aggregated metrics based on lookback
+	aggregated, err := tc.cache.QueryTokensSince(tc.lookbackFrom)
+	if err != nil {
+		metrics.Error = fmt.Sprintf("Failed to query token cache: %v", err)
+		return metrics, nil
 	}
 
-	// Calculate total tokens
-	metrics.TotalTokens = metrics.InputTokens + metrics.OutputTokens +
-		metrics.CacheReadTokens + metrics.CacheCreationTokens
+	// Populate metrics from query results
+	metrics.InputTokens = aggregated.InputTokens
+	metrics.OutputTokens = aggregated.OutputTokens
+	metrics.CacheReadTokens = aggregated.CacheReadTokens
+	metrics.CacheCreationTokens = aggregated.CacheCreationTokens
+	metrics.TotalTokens = aggregated.InputTokens + aggregated.OutputTokens +
+		aggregated.CacheReadTokens + aggregated.CacheCreationTokens
+	metrics.EarliestTimestamp = aggregated.EarliestTimestamp
+	metrics.LatestTimestamp = aggregated.LatestTimestamp
 
-	// Convert model set to sorted slice (needed for cost calculation)
-	for model := range modelSet {
-		metrics.Models = append(metrics.Models, model)
+	if !aggregated.EarliestTimestamp.IsZero() && !aggregated.LatestTimestamp.IsZero() {
+		metrics.TimeSpan = aggregated.LatestTimestamp.Sub(aggregated.EarliestTimestamp)
 	}
-	sort.Strings(metrics.Models)
 
-	// Build per-model usage with costs
-	metrics.ModelUsages = make([]ModelUsage, 0, len(aggregatedModelMetrics))
+	// Build model list and per-model usage
 	var totalCost float64
-	for model, mm := range aggregatedModelMetrics {
+	metrics.ModelUsages = make([]ModelUsage, 0, len(aggregated.ModelMetrics))
+
+	for model, mm := range aggregated.ModelMetrics {
+		metrics.Models = append(metrics.Models, model)
+
 		pricing := getPricingForModel(model)
-		inputCost := float64(mm.inputTokens) * pricing.InputPerMillion / 1_000_000
-		outputCost := float64(mm.outputTokens) * pricing.OutputPerMillion / 1_000_000
-		cacheReadCost := float64(mm.cacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
-		cacheCreateCost := float64(mm.cacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
+		inputCost := float64(mm.InputTokens) * pricing.InputPerMillion / 1_000_000
+		outputCost := float64(mm.OutputTokens) * pricing.OutputPerMillion / 1_000_000
+		cacheReadCost := float64(mm.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
+		cacheCreateCost := float64(mm.CacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
 		modelCost := inputCost + outputCost + cacheReadCost + cacheCreateCost
 
 		usage := ModelUsage{
 			Model:               model,
-			InputTokens:         mm.inputTokens,
-			OutputTokens:        mm.outputTokens,
-			CacheReadTokens:     mm.cacheReadTokens,
-			CacheCreationTokens: mm.cacheCreationTokens,
-			TotalTokens:         mm.inputTokens + mm.outputTokens + mm.cacheReadTokens + mm.cacheCreationTokens,
+			InputTokens:         mm.InputTokens,
+			OutputTokens:        mm.OutputTokens,
+			CacheReadTokens:     mm.CacheReadTokens,
+			CacheCreationTokens: mm.CacheCreationTokens,
+			TotalTokens:         mm.InputTokens + mm.OutputTokens + mm.CacheReadTokens + mm.CacheCreationTokens,
 			Cost:                modelCost,
 		}
 		metrics.ModelUsages = append(metrics.ModelUsages, usage)
 		totalCost += modelCost
 	}
 
+	sort.Strings(metrics.Models)
+
 	// Sort model usages by cost (highest first)
 	sort.Slice(metrics.ModelUsages, func(i, j int) bool {
 		return metrics.ModelUsages[i].Cost > metrics.ModelUsages[j].Cost
 	})
 
-	// Set total cost from per-model calculations
 	metrics.TotalCost = totalCost
 
-	// Sort timestamps for rate calculations
-	sort.Slice(allTimestamps, func(i, j int) bool {
-		return allTimestamps[i].timestamp.Before(allTimestamps[j].timestamp)
-	})
-
-	// Calculate time span and timestamp tracking
-	if len(allTimestamps) > 0 {
-		metrics.EarliestTimestamp = allTimestamps[0].timestamp
-		metrics.LatestTimestamp = allTimestamps[len(allTimestamps)-1].timestamp
-		metrics.TimeSpan = metrics.LatestTimestamp.Sub(metrics.EarliestTimestamp)
-
-		// Calculate session average rate (tokens per minute)
-		if metrics.TimeSpan > 0 {
-			minutes := metrics.TimeSpan.Minutes()
-			if minutes > 0 {
-				metrics.SessionAvgRate = float64(metrics.TotalTokens) / minutes
-			}
+	// Calculate session average rate
+	if metrics.TimeSpan > 0 {
+		minutes := metrics.TimeSpan.Minutes()
+		if minutes > 0 {
+			metrics.SessionAvgRate = float64(metrics.TotalTokens) / minutes
 		}
+	}
 
-		// Calculate 60-second window rate
-		metrics.Rate = tc.calculate60sRate(allTimestamps)
+	// Calculate 60-second window rate from recent events
+	recentEvents, err := tc.cache.QueryRecentEvents(60)
+	if err == nil && len(recentEvents) > 0 {
+		metrics.Rate = tc.calculate60sRate(recentEvents)
 	}
 
 	metrics.Available = true
 	return metrics, nil
+}
+
+// ingestJSONLFile reads a JSONL file and inserts new events into SQLite
+func (tc *TokenCollector) ingestJSONLFile(filename string) {
+	if tc.cache == nil {
+		return
+	}
+
+	// Check file modification time
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return
+	}
+
+	// Get last processed state
+	lastLine, lastMod, exists := tc.cache.GetFileState(filename)
+
+	// If file hasn't been modified since last processing, skip
+	if exists && !fileInfo.ModTime().After(lastMod) {
+		return
+	}
+
+	// If file was modified (truncated/rewritten), invalidate and reprocess
+	if exists && fileInfo.ModTime().After(lastMod) {
+		// Check if file was truncated (new size < last line count implies rewrite)
+		// For safety, we'll just process from where we left off
+		// but if file was completely rewritten, invalidate
+		file, err := os.Open(filename)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+
+		// Count current lines
+		var currentLineCount int64
+		scanner := bufio.NewScanner(file)
+		buf := make([]byte, 0, 1024*1024)
+		scanner.Buffer(buf, 10*1024*1024)
+		for scanner.Scan() {
+			currentLineCount++
+		}
+
+		// If file has fewer lines than we processed, it was rewritten
+		if currentLineCount < lastLine {
+			tc.cache.InvalidateFile(filename)
+			lastLine = 0
+		}
+	}
+
+	// Open file for processing
+	file, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	var lineNumber int64
+	var events []TokenEvent
+
+	for scanner.Scan() {
+		lineNumber++
+
+		// Skip already processed lines
+		if lineNumber <= lastLine {
+			continue
+		}
+
+		var msg claudeMessage
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+
+		// Only process assistant messages with usage data
+		if msg.Type != "assistant" || msg.Message.Usage.OutputTokens == 0 {
+			continue
+		}
+
+		// Parse timestamp
+		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
+		if err != nil {
+			continue
+		}
+
+		usage := msg.Message.Usage
+		cacheCreation := usage.CacheCreationInputTokens
+		if cacheCreation == 0 {
+			cacheCreation = usage.CacheCreation.Ephemeral5mInputTokens +
+				usage.CacheCreation.Ephemeral1hInputTokens
+		}
+
+		events = append(events, TokenEvent{
+			Timestamp:           timestamp,
+			Model:               msg.Message.Model,
+			InputTokens:         usage.InputTokens,
+			OutputTokens:        usage.OutputTokens,
+			CacheReadTokens:     usage.CacheReadInputTokens,
+			CacheCreationTokens: cacheCreation,
+			SourceFile:          filename,
+			LineNumber:          lineNumber,
+		})
+
+		// Batch insert every 100 events
+		if len(events) >= 100 {
+			tc.cache.InsertTokenEventBatch(events)
+			events = events[:0]
+		}
+	}
+
+	// Insert remaining events
+	if len(events) > 0 {
+		tc.cache.InsertTokenEventBatch(events)
+	}
+
+	// Update file state
+	tc.cache.SetFileState(filename, lineNumber, fileInfo.ModTime())
 }
 
 // findProjectDir finds the Claude project directory for the given working directory
@@ -339,122 +413,26 @@ func (tc *TokenCollector) findProjectDir(cwd string) string {
 	return ""
 }
 
-// perModelMetrics tracks metrics for a single model during parsing
-type perModelMetrics struct {
-	inputTokens         int64
-	outputTokens        int64
-	cacheReadTokens     int64
-	cacheCreationTokens int64
-}
-
-// parseJSONLFile parses a single JSONL file and extracts token metrics
-func (tc *TokenCollector) parseJSONLFile(filename string) (TokenMetrics, []timestampedTokens, map[string]*perModelMetrics) {
-	metrics := TokenMetrics{}
-	var timestamps []timestampedTokens
-	modelSet := make(map[string]bool)
-	modelMetrics := make(map[string]*perModelMetrics)
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return metrics, timestamps, modelMetrics
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	// Increase buffer size for large lines
-	buf := make([]byte, 0, 1024*1024) // 1MB buffer
-	scanner.Buffer(buf, 10*1024*1024) // 10MB max
-
-	for scanner.Scan() {
-		var msg claudeMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			continue // Skip malformed lines
-		}
-
-		// Only process assistant messages with usage data
-		if msg.Type != "assistant" || msg.Message.Usage.OutputTokens == 0 {
-			continue
-		}
-
-		// Parse timestamp
-		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
-		if err != nil {
-			timestamp = time.Now()
-		}
-
-		// Skip entries before lookback time
-		if !tc.lookbackFrom.IsZero() && timestamp.Before(tc.lookbackFrom) {
-			continue
-		}
-
-		// Aggregate token counts
-		usage := msg.Message.Usage
-		metrics.InputTokens += usage.InputTokens
-		metrics.OutputTokens += usage.OutputTokens
-		metrics.CacheReadTokens += usage.CacheReadInputTokens
-
-		// Cache creation tokens can come from multiple fields
-		cacheCreation := usage.CacheCreationInputTokens
-		if cacheCreation == 0 {
-			cacheCreation = usage.CacheCreation.Ephemeral5mInputTokens +
-				usage.CacheCreation.Ephemeral1hInputTokens
-		}
-		metrics.CacheCreationTokens += cacheCreation
-
-		// Track total tokens for this message with timestamp
-		msgTotalTokens := usage.InputTokens + usage.OutputTokens +
-			usage.CacheReadInputTokens + cacheCreation
-		timestamps = append(timestamps, timestampedTokens{
-			tokens:    msgTotalTokens,
-			timestamp: timestamp,
-		})
-
-		// Track model and per-model metrics
-		if msg.Message.Model != "" {
-			modelSet[msg.Message.Model] = true
-
-			// Initialize per-model metrics if needed
-			if _, exists := modelMetrics[msg.Message.Model]; !exists {
-				modelMetrics[msg.Message.Model] = &perModelMetrics{}
-			}
-
-			// Accumulate per-model tokens
-			mm := modelMetrics[msg.Message.Model]
-			mm.inputTokens += usage.InputTokens
-			mm.outputTokens += usage.OutputTokens
-			mm.cacheReadTokens += usage.CacheReadInputTokens
-			mm.cacheCreationTokens += cacheCreation
-		}
-	}
-
-	// Convert model set to slice
-	for model := range modelSet {
-		metrics.Models = append(metrics.Models, model)
-	}
-
-	return metrics, timestamps, modelMetrics
-}
-
 // calculate60sRate calculates the token rate over the last 60 seconds
-func (tc *TokenCollector) calculate60sRate(timestamps []timestampedTokens) float64 {
-	if len(timestamps) == 0 {
+func (tc *TokenCollector) calculate60sRate(events []TimestampedTokens) float64 {
+	if len(events) == 0 {
 		return 0
 	}
 
 	// Get the most recent timestamp
-	lastTime := timestamps[len(timestamps)-1].timestamp
+	lastTime := events[len(events)-1].Timestamp
 	cutoffTime := lastTime.Add(-60 * time.Second)
 
 	// Sum tokens in the last 60 seconds
 	var totalTokens int64
 	var windowStart time.Time
 
-	for i := len(timestamps) - 1; i >= 0; i-- {
-		if timestamps[i].timestamp.Before(cutoffTime) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Timestamp.Before(cutoffTime) {
 			break
 		}
-		totalTokens += timestamps[i].tokens
-		windowStart = timestamps[i].timestamp
+		totalTokens += events[i].Tokens
+		windowStart = events[i].Timestamp
 	}
 
 	// Calculate rate (tokens per minute)
@@ -537,115 +515,17 @@ func getPricingForModel(model string) ModelPricing {
 	return defaultPricing
 }
 
-// cacheHistoricalData processes and caches entries before the lookback window
-// This implements Tier 2 of the two-tier processing system
-func (tc *TokenCollector) cacheHistoricalData(filename string) {
-	if tc.cache == nil || tc.lookbackFrom.IsZero() {
-		return // No cache or no lookback filter = nothing to cache
-	}
-
-	// Check file modification time
-	fileInfo, err := os.Stat(filename)
-	if err != nil {
-		return
-	}
-
-	// Skip if cache is fresh
-	if !tc.cache.IsStale(filename, fileInfo.ModTime()) {
-		return
-	}
-
-	// Parse file for historical entries (before lookback)
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	cached := &CachedTokenData{
-		Models:       make(map[string]int64),
-		ModelCosts:   make(map[string]float64),
-		LastModified: fileInfo.ModTime(),
-	}
-
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	var lineCount int64
-	for scanner.Scan() {
-		lineCount++
-
-		var msg claudeMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			continue
-		}
-
-		if msg.Type != "assistant" || msg.Message.Usage.OutputTokens == 0 {
-			continue
-		}
-
-		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
-		if err != nil {
-			continue
-		}
-
-		// Only cache entries BEFORE the lookback window
-		if timestamp.After(tc.lookbackFrom) || timestamp.Equal(tc.lookbackFrom) {
-			continue
-		}
-
-		usage := msg.Message.Usage
-		cached.InputTokens += usage.InputTokens
-		cached.OutputTokens += usage.OutputTokens
-		cached.CacheReadTokens += usage.CacheReadInputTokens
-
-		cacheCreation := usage.CacheCreationInputTokens
-		if cacheCreation == 0 {
-			cacheCreation = usage.CacheCreation.Ephemeral5mInputTokens +
-				usage.CacheCreation.Ephemeral1hInputTokens
-		}
-		cached.CacheCreationTokens += cacheCreation
-
-		// Track per-model data
-		if msg.Message.Model != "" {
-			totalTokens := usage.InputTokens + usage.OutputTokens + usage.CacheReadInputTokens + cacheCreation
-			cached.Models[msg.Message.Model] += totalTokens
-
-			// Calculate cost for this model
-			pricing := getPricingForModel(msg.Message.Model)
-			inputCost := float64(usage.InputTokens) * pricing.InputPerMillion / 1_000_000
-			outputCost := float64(usage.OutputTokens) * pricing.OutputPerMillion / 1_000_000
-			cacheReadCost := float64(usage.CacheReadInputTokens) * pricing.CacheReadPerMillion / 1_000_000
-			cacheCreateCost := float64(cacheCreation) * pricing.CacheCreatePerMillion / 1_000_000
-			cached.ModelCosts[msg.Message.Model] += inputCost + outputCost + cacheReadCost + cacheCreateCost
-		}
-	}
-
-	cached.LastProcessedLine = lineCount
-	tc.cache.Set(filename, cached)
-}
-
-// GetCache returns the token cache (useful for accessing historical data)
+// GetCache returns the token cache (useful for accessing the SQLite database directly)
 func (tc *TokenCollector) GetCache() *TokenCache {
 	return tc.cache
 }
 
-// calculateCost estimates the cost based on model-specific pricing
-func (tc *TokenCollector) calculateCost(metrics TokenMetrics) float64 {
-	// Determine pricing based on model used
-	pricing := defaultPricing
-	if len(metrics.Models) > 0 {
-		// Use the first model's pricing (typically there's only one model per session)
-		pricing = getPricingForModel(metrics.Models[0])
+// GetCacheDBPath returns the path to the SQLite database for external tools like DuckDB
+func (tc *TokenCollector) GetCacheDBPath() string {
+	if tc.cache != nil {
+		return tc.cache.GetDBPath()
 	}
-
-	inputCost := float64(metrics.InputTokens) * pricing.InputPerMillion / 1_000_000
-	outputCost := float64(metrics.OutputTokens) * pricing.OutputPerMillion / 1_000_000
-	cacheReadCost := float64(metrics.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
-	cacheCreateCost := float64(metrics.CacheCreationTokens) * pricing.CacheCreatePerMillion / 1_000_000
-
-	return inputCost + outputCost + cacheReadCost + cacheCreateCost
+	return ""
 }
 
 // FormatTokens formats a token count with thousands separators

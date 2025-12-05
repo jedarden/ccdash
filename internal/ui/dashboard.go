@@ -1237,6 +1237,8 @@ Memory/Swap: Used/Total with percentage bars
 
 Disk I/O: Read/write speeds in bytes/s or KB/s
 
+Net I/O: Network recv/sent speeds
+
 Load: 1min, 5min, 15min averages
   Indicates overall system activity level`
 
@@ -1256,18 +1258,29 @@ Rates:
   Avg: Session average tok/min
 
 Time:
-  Since: Lookback start (default: Mon 9am)
-  Active: Time since first activity
+  Span: Duration of lookback period
+  Active: Time since first activity in period
 
-Lookback: Press 'l' to open lookback picker
-  Choose presets or set custom date/time
+Lookback: Press 'l' to open time picker
+  Presets: Today, 24h, 7d, 30d, All time
+  Custom: Set specific date/time with arrows
 
-Models: Per-model breakdown with costs`
+Models: Per-model cost breakdown
+  Color-coded: Opus(red) Sonnet(cyan) Haiku(green)
+  Sorted by cost (highest first)
+
+SQLite Cache: .ccdash/tokens.db
+  Queryable with DuckDB or any SQLite tool
+  Tables: token_events, file_state
+  Incremental ingestion with deduplication`
 
 	case 3: // TMUX Sessions
 		title = "TMUX Sessions Panel"
 		panel = d.renderTmuxPanel(panelWidth, panelHeight)
 		helpText = `Monitors tmux sessions running Claude Code:
+
+Title: Shows total count + status summary
+  Format: "📺 TMUX Sessions (N) 🟢2 🔴1"
 
 Status (analyzes pane content):
   🟢 WORKING - Claude Code processing
@@ -1275,15 +1288,18 @@ Status (analyzes pane content):
   🟡 ACTIVE - User in session
   ⚠️  ERROR - Error or undefined state
 
-Detection: Analyzes pane for tool usage,
-  prompts, errors, and activity
+Detection: Analyzes last 15 lines for:
+  Working indicators, prompts, errors
 
-Info: Name, status, windows (Xw), idle time, 📎=attached
+Session Info:
+  Name, status, windows (Xw), idle, 📎=attached
 
-Idle: Shows how long content unchanged
-  (seconds/minutes/hours)
+Idle: Time since content changed (s/m/h)
 
-Display: Vertically aligned`
+Layout: Auto-columns based on count/width
+
+Self-Update: Press 'u' when update available
+  Status bar shows "⬆ vX.X.X available!"`
 	}
 
 	// Create help text panel with wrapping that preserves line breaks
