@@ -5,6 +5,37 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2025-12-05
+
+### Added
+- **SQLite-based token cache**: Complete rewrite of caching system for better queryability
+  - Cache stored in `.ccdash/tokens.db` SQLite database with WAL mode
+  - Directly queryable by DuckDB, SQLite CLI, or any SQLite-compatible tool
+  - Schema: `token_events` table with timestamp indexes, `file_state` for tracking
+  - Batch insertions for improved performance
+- **Incremental ingestion**: Smart processing of JSONL files
+  - Tracks last processed line per file to avoid reprocessing
+  - Automatic file invalidation on modification or truncation
+  - Deduplication via unique index on (source_file, line_number)
+- **SQL-based lookback queries**: Efficient time-range filtering
+  - Uses indexed timestamp_unix column for fast range queries
+  - Per-model aggregation computed directly in SQL
+  - Recent events query for rate calculations
+
+### Changed
+- Replaced JSON cache (`.ccdash/token_cache.json`) with SQLite (`.ccdash/tokens.db`)
+- Token metrics now computed via SQL aggregation instead of in-memory iteration
+- Updated help pane to document SQLite/DuckDB queryable cache
+
+### Technical Details
+- New dependency: `modernc.org/sqlite` (pure Go, no CGO required)
+- Cross-platform binaries without C compiler dependencies
+- SQLite configured with WAL journal mode and NORMAL synchronous
+- `TokenCache` struct provides thread-safe database access with RWMutex
+- `InsertTokenEventBatch()` for efficient bulk inserts
+- `QueryTokensSince()` returns aggregated metrics with per-model breakdown
+- `QueryRecentEvents()` for rate calculation over last N seconds
+
 ## [0.5.0] - 2025-12-05
 
 ### Added
@@ -131,6 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Content change detection with timing rules
 - 2-second refresh interval for metrics
 
+[0.6.0]: https://github.com/jedarden/ccdash/releases/tag/v0.6.0
 [0.5.0]: https://github.com/jedarden/ccdash/releases/tag/v0.5.0
 [0.3.0]: https://github.com/jedarden/ccdash/releases/tag/v0.3.0
 [0.1.4]: https://github.com/jedarden/ccdash/releases/tag/v0.1.4

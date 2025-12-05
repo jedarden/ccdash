@@ -1,6 +1,6 @@
 # 📊 ccdash
 
-**Version:** `0.1.4`
+**Version:** `0.6.0`
 
 > A lightweight TUI (Terminal User Interface) dashboard for monitoring system resources, Claude Code token usage, and tmux sessions.
 
@@ -27,6 +27,10 @@ All in a beautiful, terminal-based interface built with [Bubble Tea](https://git
 - 🎨 Beautiful TUI with clean, organized layout
 - ⌨️ Keyboard-driven navigation
 - 📦 No external dependencies beyond Go and optional tmux
+- 🔄 **Self-update** - Press `u` to update when new version available
+- 📅 **Lookback picker** - Press `l` to change time window for token tracking
+- 💰 **Per-model cost tracking** - Color-coded breakdown by Claude model
+- 💾 **SQLite caching** - Queryable `.ccdash/tokens.db` with DuckDB/SQLite support
 
 ---
 
@@ -106,6 +110,8 @@ ccdash
 | `q` or `Ctrl+C` | Quit the application |
 | `r` | Refresh metrics immediately |
 | `h` | Cycle through help mode (explains each panel) |
+| `l` | Open lookback time picker for token tracking |
+| `u` | Update to latest version (when available) |
 
 ### 🎨 Display Features
 
@@ -119,6 +125,14 @@ ccdash
   - 🟡 ACTIVE - User actively in session
   - ⚠️ ERROR - Error state detected
 - **Help Mode**: Press `h` to cycle through detailed explanations for each panel
+- **Lookback Picker**: Press `l` to select time window
+  - Presets: Monday 9am, Today, 24h, 7d, 30d, All time
+  - Custom: Set specific date/time with arrow keys
+- **Self-Update**: Status bar shows when updates are available
+  - Press `u` to download and apply update automatically
+- **Per-Model Costs**: Token panel shows breakdown by model
+  - Color-coded: Opus (red), Sonnet (cyan), Haiku (green)
+  - Sorted by cost (highest first)
 
 ---
 
