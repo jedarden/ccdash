@@ -5,6 +5,33 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-12-05
+
+### Added
+- **Two-tier log file processing**: Token metrics now use a two-tier system for efficiency
+  - Tier 1: Real-time processing of entries within the lookback window
+  - Tier 2: Cached processing of historical entries outside the lookback window
+  - Significantly reduces CPU usage when processing large JSONL files
+- **Persistent cache in .ccdash folder**: Historical token data is now cached
+  - Cache stored in `.ccdash/token_cache.json` in the working directory
+  - Automatically invalidates when source files are modified
+  - Survives across sessions for faster startup
+- **Enhanced TMUX panel title**: Now shows session count and status summary
+  - Title format: "📺 TMUX Sessions (N)" where N is total count
+  - Status summary right-justified: "🟢2 🔴1 🟡3" showing count per status
+  - Quick visual overview without scanning individual sessions
+
+### Changed
+- Removed redundant "Total: X" line from TMUX panel (now in title)
+- Token collector now initializes cache on creation
+- Improved file processing with modification time tracking
+
+### Technical Details
+- New `internal/metrics/cache.go` for persistent token caching
+- TokenCollector now includes cache and file line tracking
+- Cache uses JSON serialization with version control for compatibility
+- Two-tier processing prioritizes fresh data over cached historical data
+
 ## [0.3.0] - 2025-11-27
 
 ### Added
@@ -104,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Content change detection with timing rules
 - 2-second refresh interval for metrics
 
+[0.5.0]: https://github.com/jedarden/ccdash/releases/tag/v0.5.0
 [0.3.0]: https://github.com/jedarden/ccdash/releases/tag/v0.3.0
 [0.1.4]: https://github.com/jedarden/ccdash/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jedarden/ccdash/releases/tag/v0.1.3
