@@ -395,18 +395,27 @@ func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
 
-	// Token panel needs minimum width to avoid wrapping long lines like:
-	// "  Opus 4.5: $XX.XX (XXX,XXX tok)" = ~38 chars + borders/padding = ~45
-	// Prioritize token panel width, then tmux, system is most flexible
+	// Token panel width is dynamic based on model name lengths
+	// Calculate required width, with min/max bounds
+	requiredTokenWidth := d.calculateRequiredTokenWidth()
 
-	// For 190 width: totalPanelWidth = 184
-	// Token: 56 chars (30%), System: 55 chars (30%), Tmux: 73 chars (40%)
-	// Increased token width to accommodate longer model names without wrapping
-	tokenWidth := 56
+	// Set bounds based on terminal size
+	minTokenWidth := 46
+	maxTokenWidth := 70
 	if totalPanelWidth < 180 {
-		tokenWidth = 50 // Narrower for smaller terminals
+		minTokenWidth = 42
+		maxTokenWidth = 55
 	} else if totalPanelWidth >= 200 {
-		tokenWidth = 62 // Wider for larger terminals
+		minTokenWidth = 50
+		maxTokenWidth = 80
+	}
+
+	// Clamp to bounds
+	tokenWidth := requiredTokenWidth
+	if tokenWidth < minTokenWidth {
+		tokenWidth = minTokenWidth
+	} else if tokenWidth > maxTokenWidth {
+		tokenWidth = maxTokenWidth
 	}
 
 	// System panel - can compress CPU bars, so it's most flexible
@@ -872,6 +881,27 @@ func shortenModelName(name string) string {
 	}
 
 	return name
+}
+
+// calculateRequiredTokenWidth calculates the minimum width needed for the token panel
+// based on the longest model name in the current data
+func (d *Dashboard) calculateRequiredTokenWidth() int {
+	// Base width needed for: "  Name: $XXX.XX (X,XXX,XXX tok)"
+	// 2 (indent) + name + 2 (": ") + 8 (cost) + 2 (" (") + 11 (tokens) + 5 (" tok)") + 6 (borders/padding)
+	const baseWidth = 36 // Everything except model name
+
+	maxNameLen := 10 // Default minimum for "Sonnet 4.5"
+
+	if len(d.tokenMetrics.ModelUsages) > 0 {
+		for _, usage := range d.tokenMetrics.ModelUsages {
+			displayName := shortenModelName(usage.Model)
+			if len(displayName) > maxNameLen {
+				maxNameLen = len(displayName)
+			}
+		}
+	}
+
+	return baseWidth + maxNameLen
 }
 
 // renderTmuxPanel renders the tmux sessions panel
