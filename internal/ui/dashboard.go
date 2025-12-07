@@ -400,12 +400,13 @@ func (d *Dashboard) renderUltraWide() string {
 	// Prioritize token panel width, then tmux, system is most flexible
 
 	// For 190 width: totalPanelWidth = 184
-	// Token: 48 chars (26%), System: 55 chars (30%), Tmux: 81 chars (44%)
-	tokenWidth := 48
+	// Token: 56 chars (30%), System: 55 chars (30%), Tmux: 73 chars (40%)
+	// Increased token width to accommodate longer model names without wrapping
+	tokenWidth := 56
 	if totalPanelWidth < 180 {
-		tokenWidth = 42 // Narrower for smaller terminals
+		tokenWidth = 50 // Narrower for smaller terminals
 	} else if totalPanelWidth >= 200 {
-		tokenWidth = 52 // Wider for larger terminals
+		tokenWidth = 62 // Wider for larger terminals
 	}
 
 	// System panel - can compress CPU bars, so it's most flexible
