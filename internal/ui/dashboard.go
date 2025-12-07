@@ -892,7 +892,7 @@ func (d *Dashboard) calculateRequiredTokenWidth() int {
 
 	maxNameLen := 10 // Default minimum for "Sonnet 4.5"
 
-	if len(d.tokenMetrics.ModelUsages) > 0 {
+	if d.tokenMetrics != nil && len(d.tokenMetrics.ModelUsages) > 0 {
 		for _, usage := range d.tokenMetrics.ModelUsages {
 			displayName := shortenModelName(usage.Model)
 			if len(displayName) > maxNameLen {
