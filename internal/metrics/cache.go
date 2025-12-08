@@ -59,7 +59,10 @@ func (tc *TokenCache) initDB() error {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
-	db, err := sql.Open("sqlite", tc.dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
+	// Enhanced connection string for multi-instance support
+	// _busy_timeout: Wait up to 5 seconds for locks instead of failing immediately
+	// _txlock=immediate: Acquire write lock at transaction start to avoid deadlocks
+	db, err := sql.Open("sqlite", tc.dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return err
 	}
