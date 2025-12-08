@@ -391,53 +391,68 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 }
 
 // renderUltraWide renders 3 panels side-by-side
+// Priority: 1) TMUX (show ALL sessions), 2) System (CPU bars), 3) Token (adapts)
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
+	panelHeight := d.height - 3
+	availableLines := panelHeight - 3 // Lines available for session rows
 
-	// Token panel width is dynamic based on model name lengths
-	// Calculate required width, with min/max bounds
-	requiredTokenWidth := d.calculateRequiredTokenWidth()
-
-	// Set bounds based on terminal size
-	minTokenWidth := 46
-	maxTokenWidth := 70
-	if totalPanelWidth < 180 {
-		minTokenWidth = 42
-		maxTokenWidth = 55
-	} else if totalPanelWidth >= 200 {
-		minTokenWidth = 50
-		maxTokenWidth = 80
+	// Step 1: Calculate TMUX columns needed to show ALL sessions
+	sessionCount := 0
+	if d.tmuxMetrics != nil && d.tmuxMetrics.Available {
+		sessionCount = len(d.tmuxMetrics.Sessions)
 	}
 
-	// Clamp to bounds
-	tokenWidth := requiredTokenWidth
-	if tokenWidth < minTokenWidth {
-		tokenWidth = minTokenWidth
-	} else if tokenWidth > maxTokenWidth {
-		tokenWidth = maxTokenWidth
+	// Calculate columns needed to fit all sessions
+	minCellWidth := 30 // Minimum readable session cell
+	tmuxCols := 1
+	if availableLines > 0 && sessionCount > availableLines {
+		tmuxCols = (sessionCount + availableLines - 1) / availableLines // ceil division
 	}
 
-	// System panel - can compress CPU bars, so it's most flexible
-	// Minimum ~50 chars for readable CPU bars
-	systemWidth := 55
-	if totalPanelWidth < 180 {
-		systemWidth = 50
-	} else if totalPanelWidth >= 200 {
-		systemWidth = 62
+	// Cap columns based on available width (leave 110 for System+Token minimum)
+	maxTmuxCols := (totalPanelWidth - 110) / minCellWidth
+	if maxTmuxCols < 1 {
+		maxTmuxCols = 1
+	}
+	if tmuxCols > maxTmuxCols {
+		tmuxCols = maxTmuxCols
+	}
+	if tmuxCols > 4 {
+		tmuxCols = 4 // Reasonable maximum
 	}
 
-	// Tmux gets remaining space
-	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
+	// Calculate TMUX width based on required columns
+	// Each column gets fair share, plus separators and borders
+	tmuxWidth := tmuxCols*36 + (tmuxCols - 1) + 4
 	if tmuxWidth < 60 {
-		// If tmux is too narrow, steal from system
-		systemWidth -= (60 - tmuxWidth)
 		tmuxWidth = 60
 	}
+	// Don't let TMUX take more than 50% of total width
+	maxTmuxWidth := totalPanelWidth / 2
+	if tmuxWidth > maxTmuxWidth {
+		tmuxWidth = maxTmuxWidth
+	}
 
-	// Calculate panel content height (subtract status bar and borders)
-	// Total height - status bar (1) - panel borders (2) = content height
-	panelHeight := d.height - 3 // Leave room for status bar (already includes border space)
+	// Step 2: System panel gets fixed width for CPU bars
+	systemWidth := 60
+	if totalPanelWidth < 180 {
+		systemWidth = 55
+	}
+
+	// Step 3: Token panel gets remainder (adapts to available space)
+	tokenWidth := totalPanelWidth - systemWidth - tmuxWidth
+	if tokenWidth < 46 {
+		// If token too narrow, compress system slightly
+		systemWidth -= (46 - tokenWidth)
+		tokenWidth = 46
+		if systemWidth < 50 {
+			systemWidth = 50
+		}
+	}
+
+	// panelHeight already calculated above for session row calculation
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
 	tokenPanel := d.renderTokenPanel(tokenWidth, panelHeight)
@@ -781,60 +796,99 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lines = append(lines, "") // Empty line separator
 		lines = append(lines, boldStyle.Render("Per-Model Costs:"))
 
-		// First pass: calculate max display name length for alignment
-		maxNameLen := 0
-		displayNames := make([]string, len(d.tokenMetrics.ModelUsages))
-		for i, usage := range d.tokenMetrics.ModelUsages {
-			displayName := shortenModelName(usage.Model)
+		modelCount := len(d.tokenMetrics.ModelUsages)
 
-			// Truncate if still too long
-			maxAllowedLen := contentWidth - 20 // Leave room for cost and tokens
-			if len(displayName) > maxAllowedLen && maxAllowedLen > 3 {
-				displayName = displayName[:maxAllowedLen-3] + "..."
-			}
+		// Use 2-column layout when space allows and we have multiple models
+		useTwoColumns := contentWidth >= 52 && modelCount > 2
 
-			displayNames[i] = displayName
-			if len(displayName) > maxNameLen {
-				maxNameLen = len(displayName)
+		// Helper to get model style by name
+		getModelStyle := func(modelName string) lipgloss.Style {
+			if strings.Contains(modelName, "opus") {
+				return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b6b")) // Red for Opus
+			} else if strings.Contains(modelName, "sonnet") {
+				return lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
+			} else if strings.Contains(modelName, "haiku") {
+				return lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
 			}
+			return dimStyle
 		}
 
-		// Second pass: render with alignment
-		for i, usage := range d.tokenMetrics.ModelUsages {
-			displayName := displayNames[i]
-			modelName := usage.Model
+		// Helper to format a single model entry (compact format for 2-col)
+		formatModelEntry := func(usage metrics.ModelUsage, colWidth int, compact bool) string {
+			displayName := shortenModelName(usage.Model)
+			// Truncate name if needed
+			maxNameLen := 10
+			if colWidth < 24 {
+				maxNameLen = 8
+			}
+			if len(displayName) > maxNameLen {
+				displayName = displayName[:maxNameLen-1] + "…"
+			}
 
 			costStr := metrics.FormatCost(usage.Cost)
-			tokStr := metrics.FormatTokens(usage.TotalTokens)
-
-			// Color-code by model type
-			var modelStyle lipgloss.Style
-			if strings.Contains(modelName, "opus") {
-				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b6b")) // Red for Opus
-			} else if strings.Contains(modelName, "sonnet") {
-				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
-			} else if strings.Contains(modelName, "haiku") {
-				modelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
+			var tokStr string
+			if compact {
+				tokStr = metrics.FormatTokensCompact(usage.TotalTokens)
 			} else {
-				modelStyle = dimStyle
+				tokStr = metrics.FormatTokens(usage.TotalTokens)
 			}
 
-			// Calculate padding for alignment
-			// When pane is narrow, reduce padding first
-			padding := maxNameLen - len(displayName)
-			// If content width is tight, reduce alignment padding
-			if contentWidth < 35 {
-				padding = 0 // No alignment padding for narrow panes
-			} else if contentWidth < 40 {
-				padding = padding / 2 // Reduce padding for somewhat narrow panes
-			}
-
-			line := fmt.Sprintf("  %s:%s %s (%s)",
+			modelStyle := getModelStyle(usage.Model)
+			return fmt.Sprintf("%s %s (%s)",
 				modelStyle.Render(displayName),
-				strings.Repeat(" ", padding),
 				costStyle.Render(costStr),
-				dimStyle.Render(tokStr+" tok"))
-			lines = append(lines, line)
+				dimStyle.Render(tokStr))
+		}
+
+		if useTwoColumns {
+			// Two-column layout
+			colWidth := (contentWidth - 4) / 2 // 2 indent + 2 separator
+
+			for i := 0; i < modelCount; i += 2 {
+				left := formatModelEntry(d.tokenMetrics.ModelUsages[i], colWidth, true)
+				right := ""
+				if i+1 < modelCount {
+					right = formatModelEntry(d.tokenMetrics.ModelUsages[i+1], colWidth, true)
+				}
+
+				// Pad left column for alignment
+				leftPadded := left + strings.Repeat(" ", max(0, colWidth-lipgloss.Width(left)))
+				lines = append(lines, fmt.Sprintf("  %s  %s", leftPadded, right))
+			}
+		} else {
+			// Single column layout (original behavior with compact tokens)
+			maxNameLen := 0
+			displayNames := make([]string, modelCount)
+			for i, usage := range d.tokenMetrics.ModelUsages {
+				displayName := shortenModelName(usage.Model)
+				maxAllowedLen := contentWidth - 18
+				if len(displayName) > maxAllowedLen && maxAllowedLen > 3 {
+					displayName = displayName[:maxAllowedLen-3] + "..."
+				}
+				displayNames[i] = displayName
+				if len(displayName) > maxNameLen {
+					maxNameLen = len(displayName)
+				}
+			}
+
+			for i, usage := range d.tokenMetrics.ModelUsages {
+				displayName := displayNames[i]
+				costStr := metrics.FormatCost(usage.Cost)
+				tokStr := metrics.FormatTokensCompact(usage.TotalTokens)
+				modelStyle := getModelStyle(usage.Model)
+
+				padding := maxNameLen - len(displayName)
+				if contentWidth < 40 {
+					padding = 0
+				}
+
+				line := fmt.Sprintf("  %s:%s %s (%s)",
+					modelStyle.Render(displayName),
+					strings.Repeat(" ", padding),
+					costStyle.Render(costStr),
+					dimStyle.Render(tokStr))
+				lines = append(lines, line)
+			}
 		}
 	}
 
@@ -976,25 +1030,34 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	sessionCount := len(d.tmuxMetrics.Sessions)
 	contentWidth = width - 4 // -4 for borders (2) and padding (2)
 
-	// Determine columns dynamically based on session count and available space
-	// Start with 1 column, expand to 2 if sessions won't fit
+	// Calculate columns needed to show ALL sessions (priority: show everything)
+	minCellWidth := 28 // Minimum readable session cell
 	cols := 1
 	if sessionCount > availableLines {
-		cols = 2 // Spill over to 2 columns
-	}
-	// Use 3 columns only if width is sufficient and we have many sessions
-	if width >= 160 && sessionCount > availableLines*2 {
-		cols = 3
+		// Calculate columns needed to fit all sessions
+		cols = (sessionCount + availableLines - 1) / availableLines // ceil division
 	}
 
-	// Calculate cell width
+	// Cap columns based on available width
+	maxCols := contentWidth / minCellWidth
+	if maxCols < 1 {
+		maxCols = 1
+	}
+	if cols > maxCols {
+		cols = maxCols
+	}
+	if cols > 4 {
+		cols = 4 // Reasonable maximum for readability
+	}
+
+	// Calculate cell width based on actual columns used
 	cellWidth := (contentWidth - (cols - 1)) / cols
 
-	// Calculate how many sessions we can display
+	// Show ALL sessions - calculate how many we can actually display
 	maxDisplayed := availableLines * cols
 	maxSessions := sessionCount
 	if maxSessions > maxDisplayed {
-		maxSessions = maxDisplayed
+		maxSessions = maxDisplayed // Only limit if we truly can't fit more
 	}
 
 	// Render sessions in vertical columns (fill first column, then second, etc.)
