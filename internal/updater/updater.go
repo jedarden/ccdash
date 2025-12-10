@@ -297,34 +297,39 @@ func (u *Updater) PerformUpdateWithRestart(info *UpdateInfo) error {
 }
 
 // updateBinaryAt updates the binary at the specified path
+// On Linux/macOS, a running binary can be renamed but not overwritten (ETXTBSY).
+// The correct approach is: rename old -> copy new to original path -> delete old
 func updateBinaryAt(srcPath, targetPath string) error {
 	backupPath := targetPath + ".old"
 
 	// Remove any existing backup
 	os.Remove(backupPath)
 
-	// Rename current binary to backup
-	if err := os.Rename(targetPath, backupPath); err != nil {
-		// If rename fails, try direct copy (may fail with "text file busy")
-		if copyErr := copyFile(srcPath, targetPath); copyErr != nil {
-			return fmt.Errorf("rename failed: %v, copy failed: %v", err, copyErr)
-		}
-	} else {
-		// Copy new binary to target location (can't rename as we need srcPath for other locations)
-		if err := copyFile(srcPath, targetPath); err != nil {
-			// Restore backup
-			os.Rename(backupPath, targetPath)
-			return fmt.Errorf("failed to install update: %w", err)
+	// Check if target exists
+	if _, err := os.Stat(targetPath); err == nil {
+		// Rename current binary to backup (works even while running on Unix)
+		if err := os.Rename(targetPath, backupPath); err != nil {
+			return fmt.Errorf("failed to rename current binary: %w", err)
 		}
 	}
 
-	// Cleanup backup
-	os.Remove(backupPath)
+	// Copy new binary to target location (path is now free)
+	if err := copyFile(srcPath, targetPath); err != nil {
+		// Restore backup on failure
+		os.Rename(backupPath, targetPath)
+		return fmt.Errorf("failed to install update: %w", err)
+	}
 
 	// Make sure the new binary is executable
 	if err := os.Chmod(targetPath, 0755); err != nil {
+		// Restore backup on failure
+		os.Remove(targetPath)
+		os.Rename(backupPath, targetPath)
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
+
+	// Cleanup backup (don't care if this fails)
+	os.Remove(backupPath)
 
 	return nil
 }
@@ -335,12 +340,13 @@ func (u *Updater) restartApplication(execPath string) error {
 	env := os.Environ()
 
 	// Method 1: syscall.Exec (replaces current process)
-	// This is the cleanest method but may fail in some environments
+	// This is the cleanest method - process is replaced in-place
 	execErr := syscall.Exec(execPath, args, env)
 
 	// If we get here, syscall.Exec failed - try other methods
 
 	// Method 2: Start new process and exit
+	// This works well when the terminal can handle the new process
 	cmd := exec.Command(execPath, args[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -352,28 +358,33 @@ func (u *Updater) restartApplication(execPath string) error {
 		os.Exit(0)
 	}
 
-	// Method 3: Use nohup to start detached process
-	nohupCmd := exec.Command("nohup", append([]string{execPath}, args[1:]...)...)
-	nohupCmd.Env = env
-	if err := nohupCmd.Start(); err == nil {
-		os.Exit(0)
+	// Method 3: Use setsid to create new session (detaches from terminal)
+	setsidPath, _ := exec.LookPath("setsid")
+	if setsidPath != "" {
+		setsidCmd := exec.Command(setsidPath, append([]string{execPath}, args[1:]...)...)
+		setsidCmd.Env = env
+		if err := setsidCmd.Start(); err == nil {
+			os.Exit(0)
+		}
 	}
 
-	// Method 4: Use shell to restart
-	shellCmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("sleep 0.1 && exec %s", execPath))
-	shellCmd.Stdin = os.Stdin
-	shellCmd.Stdout = os.Stdout
-	shellCmd.Stderr = os.Stderr
+	// Method 4: Use nohup to start detached process
+	nohupPath, _ := exec.LookPath("nohup")
+	if nohupPath != "" {
+		nohupCmd := exec.Command(nohupPath, append([]string{execPath}, args[1:]...)...)
+		nohupCmd.Env = env
+		if err := nohupCmd.Start(); err == nil {
+			os.Exit(0)
+		}
+	}
+
+	// Method 5: Use shell to spawn background process
+	// The shell forks, launches ccdash, then exits - ccdash inherits terminal
+	shellCmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("%s %s &", execPath, strings.Join(args[1:], " ")))
+	shellCmd.Env = env
 	if err := shellCmd.Start(); err == nil {
-		os.Exit(0)
-	}
-
-	// Method 5: Use bash with exec
-	bashCmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("exec %s", execPath))
-	bashCmd.Stdin = os.Stdin
-	bashCmd.Stdout = os.Stdout
-	bashCmd.Stderr = os.Stderr
-	if err := bashCmd.Run(); err == nil {
+		// Give the shell a moment to spawn the process
+		time.Sleep(100 * time.Millisecond)
 		os.Exit(0)
 	}
 
