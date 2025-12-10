@@ -598,6 +598,20 @@ func FormatTokenRate(rate float64) string {
 	return fmt.Sprintf("%s tok/min", FormatTokens(int64(rate)))
 }
 
+// FormatTokenRateCompact formats a token rate compactly (e.g., "1.2M/min")
+func FormatTokenRateCompact(rate float64) string {
+	if rate == 0 {
+		return "0/min"
+	}
+	if rate >= 1000000 {
+		return fmt.Sprintf("%.1fM/min", rate/1000000)
+	}
+	if rate >= 1000 {
+		return fmt.Sprintf("%.1fK/min", rate/1000)
+	}
+	return fmt.Sprintf("%.0f/min", rate)
+}
+
 // FormatDuration formats a duration in a human-readable format
 func FormatDuration(d time.Duration) string {
 	if d < time.Minute {

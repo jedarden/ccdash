@@ -745,10 +745,10 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	leftLines = append(leftLines, fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens))))
 	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
 	if hasRate {
-		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRate(d.tokenMetrics.Rate))))
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
 	}
 	if hasAvg {
-		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate))))
+		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
 	}
 
 	// Build right column: Per-model costs
