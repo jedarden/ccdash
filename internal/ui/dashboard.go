@@ -393,7 +393,7 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 // calculateTokenPanelWidth determines the optimal width for the token panel
 // based on actual content needs, returning the minimum width that displays well
 func (d *Dashboard) calculateTokenPanelWidth() int {
-	// Base minimum for the panel structure
+	// Base minimum for the panel structure (stacked layout)
 	minWidth := 46
 
 	// If no token metrics or not available, use minimum
@@ -401,24 +401,21 @@ func (d *Dashboard) calculateTokenPanelWidth() int {
 		return minWidth
 	}
 
-	// Calculate width needed for content
-	// Header: "💰 Token Usage" + spacing + "Mon 9:00am" ≈ 35 chars
-	// Labels like "Input:", "Output:", "Total:", "Cost:" need ~25-30 chars for value
-	// Per-model costs need more if using two columns
-
 	modelCount := len(d.tokenMetrics.ModelUsages)
 
-	// Single column display needs ~45-50 chars
-	// Two column display needs ~56-60 chars
-	if modelCount > 2 {
-		// Two-column layout for many models
-		return 60
-	} else if modelCount > 0 {
-		// Single column, but need space for model names + costs
-		return 52
+	// Side-by-side layout needs:
+	// - Left column: 22 chars (stats)
+	// - Separator: 2 chars
+	// - Right column: ~24 chars (model name + cost)
+	// - Borders/padding: 4 chars
+	// Total: ~52 chars minimum for side-by-side
+	if modelCount > 0 {
+		// With models, use side-by-side layout
+		// More models = need slightly more height but same width
+		return 54
 	}
 
-	// Just basic token counts, no models
+	// Just basic token counts, no models - use narrow layout
 	return minWidth
 }
 
@@ -678,7 +675,8 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 	return style.Width(width).Height(height).Render(content)
 }
 
-// renderTokenPanel renders the token usage panel
+// renderTokenPanel renders the token usage panel with side-by-side layout
+// Left side: Total token stats, Right side: Per-model costs
 func (d *Dashboard) renderTokenPanel(width, height int) string {
 	style := panelStyle
 
@@ -686,7 +684,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		return style.Width(width).Height(height).Render("Loading token metrics...")
 	}
 
-	var lines []string
+	contentWidth := width - 4 // Account for borders and padding
 
 	// Title with lookback info aligned right
 	title := successStyle.Render("💰 Token Usage")
@@ -697,19 +695,17 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		lookbackInfo = dimStyle.Render("All time")
 	}
 
-	// Calculate content width and spacing for right alignment
-	contentWidth := width - 4 // Account for borders and padding
 	titleLen := lipgloss.Width(title)
 	lookbackLen := lipgloss.Width(lookbackInfo)
 	spacing := contentWidth - titleLen - lookbackLen
 	if spacing < 1 {
 		spacing = 1
 	}
-
 	headerLine := title + strings.Repeat(" ", spacing) + lookbackInfo
-	lines = append(lines, headerLine)
 
 	if !d.tokenMetrics.Available {
+		var lines []string
+		lines = append(lines, headerLine)
 		lines = append(lines, errorStyle.Render("Not Available"))
 		if d.tokenMetrics.Error != "" {
 			lines = append(lines, wrapText(d.tokenMetrics.Error, width-4))
@@ -718,179 +714,106 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		return style.Width(width).Height(height).Render(content)
 	}
 
-	// Token counts - aligned format
-	// Determine which optional fields are present to calculate max label width
-	contentWidth = width - 6 // Account for padding and borders
+	// Helper to get model style by name
+	getModelStyle := func(modelName string) lipgloss.Style {
+		if strings.Contains(modelName, "opus") {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b6b")) // Red for Opus
+		} else if strings.Contains(modelName, "sonnet") {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
+		} else if strings.Contains(modelName, "haiku") {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
+		}
+		return dimStyle
+	}
+
+	// Build left column: Total stats
+	var leftLines []string
 	hasCacheRead := d.tokenMetrics.CacheReadTokens > 0
 	hasCacheCreate := d.tokenMetrics.CacheCreationTokens > 0
 	hasRate := d.tokenMetrics.Rate > 0
 	hasAvg := d.tokenMetrics.SessionAvgRate > 0
-	hasSpan := !d.tokenMetrics.LookbackFrom.IsZero()
-	hasActive := !d.tokenMetrics.EarliestTimestamp.IsZero()
 
-	// Calculate max label width based on which fields are shown
-	// Labels: In, Out, Cache Read, Cache Create, Total, Cost, Rate, Avg, Span, Active
-	maxLabelWidth := 5 // "Total" or "Cost:" minimum
-	if hasCacheRead && len("Cache Read") > maxLabelWidth {
-		maxLabelWidth = len("Cache Read")
-	}
-	if hasCacheCreate && len("Cache Create") > maxLabelWidth {
-		maxLabelWidth = len("Cache Create")
-	}
-	if hasActive && len("Active") > maxLabelWidth {
-		maxLabelWidth = len("Active")
-	}
-
-	// Helper to format aligned line
-	formatAligned := func(label, value string) string {
-		padding := maxLabelWidth - len(label)
-		// Reduce padding for narrow panes
-		if contentWidth < 35 {
-			padding = 0
-		} else if contentWidth < 40 {
-			padding = padding / 2
-		}
-		return fmt.Sprintf("%s:%s %s", label, strings.Repeat(" ", padding), value)
-	}
-
-	lines = append(lines, formatAligned("In", metrics.FormatTokens(d.tokenMetrics.InputTokens)))
-	lines = append(lines, formatAligned("Out", metrics.FormatTokens(d.tokenMetrics.OutputTokens)))
-
-	// Cache on separate lines
+	// Compact format for left column
+	leftLines = append(leftLines, fmt.Sprintf("In:    %s", metrics.FormatTokensCompact(d.tokenMetrics.InputTokens)))
+	leftLines = append(leftLines, fmt.Sprintf("Out:   %s", metrics.FormatTokensCompact(d.tokenMetrics.OutputTokens)))
 	if hasCacheRead {
-		lines = append(lines, formatAligned("Cache Read", metrics.FormatTokens(d.tokenMetrics.CacheReadTokens)))
+		leftLines = append(leftLines, fmt.Sprintf("Cache: %s", metrics.FormatTokensCompact(d.tokenMetrics.CacheReadTokens)))
 	}
 	if hasCacheCreate {
-		lines = append(lines, formatAligned("Cache Create", metrics.FormatTokens(d.tokenMetrics.CacheCreationTokens)))
+		leftLines = append(leftLines, fmt.Sprintf("Create:%s", metrics.FormatTokensCompact(d.tokenMetrics.CacheCreationTokens)))
 	}
-
-	lines = append(lines, formatAligned("Total", boldStyle.Render(metrics.FormatTokens(d.tokenMetrics.TotalTokens))))
-
-	// Total cost with emphasis
-	lines = append(lines, formatAligned("Cost", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
-
-	// Compact rates
+	leftLines = append(leftLines, fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens))))
+	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
 	if hasRate {
-		lines = append(lines, formatAligned("Rate", metrics.FormatTokenRate(d.tokenMetrics.Rate)))
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRate(d.tokenMetrics.Rate))))
 	}
-
-	// Session average
 	if hasAvg {
-		lines = append(lines, formatAligned("Avg", metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate)))
+		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRate(d.tokenMetrics.SessionAvgRate))))
 	}
 
-	// Time span info
-	if hasSpan {
-		spanDuration := time.Since(d.tokenMetrics.LookbackFrom)
-		lines = append(lines, formatAligned("Span", formatDuration(spanDuration)))
-	}
-
-	// First activity within lookback period
-	if hasActive {
-		duration := time.Since(d.tokenMetrics.EarliestTimestamp)
-		lines = append(lines, formatAligned("Active", formatDuration(duration)+" ago"))
-	}
-
-	// Per-model breakdown with costs (sorted by cost, highest first)
-	if len(d.tokenMetrics.ModelUsages) > 0 {
-		lines = append(lines, "") // Empty line separator
-		lines = append(lines, boldStyle.Render("Per-Model Costs:"))
-
-		modelCount := len(d.tokenMetrics.ModelUsages)
-
-		// Use 2-column layout when:
-		// - We have more than 2 models AND sufficient width (>=52), OR
-		// - We have more than 1 model AND good width (>=56) for better display
-		useTwoColumns := (contentWidth >= 52 && modelCount > 2) || (contentWidth >= 56 && modelCount > 1)
-
-		// Helper to get model style by name
-		getModelStyle := func(modelName string) lipgloss.Style {
-			if strings.Contains(modelName, "opus") {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b6b")) // Red for Opus
-			} else if strings.Contains(modelName, "sonnet") {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
-			} else if strings.Contains(modelName, "haiku") {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
-			}
-			return dimStyle
-		}
-
-		// Helper to format a single model entry (compact format for 2-col)
-		formatModelEntry := func(usage metrics.ModelUsage, colWidth int, compact bool) string {
+	// Build right column: Per-model costs
+	var rightLines []string
+	modelCount := len(d.tokenMetrics.ModelUsages)
+	if modelCount > 0 {
+		rightLines = append(rightLines, boldStyle.Render("Models:"))
+		for _, usage := range d.tokenMetrics.ModelUsages {
 			displayName := shortenModelName(usage.Model)
-			// Truncate name if needed
-			maxNameLen := 10
-			if colWidth < 24 {
-				maxNameLen = 8
+			if len(displayName) > 10 {
+				displayName = displayName[:9] + "…"
 			}
-			if len(displayName) > maxNameLen {
-				displayName = displayName[:maxNameLen-1] + "…"
-			}
-
-			costStr := metrics.FormatCost(usage.Cost)
-			var tokStr string
-			if compact {
-				tokStr = metrics.FormatTokensCompact(usage.TotalTokens)
-			} else {
-				tokStr = metrics.FormatTokens(usage.TotalTokens)
-			}
-
 			modelStyle := getModelStyle(usage.Model)
-			return fmt.Sprintf("%s %s (%s)",
+			line := fmt.Sprintf("%s %s",
 				modelStyle.Render(displayName),
-				costStyle.Render(costStr),
-				dimStyle.Render(tokStr))
+				costStyle.Render(metrics.FormatCost(usage.Cost)))
+			rightLines = append(rightLines, line)
+			// Show tokens on next line if we have room
+			tokLine := fmt.Sprintf("  %s", dimStyle.Render(metrics.FormatTokensCompact(usage.TotalTokens)))
+			rightLines = append(rightLines, tokLine)
+		}
+	}
+
+	// Determine layout based on width
+	// For narrow panels, stack vertically; for wider panels, use side-by-side
+	useSideBySide := contentWidth >= 50 && modelCount > 0
+
+	var lines []string
+	lines = append(lines, headerLine)
+
+	if useSideBySide {
+		// Side-by-side: left column for totals, right for models
+		leftWidth := 22  // Fixed width for stats
+		rightWidth := contentWidth - leftWidth - 2 // 2 for separator
+
+		// Pad columns to equal height
+		maxLines := len(leftLines)
+		if len(rightLines) > maxLines {
+			maxLines = len(rightLines)
+		}
+		for len(leftLines) < maxLines {
+			leftLines = append(leftLines, "")
+		}
+		for len(rightLines) < maxLines {
+			rightLines = append(rightLines, "")
 		}
 
-		if useTwoColumns {
-			// Two-column layout
-			colWidth := (contentWidth - 4) / 2 // 2 indent + 2 separator
-
-			for i := 0; i < modelCount; i += 2 {
-				left := formatModelEntry(d.tokenMetrics.ModelUsages[i], colWidth, true)
-				right := ""
-				if i+1 < modelCount {
-					right = formatModelEntry(d.tokenMetrics.ModelUsages[i+1], colWidth, true)
-				}
-
-				// Pad left column for alignment
-				leftPadded := left + strings.Repeat(" ", max(0, colWidth-lipgloss.Width(left)))
-				lines = append(lines, fmt.Sprintf("  %s  %s", leftPadded, right))
+		// Combine columns
+		for i := 0; i < maxLines; i++ {
+			left := leftLines[i]
+			right := rightLines[i]
+			// Pad left to fixed width
+			leftPadded := left + strings.Repeat(" ", max(0, leftWidth-lipgloss.Width(left)))
+			// Truncate right if needed
+			if lipgloss.Width(right) > rightWidth {
+				right = right[:rightWidth-1] + "…"
 			}
-		} else {
-			// Single column layout (original behavior with compact tokens)
-			maxNameLen := 0
-			displayNames := make([]string, modelCount)
-			for i, usage := range d.tokenMetrics.ModelUsages {
-				displayName := shortenModelName(usage.Model)
-				maxAllowedLen := contentWidth - 18
-				if len(displayName) > maxAllowedLen && maxAllowedLen > 3 {
-					displayName = displayName[:maxAllowedLen-3] + "..."
-				}
-				displayNames[i] = displayName
-				if len(displayName) > maxNameLen {
-					maxNameLen = len(displayName)
-				}
-			}
-
-			for i, usage := range d.tokenMetrics.ModelUsages {
-				displayName := displayNames[i]
-				costStr := metrics.FormatCost(usage.Cost)
-				tokStr := metrics.FormatTokensCompact(usage.TotalTokens)
-				modelStyle := getModelStyle(usage.Model)
-
-				padding := maxNameLen - len(displayName)
-				if contentWidth < 40 {
-					padding = 0
-				}
-
-				line := fmt.Sprintf("  %s:%s %s (%s)",
-					modelStyle.Render(displayName),
-					strings.Repeat(" ", padding),
-					costStyle.Render(costStr),
-					dimStyle.Render(tokStr))
-				lines = append(lines, line)
-			}
+			lines = append(lines, leftPadded+"│ "+right)
+		}
+	} else {
+		// Stacked layout for narrow panels
+		lines = append(lines, leftLines...)
+		if modelCount > 0 {
+			lines = append(lines, "")
+			lines = append(lines, rightLines...)
 		}
 	}
 
