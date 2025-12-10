@@ -265,19 +265,21 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 	// Calculate idle duration (how long content unchanged)
 	session.IdleDuration = now.Sub(session.LastContentChange)
 
-	// Priority 1: Check for Claude Code-specific WORKING indicators
-	if tc.isClaudeWorking(content) {
-		session.Status = StatusWorking
-		return session
-	}
-
-	// Priority 2: Check if Claude Code is at a prompt (READY)
+	// Priority 1: Check if Claude Code is at a prompt (READY)
+	// This must be checked FIRST because working indicators like "(esc to interrupt)"
+	// can persist on screen even when Claude is waiting for input
 	if tc.isClaudeWaiting(content) {
 		if session.IdleDuration > 30*time.Second {
 			session.Status = StatusReady
 		} else {
 			session.Status = StatusActive
 		}
+		return session
+	}
+
+	// Priority 2: Check for Claude Code-specific WORKING indicators
+	if tc.isClaudeWorking(content) {
+		session.Status = StatusWorking
 		return session
 	}
 
@@ -348,9 +350,25 @@ func (tc *TmuxCollector) isClaudeWorking(content string) bool {
 // isClaudeWaiting checks if Claude Code is at a prompt waiting for input
 // Uses the same patterns as unified-dashboard
 func (tc *TmuxCollector) isClaudeWaiting(content string) bool {
-	// Check for Claude Code prompt
-	return strings.Contains(content, "⏵⏵ bypass permissions") ||
-		(strings.Contains(content, "Claude Code") && strings.Contains(content, "❯"))
+	// Check for Claude Code prompt indicators
+	// The bypass permissions line appears when Claude is waiting for input
+	if strings.Contains(content, "⏵⏵ bypass permissions") {
+		return true
+	}
+	// Alternative prompt format
+	if strings.Contains(content, "Claude Code") && strings.Contains(content, "❯") {
+		return true
+	}
+	// Check for empty prompt "> " at end of content (common waiting state)
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) > 0 {
+		lastLine := strings.TrimSpace(lines[len(lines)-1])
+		// Empty prompt or just the prompt character
+		if lastLine == ">" || lastLine == "> " || strings.HasSuffix(lastLine, "> ") {
+			return true
+		}
+	}
+	return false
 }
 
 // hasError checks for error indicators in the session
