@@ -404,6 +404,14 @@ func (d *Dashboard) renderUltraWide() string {
 		sessionCount = len(d.tmuxMetrics.Sessions)
 	}
 
+	// Check if token panel needs extra width for two-column model display
+	modelCount := 0
+	if d.tokenMetrics != nil && d.tokenMetrics.Available {
+		modelCount = len(d.tokenMetrics.ModelUsages)
+	}
+	// Two columns for models requires ~56 content width (60 total panel width)
+	tokenNeedsTwoColumns := modelCount > 2
+
 	// Calculate columns needed to fit all sessions
 	minCellWidth := 30 // Minimum readable session cell
 	tmuxCols := 1
@@ -443,6 +451,25 @@ func (d *Dashboard) renderUltraWide() string {
 
 	// Step 3: Token panel gets remainder (adapts to available space)
 	tokenWidth := totalPanelWidth - systemWidth - tmuxWidth
+
+	// If token panel needs two columns for models and current width is insufficient,
+	// try to take width from tmux (but preserve minimum tmux functionality)
+	minTokenForTwoColumns := 60 // Minimum for readable two-column model display
+	if tokenNeedsTwoColumns && tokenWidth < minTokenForTwoColumns {
+		needed := minTokenForTwoColumns - tokenWidth
+		// Calculate minimum tmux width needed to show all sessions
+		minTmuxForSessions := tmuxCols*32 + (tmuxCols-1) + 4
+		if minTmuxForSessions < 50 {
+			minTmuxForSessions = 50 // Absolute minimum
+		}
+		available := tmuxWidth - minTmuxForSessions
+		if available > 0 {
+			take := min(needed, available)
+			tmuxWidth -= take
+			tokenWidth += take
+		}
+	}
+
 	if tokenWidth < 46 {
 		// If token too narrow, compress system slightly
 		systemWidth -= (46 - tokenWidth)
@@ -798,8 +825,10 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 
 		modelCount := len(d.tokenMetrics.ModelUsages)
 
-		// Use 2-column layout when space allows and we have multiple models
-		useTwoColumns := contentWidth >= 52 && modelCount > 2
+		// Use 2-column layout when:
+		// - We have more than 2 models AND sufficient width (>=52), OR
+		// - We have more than 1 model AND good width (>=56) for better display
+		useTwoColumns := (contentWidth >= 52 && modelCount > 2) || (contentWidth >= 56 && modelCount > 1)
 
 		// Helper to get model style by name
 		getModelStyle := func(modelName string) lipgloss.Style {
