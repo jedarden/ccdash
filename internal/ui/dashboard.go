@@ -390,96 +390,69 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 	}
 }
 
+// calculateTokenPanelWidth determines the optimal width for the token panel
+// based on actual content needs, returning the minimum width that displays well
+func (d *Dashboard) calculateTokenPanelWidth() int {
+	// Base minimum for the panel structure
+	minWidth := 46
+
+	// If no token metrics or not available, use minimum
+	if d.tokenMetrics == nil || !d.tokenMetrics.Available {
+		return minWidth
+	}
+
+	// Calculate width needed for content
+	// Header: "💰 Token Usage" + spacing + "Mon 9:00am" ≈ 35 chars
+	// Labels like "Input:", "Output:", "Total:", "Cost:" need ~25-30 chars for value
+	// Per-model costs need more if using two columns
+
+	modelCount := len(d.tokenMetrics.ModelUsages)
+
+	// Single column display needs ~45-50 chars
+	// Two column display needs ~56-60 chars
+	if modelCount > 2 {
+		// Two-column layout for many models
+		return 60
+	} else if modelCount > 0 {
+		// Single column, but need space for model names + costs
+		return 52
+	}
+
+	// Just basic token counts, no models
+	return minWidth
+}
+
 // renderUltraWide renders 3 panels side-by-side
-// Priority: 1) TMUX (show ALL sessions), 2) System (CPU bars), 3) Token (adapts)
+// Priority: 1) System (fixed), 2) Token (content-based), 3) TMUX (gets remainder)
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
 	panelHeight := d.height - 3
-	availableLines := panelHeight - 3 // Lines available for session rows
 
-	// Step 1: Calculate TMUX columns needed to show ALL sessions
-	sessionCount := 0
-	if d.tmuxMetrics != nil && d.tmuxMetrics.Available {
-		sessionCount = len(d.tmuxMetrics.Sessions)
-	}
-
-	// Check if token panel needs extra width for two-column model display
-	modelCount := 0
-	if d.tokenMetrics != nil && d.tokenMetrics.Available {
-		modelCount = len(d.tokenMetrics.ModelUsages)
-	}
-	// Two columns for models requires ~56 content width (60 total panel width)
-	tokenNeedsTwoColumns := modelCount > 2
-
-	// Calculate columns needed to fit all sessions
-	minCellWidth := 30 // Minimum readable session cell
-	tmuxCols := 1
-	if availableLines > 0 && sessionCount > availableLines {
-		tmuxCols = (sessionCount + availableLines - 1) / availableLines // ceil division
-	}
-
-	// Cap columns based on available width (leave 110 for System+Token minimum)
-	maxTmuxCols := (totalPanelWidth - 110) / minCellWidth
-	if maxTmuxCols < 1 {
-		maxTmuxCols = 1
-	}
-	if tmuxCols > maxTmuxCols {
-		tmuxCols = maxTmuxCols
-	}
-	if tmuxCols > 4 {
-		tmuxCols = 4 // Reasonable maximum
-	}
-
-	// Calculate TMUX width based on required columns
-	// Each column gets fair share, plus separators and borders
-	tmuxWidth := tmuxCols*36 + (tmuxCols - 1) + 4
-	if tmuxWidth < 60 {
-		tmuxWidth = 60
-	}
-	// Don't let TMUX take more than 50% of total width
-	maxTmuxWidth := totalPanelWidth / 2
-	if tmuxWidth > maxTmuxWidth {
-		tmuxWidth = maxTmuxWidth
-	}
-
-	// Step 2: System panel gets fixed width for CPU bars
+	// Step 1: System panel gets fixed width for CPU bars
 	systemWidth := 60
 	if totalPanelWidth < 180 {
 		systemWidth = 55
 	}
 
-	// Step 3: Token panel gets remainder (adapts to available space)
-	tokenWidth := totalPanelWidth - systemWidth - tmuxWidth
+	// Step 2: Calculate token panel width based on actual content needs
+	tokenWidth := d.calculateTokenPanelWidth()
 
-	// If token panel needs two columns for models and current width is insufficient,
-	// try to take width from tmux (but preserve minimum tmux functionality)
-	minTokenForTwoColumns := 60 // Minimum for readable two-column model display
-	if tokenNeedsTwoColumns && tokenWidth < minTokenForTwoColumns {
-		needed := minTokenForTwoColumns - tokenWidth
-		// Calculate minimum tmux width needed to show all sessions
-		minTmuxForSessions := tmuxCols*32 + (tmuxCols-1) + 4
-		if minTmuxForSessions < 50 {
-			minTmuxForSessions = 50 // Absolute minimum
-		}
-		available := tmuxWidth - minTmuxForSessions
-		if available > 0 {
-			take := min(needed, available)
-			tmuxWidth -= take
-			tokenWidth += take
+	// Step 3: TMUX gets the remainder - maximize space for sessions
+	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
+
+	// Ensure tmux has minimum viable width
+	minTmuxWidth := 50
+	if tmuxWidth < minTmuxWidth {
+		// Compress token panel if needed
+		excess := minTmuxWidth - tmuxWidth
+		tokenWidth -= excess
+		tmuxWidth = minTmuxWidth
+		// Ensure token doesn't go below minimum
+		if tokenWidth < 46 {
+			tokenWidth = 46
 		}
 	}
-
-	if tokenWidth < 46 {
-		// If token too narrow, compress system slightly
-		systemWidth -= (46 - tokenWidth)
-		tokenWidth = 46
-		if systemWidth < 50 {
-			systemWidth = 50
-		}
-	}
-
-	// panelHeight already calculated above for session row calculation
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
 	tokenPanel := d.renderTokenPanel(tokenWidth, panelHeight)
