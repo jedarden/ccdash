@@ -309,6 +309,10 @@ func updateBinaryAt(srcPath, targetPath string) error {
 	if _, err := os.Stat(targetPath); err == nil {
 		// Rename current binary to backup (works even while running on Unix)
 		if err := os.Rename(targetPath, backupPath); err != nil {
+			// Check if this is a permission error - might need sudo
+			if os.IsPermission(err) {
+				return updateBinaryWithSudo(srcPath, targetPath)
+			}
 			return fmt.Errorf("failed to rename current binary: %w", err)
 		}
 	}
@@ -317,6 +321,10 @@ func updateBinaryAt(srcPath, targetPath string) error {
 	if err := copyFile(srcPath, targetPath); err != nil {
 		// Restore backup on failure
 		os.Rename(backupPath, targetPath)
+		// Check if this is a permission error - might need sudo
+		if os.IsPermission(err) {
+			return updateBinaryWithSudo(srcPath, targetPath)
+		}
 		return fmt.Errorf("failed to install update: %w", err)
 	}
 
@@ -330,6 +338,43 @@ func updateBinaryAt(srcPath, targetPath string) error {
 
 	// Cleanup backup (don't care if this fails)
 	os.Remove(backupPath)
+
+	return nil
+}
+
+// updateBinaryWithSudo uses sudo to update a binary in a protected directory
+func updateBinaryWithSudo(srcPath, targetPath string) error {
+	// Create a shell script that does the update
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+BACKUP="%s.old"
+rm -f "$BACKUP"
+if [ -f "%s" ]; then
+    mv "%s" "$BACKUP"
+fi
+cp "%s" "%s"
+chmod +x "%s"
+rm -f "$BACKUP"
+`, targetPath, targetPath, targetPath, srcPath, targetPath, targetPath)
+
+	scriptPath := "/tmp/ccdash-update-script.sh"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		return fmt.Errorf("failed to create update script: %w", err)
+	}
+	defer os.Remove(scriptPath)
+
+	// Try running with sudo
+	cmd := exec.Command("sudo", "-n", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// sudo -n failed (no password-less sudo available)
+		// Try with pkexec as alternative (graphical sudo prompt)
+		cmd = exec.Command("pkexec", scriptPath)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to update with elevated privileges: %v (output: %s)", err, string(output))
+		}
+	}
 
 	return nil
 }
