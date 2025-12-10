@@ -762,13 +762,12 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 				displayName = displayName[:9] + "…"
 			}
 			modelStyle := getModelStyle(usage.Model)
-			line := fmt.Sprintf("%s %s",
+			// All model info on one line: Name Cost (Tokens)
+			line := fmt.Sprintf("%s %s %s",
 				modelStyle.Render(displayName),
-				costStyle.Render(metrics.FormatCost(usage.Cost)))
+				costStyle.Render(metrics.FormatCost(usage.Cost)),
+				dimStyle.Render("("+metrics.FormatTokensCompact(usage.TotalTokens)+")"))
 			rightLines = append(rightLines, line)
-			// Show tokens on next line if we have room
-			tokLine := fmt.Sprintf("  %s", dimStyle.Render(metrics.FormatTokensCompact(usage.TotalTokens)))
-			rightLines = append(rightLines, tokLine)
 		}
 	}
 
