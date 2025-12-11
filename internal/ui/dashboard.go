@@ -508,13 +508,15 @@ func (d *Dashboard) renderUltraWide() string {
 	minTokenWidth := 46
 	minTmuxWidth := d.calculateTmuxPanelWidth(panelHeight)
 
-	// Ideal token width: enough for full model names (base 36 + longest model name)
-	idealTokenWidth := d.calculateRequiredTokenWidth()
+	// Ideal token width: side-by-side layout with comfortable model display
+	// Left column (22) + separator (2) + right column for models
+	// Right column needs: model name (up to 20) + cost (8) + tokens (15) = ~43
+	// Total ideal: 22 + 2 + 43 + 4 (borders) = 71
+	idealTokenWidth := 71
 
-	// Ideal tmux width: enough for full session names
-	// Session cell has ~20 chars overhead, typical session names are 10-25 chars
-	// So ideal cell width is ~45 chars for comfortable display
-	idealCellWidth := 45
+	// Ideal tmux width: minimum cell width + some padding for session names
+	// Use 35 chars per cell (28 min + 7 for longer names)
+	idealCellWidth := 35
 	tmuxCols := d.getTmuxColumnCount(panelHeight)
 	idealTmuxWidth := tmuxCols*idealCellWidth + (tmuxCols - 1) + 4
 
@@ -546,8 +548,9 @@ func (d *Dashboard) renderUltraWide() string {
 			tokenWidth = minTokenWidth + tokenExtra
 			tmuxWidth = minTmuxWidth + tmuxExtra
 		} else {
-			// Neither wants more, give remainder to tmux for session names
-			tmuxWidth = minTmuxWidth + remainingAfterMins
+			// Neither wants more, split evenly
+			tokenWidth = minTokenWidth + remainingAfterMins/2
+			tmuxWidth = minTmuxWidth + remainingAfterMins - remainingAfterMins/2
 		}
 	} else if remainingAfterMins < 0 {
 		// Not enough space for both minimums - compress proportionally
