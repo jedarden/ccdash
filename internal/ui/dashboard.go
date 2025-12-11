@@ -419,8 +419,54 @@ func (d *Dashboard) calculateTokenPanelWidth() int {
 	return minWidth
 }
 
+// calculateTmuxPanelWidth determines the width needed for the TMUX panel
+// based on session count and available height (to calculate columns needed)
+func (d *Dashboard) calculateTmuxPanelWidth(panelHeight int) int {
+	const minCellWidth = 28 // Minimum readable session cell
+	const minWidth = 50     // Absolute minimum for 1 column
+	const maxWidth = 120    // Cap to prevent TMUX from taking too much space
+
+	// If no tmux metrics, use minimum
+	if d.tmuxMetrics == nil || !d.tmuxMetrics.Available {
+		return minWidth
+	}
+
+	sessionCount := len(d.tmuxMetrics.Sessions)
+	if sessionCount == 0 {
+		return minWidth
+	}
+
+	// Available lines for sessions: height - title(1) - borders(2)
+	availableLines := panelHeight - 3
+	if availableLines < 1 {
+		availableLines = 1
+	}
+
+	// Calculate columns needed to fit all sessions
+	cols := 1
+	if sessionCount > availableLines {
+		cols = (sessionCount + availableLines - 1) / availableLines // ceil division
+	}
+	if cols > 4 {
+		cols = 4 // Reasonable maximum for readability
+	}
+
+	// Width needed: columns * cellWidth + separators + borders/padding
+	// contentWidth = cols * cellWidth + (cols - 1) for separators
+	// panelWidth = contentWidth + 4 for borders/padding
+	neededWidth := cols*minCellWidth + (cols - 1) + 4
+
+	if neededWidth < minWidth {
+		return minWidth
+	}
+	if neededWidth > maxWidth {
+		return maxWidth
+	}
+	return neededWidth
+}
+
 // renderUltraWide renders 3 panels side-by-side
-// Priority: 1) System (fixed), 2) TMUX (fixed), 3) Token (gets remainder to expand for model names)
+// Priority: 1) System (fixed), 2) TMUX (based on session count), 3) Token (gets remainder)
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
@@ -432,15 +478,8 @@ func (d *Dashboard) renderUltraWide() string {
 		systemWidth = 55
 	}
 
-	// Step 2: TMUX gets a fixed width (not greedy remainder)
-	// This allows token panel to expand for longer model names
-	tmuxWidth := 70
-	if totalPanelWidth < 200 {
-		tmuxWidth = 60
-	}
-	if totalPanelWidth < 170 {
-		tmuxWidth = 50
-	}
+	// Step 2: Calculate TMUX width based on how many columns it needs
+	tmuxWidth := d.calculateTmuxPanelWidth(panelHeight)
 
 	// Step 3: Token panel gets the remainder - allows model names to expand
 	tokenWidth := totalPanelWidth - systemWidth - tmuxWidth
