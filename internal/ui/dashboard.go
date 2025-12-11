@@ -420,7 +420,7 @@ func (d *Dashboard) calculateTokenPanelWidth() int {
 }
 
 // renderUltraWide renders 3 panels side-by-side
-// Priority: 1) System (fixed), 2) Token (content-based), 3) TMUX (gets remainder)
+// Priority: 1) System (fixed), 2) TMUX (minimum), 3) Token (expands with available space)
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
@@ -432,23 +432,30 @@ func (d *Dashboard) renderUltraWide() string {
 		systemWidth = 55
 	}
 
-	// Step 2: Calculate token panel width based on actual content needs
-	tokenWidth := d.calculateTokenPanelWidth()
-
-	// Step 3: TMUX gets the remainder - maximize space for sessions
-	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
-
-	// Ensure tmux has minimum viable width
+	// Step 2: TMUX gets minimum viable width
 	minTmuxWidth := 50
+
+	// Step 3: Token panel expands to fit content, using available space
+	// Calculate the ideal width based on actual model name lengths
+	idealTokenWidth := d.calculateRequiredTokenWidth()
+	minTokenWidth := 46
+
+	// Available space after system and minimum tmux
+	availableForToken := totalPanelWidth - systemWidth - minTmuxWidth
+
+	// Token panel gets up to its ideal width, but not more than available
+	tokenWidth := idealTokenWidth
+	if tokenWidth > availableForToken {
+		tokenWidth = availableForToken
+	}
+	if tokenWidth < minTokenWidth {
+		tokenWidth = minTokenWidth
+	}
+
+	// TMUX gets the remainder
+	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
 	if tmuxWidth < minTmuxWidth {
-		// Compress token panel if needed
-		excess := minTmuxWidth - tmuxWidth
-		tokenWidth -= excess
 		tmuxWidth = minTmuxWidth
-		// Ensure token doesn't go below minimum
-		if tokenWidth < 46 {
-			tokenWidth = 46
-		}
 	}
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
@@ -751,15 +758,30 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
 	}
 
-	// Build right column: Per-model costs
-	var rightLines []string
+	// Determine layout based on width
+	// For narrow panels, stack vertically; for wider panels, use side-by-side
 	modelCount := len(d.tokenMetrics.ModelUsages)
+	useSideBySide := contentWidth >= 50 && modelCount > 0
+
+	// Calculate available width for model names based on layout
+	// In side-by-side: rightWidth = contentWidth - leftWidth(22) - separator(2)
+	// Model line format: "Name $XX.XX (XX,XXXtok)" - cost ~8 chars, tokens ~12 chars = ~20 chars for cost+tokens
+	leftWidth := 22
+	rightWidth := contentWidth - leftWidth - 2
+	maxModelNameWidth := rightWidth - 22 // Reserve space for cost and token count
+	if maxModelNameWidth < 10 {
+		maxModelNameWidth = 10 // Minimum display width
+	}
+
+	// Build right column: Per-model costs with dynamic name width
+	var rightLines []string
 	if modelCount > 0 {
 		rightLines = append(rightLines, boldStyle.Render("Models:"))
 		for _, usage := range d.tokenMetrics.ModelUsages {
 			displayName := shortenModelName(usage.Model)
-			if len(displayName) > 10 {
-				displayName = displayName[:9] + "…"
+			// Dynamically truncate based on available space
+			if len(displayName) > maxModelNameWidth {
+				displayName = displayName[:maxModelNameWidth-1] + "…"
 			}
 			modelStyle := getModelStyle(usage.Model)
 			// All model info on one line: Name Cost (Tokens)
@@ -771,17 +793,11 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		}
 	}
 
-	// Determine layout based on width
-	// For narrow panels, stack vertically; for wider panels, use side-by-side
-	useSideBySide := contentWidth >= 50 && modelCount > 0
-
 	var lines []string
 	lines = append(lines, headerLine)
 
 	if useSideBySide {
 		// Side-by-side: left column for totals, right for models
-		leftWidth := 22  // Fixed width for stats
-		rightWidth := contentWidth - leftWidth - 2 // 2 for separator
 
 		// Pad columns to equal height
 		maxLines := len(leftLines)
@@ -801,7 +817,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 			right := rightLines[i]
 			// Pad left to fixed width
 			leftPadded := left + strings.Repeat(" ", max(0, leftWidth-lipgloss.Width(left)))
-			// Truncate right if needed
+			// Truncate right if needed (safety fallback)
 			if lipgloss.Width(right) > rightWidth {
 				right = right[:rightWidth-1] + "…"
 			}
