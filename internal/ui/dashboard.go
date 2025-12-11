@@ -420,7 +420,7 @@ func (d *Dashboard) calculateTokenPanelWidth() int {
 }
 
 // renderUltraWide renders 3 panels side-by-side
-// Priority: 1) System (fixed), 2) TMUX (minimum), 3) Token (expands with available space)
+// Priority: 1) System (fixed), 2) TMUX (fixed), 3) Token (gets remainder to expand for model names)
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
@@ -432,30 +432,23 @@ func (d *Dashboard) renderUltraWide() string {
 		systemWidth = 55
 	}
 
-	// Step 2: TMUX gets minimum viable width
-	minTmuxWidth := 50
-
-	// Step 3: Token panel expands to fit content, using available space
-	// Calculate the ideal width based on actual model name lengths
-	idealTokenWidth := d.calculateRequiredTokenWidth()
-	minTokenWidth := 46
-
-	// Available space after system and minimum tmux
-	availableForToken := totalPanelWidth - systemWidth - minTmuxWidth
-
-	// Token panel gets up to its ideal width, but not more than available
-	tokenWidth := idealTokenWidth
-	if tokenWidth > availableForToken {
-		tokenWidth = availableForToken
+	// Step 2: TMUX gets a fixed width (not greedy remainder)
+	// This allows token panel to expand for longer model names
+	tmuxWidth := 70
+	if totalPanelWidth < 200 {
+		tmuxWidth = 60
 	}
+	if totalPanelWidth < 170 {
+		tmuxWidth = 50
+	}
+
+	// Step 3: Token panel gets the remainder - allows model names to expand
+	tokenWidth := totalPanelWidth - systemWidth - tmuxWidth
+	minTokenWidth := 46
 	if tokenWidth < minTokenWidth {
 		tokenWidth = minTokenWidth
-	}
-
-	// TMUX gets the remainder
-	tmuxWidth := totalPanelWidth - systemWidth - tokenWidth
-	if tmuxWidth < minTmuxWidth {
-		tmuxWidth = minTmuxWidth
+		// Recalculate tmux if token needs minimum
+		tmuxWidth = totalPanelWidth - systemWidth - tokenWidth
 	}
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
