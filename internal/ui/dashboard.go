@@ -549,6 +549,24 @@ func (d *Dashboard) renderUltraWide() string {
 			// Neither wants more, give remainder to tmux for session names
 			tmuxWidth = minTmuxWidth + remainingAfterMins
 		}
+	} else if remainingAfterMins < 0 {
+		// Not enough space for both minimums - compress proportionally
+		deficit := -remainingAfterMins
+		totalMin := minTokenWidth + minTmuxWidth
+		// Reduce each panel proportionally to its minimum
+		tokenReduction := deficit * minTokenWidth / totalMin
+		tmuxReduction := deficit - tokenReduction
+		tokenWidth = minTokenWidth - tokenReduction
+		tmuxWidth = minTmuxWidth - tmuxReduction
+		// Enforce absolute minimums
+		if tokenWidth < 30 {
+			tokenWidth = 30
+			tmuxWidth = availableWidth - tokenWidth
+		}
+		if tmuxWidth < 30 {
+			tmuxWidth = 30
+			tokenWidth = availableWidth - tmuxWidth
+		}
 	}
 
 	// Cap token panel - it doesn't need more than ideal
@@ -556,6 +574,14 @@ func (d *Dashboard) renderUltraWide() string {
 		excess := tokenWidth - idealTokenWidth
 		tokenWidth = idealTokenWidth
 		tmuxWidth += excess
+	}
+
+	// Final safety: ensure widths are positive
+	if tokenWidth < 1 {
+		tokenWidth = 1
+	}
+	if tmuxWidth < 1 {
+		tmuxWidth = 1
 	}
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
