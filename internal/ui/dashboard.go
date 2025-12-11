@@ -1094,14 +1094,11 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 
-	name := session.Name
-	if len(name) > width-6 {
-		name = name[:width-9] + "..."
-	}
-
 	attached := ""
+	attachedWidth := 0
 	if session.Attached {
 		attached = "📎"
+		attachedWidth = 3 // emoji + space
 	}
 
 	// Format: emoji name status windows idle attached
@@ -1122,35 +1119,29 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 		}
 	}
 
-	// "win" = windows, idle = time content unchanged
-	// Be more conservative with spacing to account for emoji display width
-	line := fmt.Sprintf("%s %-9s %s %dw %-3s %s",
+	// Calculate available width for session name
+	// Fixed parts: emoji(2) + space(1) + space(1) + status(7) + space(1) + windows(~3) + space(1) + idle(3) + space(1) + attached
+	// Fixed overhead = ~20 chars + attachedWidth
+	fixedOverhead := 20 + attachedWidth
+	maxNameLen := width - fixedOverhead
+	if maxNameLen < 6 {
+		maxNameLen = 6 // Minimum readable name length
+	}
+
+	name := session.Name
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen-1] + "…"
+	}
+
+	// Build the line with dynamic name width
+	nameFormat := fmt.Sprintf("%%-%ds", maxNameLen)
+	line := fmt.Sprintf("%s "+nameFormat+" %s %dw %-3s %s",
 		emoji,
 		name,
 		statusStyle.Render(fmt.Sprintf("%-7s", statusText)),
 		session.Windows,
 		idleStr,
 		attached)
-
-	// Emojis display as 2 columns in terminal but len() counts bytes
-	// Estimate display width: add extra chars for emojis
-	estimatedDisplayWidth := len(line) + 2 // +2 for emoji display width overhead
-
-	// Ensure line doesn't exceed width
-	if estimatedDisplayWidth > width {
-		// Truncate name if line is too long
-		maxNameLen := 6
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen]
-		}
-		line = fmt.Sprintf("%s %-6s %s %dw %-3s %s",
-			emoji,
-			name,
-			statusStyle.Render(fmt.Sprintf("%-7s", statusText)),
-			session.Windows,
-			idleStr,
-			attached)
-	}
 
 	return line
 }
