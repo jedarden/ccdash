@@ -2,11 +2,17 @@ package metrics
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	// Timeout for tmux commands to prevent hanging
+	tmuxCommandTimeout = 2 * time.Second
 )
 
 // SessionStatus represents the current status of a tmux session
@@ -128,7 +134,9 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 
 // isTmuxAvailable checks if tmux is installed and available
 func (tc *TmuxCollector) isTmuxAvailable() bool {
-	cmd := exec.Command("which", "tmux")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "which", "tmux")
 	err := cmd.Run()
 	return err == nil
 }
@@ -137,7 +145,10 @@ func (tc *TmuxCollector) isTmuxAvailable() bool {
 func (tc *TmuxCollector) listSessions() ([]TmuxSession, error) {
 	// Execute tmux list-sessions with formatted output
 	// Format: session_name:windows:attached:created
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}:#{session_created}")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}:#{session_created}")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -145,6 +156,9 @@ func (tc *TmuxCollector) listSessions() ([]TmuxSession, error) {
 
 	err := cmd.Run()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("tmux list-sessions timed out")
+		}
 		stderrStr := stderr.String()
 		if stderrStr != "" {
 			return nil, fmt.Errorf("tmux error: %s", stderrStr)
@@ -224,12 +238,18 @@ func (tc *TmuxCollector) parseSessionLine(line string) (TmuxSession, error) {
 // capturePaneContent captures the visible content of a tmux pane
 func (tc *TmuxCollector) capturePaneContent(sessionName string) (string, error) {
 	// Capture last 15 lines of the pane (same as unified-dashboard)
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-15")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-15")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
 	err := cmd.Run()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("tmux capture-pane timed out")
+		}
 		return "", err
 	}
 

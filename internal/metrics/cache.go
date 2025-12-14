@@ -20,12 +20,13 @@ const (
 	connMaxIdleTime = 0  // Don't expire idle connections
 
 	// Retry configuration for database locks
-	maxRetries     = 5
-	baseRetryDelay = 100 * time.Millisecond
-	maxRetryDelay  = 2 * time.Second
+	// Keep retries minimal to avoid blocking the UI
+	maxRetries     = 3
+	baseRetryDelay = 50 * time.Millisecond
+	maxRetryDelay  = 200 * time.Millisecond
 
-	// Operation timeout
-	dbOperationTimeout = 30 * time.Second
+	// Operation timeout - keep short to avoid UI hangs
+	dbOperationTimeout = 5 * time.Second
 )
 
 // TokenCache manages persistent SQLite-based caching of token metrics
