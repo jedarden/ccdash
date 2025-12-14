@@ -1549,7 +1549,7 @@ Self-Update: Press 'u' when update available
 // renderStatusBar renders the bottom status bar (single line, compact)
 func (d *Dashboard) renderStatusBar() string {
 	// Compact format: time + version, github, dimensions, shortcuts - all on one line
-	left := fmt.Sprintf("%s v%s", d.lastUpdate.Format("15:04:05"), d.version)
+	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 
 	// Show update status or normal middle content
 	var middle string
@@ -1558,7 +1558,7 @@ func (d *Dashboard) renderStatusBar() string {
 	} else if d.updateStatus != "" {
 		middle = errorStyle.Render(d.updateStatus)
 	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-		middle = successStyle.Render(fmt.Sprintf("⬆ v%s available! Press u to update", d.updateInfo.LatestVersion))
+		middle = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update", d.updateInfo.LatestVersion))
 	} else {
 		middle = dimStyle.Render("https://github.com/jedarden/ccdash")
 	}
@@ -1580,7 +1580,7 @@ func (d *Dashboard) renderStatusBar() string {
 		if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
 			compactShortcuts = "u l h q r"
 		}
-		return statusBarStyle.Render(fmt.Sprintf("%s v%s %dx%d %s",
+		return statusBarStyle.Render(fmt.Sprintf("%s %s %dx%d %s",
 			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))
 	}
 
