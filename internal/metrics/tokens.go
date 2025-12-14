@@ -201,9 +201,17 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	}
 
 	// Step 1: Ingest any new data from JSONL files into SQLite
+	// Continue processing even if individual files fail (for resilience)
+	var lastIngestErr error
 	for _, file := range files {
-		tc.ingestJSONLFile(file)
+		if err := tc.ingestJSONLFile(file); err != nil {
+			lastIngestErr = err
+			// Continue processing other files even if one fails
+		}
 	}
+	// Note: lastIngestErr is tracked but not returned to avoid blocking queries
+	// when only some files have issues. The error is silently logged for debugging.
+	_ = lastIngestErr
 
 	// Step 2: Query SQLite for aggregated metrics based on lookback
 	aggregated, err := tc.cache.QueryTokensSince(tc.lookbackFrom)
@@ -281,15 +289,16 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 }
 
 // ingestJSONLFile reads a JSONL file and inserts new events into SQLite
-func (tc *TokenCollector) ingestJSONLFile(filename string) {
+// Returns an error if database operations fail (for proper error handling)
+func (tc *TokenCollector) ingestJSONLFile(filename string) error {
 	if tc.cache == nil {
-		return
+		return nil
 	}
 
 	// Check file modification time
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return
+		return nil // File may have been deleted, not a critical error
 	}
 
 	// Get last processed state
@@ -297,7 +306,7 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) {
 
 	// If file hasn't been modified since last processing, skip
 	if exists && !fileInfo.ModTime().After(lastMod) {
-		return
+		return nil
 	}
 
 	// If file was modified (truncated/rewritten), invalidate and reprocess
@@ -307,7 +316,7 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) {
 		// but if file was completely rewritten, invalidate
 		file, err := os.Open(filename)
 		if err != nil {
-			return
+			return nil // File may have been deleted
 		}
 		defer file.Close()
 
@@ -322,7 +331,9 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) {
 
 		// If file has fewer lines than we processed, it was rewritten
 		if currentLineCount < lastLine {
-			tc.cache.InvalidateFile(filename)
+			if err := tc.cache.InvalidateFile(filename); err != nil {
+				return fmt.Errorf("failed to invalidate file %s: %w", filename, err)
+			}
 			lastLine = 0
 		}
 	}
@@ -330,7 +341,7 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) {
 	// Open file for processing
 	file, err := os.Open(filename)
 	if err != nil {
-		return
+		return nil // File may have been deleted
 	}
 	defer file.Close()
 
@@ -385,18 +396,26 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) {
 
 		// Batch insert every 100 events
 		if len(events) >= 100 {
-			tc.cache.InsertTokenEventBatch(events)
+			if err := tc.cache.InsertTokenEventBatch(events); err != nil {
+				return fmt.Errorf("failed to insert batch for %s: %w", filename, err)
+			}
 			events = events[:0]
 		}
 	}
 
 	// Insert remaining events
 	if len(events) > 0 {
-		tc.cache.InsertTokenEventBatch(events)
+		if err := tc.cache.InsertTokenEventBatch(events); err != nil {
+			return fmt.Errorf("failed to insert final batch for %s: %w", filename, err)
+		}
 	}
 
 	// Update file state
-	tc.cache.SetFileState(filename, lineNumber, fileInfo.ModTime())
+	if err := tc.cache.SetFileState(filename, lineNumber, fileInfo.ModTime()); err != nil {
+		return fmt.Errorf("failed to set file state for %s: %w", filename, err)
+	}
+
+	return nil
 }
 
 // findProjectDir finds the Claude project directory for the given working directory
