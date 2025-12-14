@@ -2,8 +2,6 @@ module github.com/jedarden/ccdash
 
 go 1.24.0
 
-toolchain go1.24.10
-
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
