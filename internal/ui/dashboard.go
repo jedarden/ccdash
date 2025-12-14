@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
+	"math/rand"
+	"os"
 	"strings"
 	"time"
 
@@ -36,6 +39,7 @@ type Dashboard struct {
 	height        int
 	layoutMode    LayoutMode
 	version       string
+	instanceID    string // Unique ID for leader election
 
 	// Metrics collectors
 	systemCollector *metrics.SystemCollector
@@ -65,6 +69,11 @@ type Dashboard struct {
 	updateInfo   *updater.UpdateInfo
 	updating     bool
 	updateStatus string
+}
+
+// generateInstanceID creates a unique identifier for this dashboard instance
+func generateInstanceID() string {
+	return fmt.Sprintf("%d-%d", os.Getpid(), rand.Int63())
 }
 
 // NewDashboard creates a new dashboard model with default Monday 9am lookback
@@ -120,6 +129,7 @@ func NewDashboard(version string) *Dashboard {
 
 	return &Dashboard{
 		version:            version,
+		instanceID:         generateInstanceID(),
 		systemCollector:    metrics.NewSystemCollector(),
 		tokenCollector:     metrics.NewTokenCollector(),
 		tmuxCollector:      metrics.NewTmuxCollector(),
@@ -375,10 +385,23 @@ type errMsg struct {
 	err error
 }
 
+// Metric type constants for cache keys
+const (
+	metricTypeSystem = "system"
+	metricTypeTmux   = "tmux"
+)
+
 // collectMetrics returns a command that collects all metrics
-// Each collector runs in parallel with a timeout to prevent UI blocking
+// Uses leader election: only one instance collects, others read from cache
 func (d *Dashboard) collectMetrics() tea.Cmd {
 	return func() tea.Msg {
+		cache := d.tokenCollector.GetCache()
+		isLeader := cache.TryAcquireLease(d.instanceID)
+
+		var system metrics.SystemMetrics
+		var tokens *metrics.TokenMetrics
+		var tmux *metrics.TmuxMetrics
+
 		// Use channels to collect results with timeout
 		type systemResult struct {
 			metrics metrics.SystemMetrics
@@ -394,24 +417,56 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 		tokenChan := make(chan tokenResult, 1)
 		tmuxChan := make(chan tmuxResult, 1)
 
-		// Collect in parallel
+		// System metrics: try cache first, collect if leader or cache miss
 		go func() {
-			systemChan <- systemResult{metrics: d.systemCollector.Collect()}
+			if !isLeader {
+				if data, ok := cache.GetCachedMetrics(metricTypeSystem); ok {
+					var cached metrics.SystemMetrics
+					if json.Unmarshal(data, &cached) == nil {
+						systemChan <- systemResult{metrics: cached}
+						return
+					}
+				}
+			}
+			// Leader or cache miss: collect fresh
+			m := d.systemCollector.Collect()
+			if isLeader {
+				if data, err := json.Marshal(m); err == nil {
+					cache.SetCachedMetrics(metricTypeSystem, data)
+				}
+			}
+			systemChan <- systemResult{metrics: m}
 		}()
+
+		// Token metrics: always collect (uses shared DB, cheap to query)
 		go func() {
-			tokens, _ := d.tokenCollector.Collect()
-			tokenChan <- tokenResult{metrics: tokens}
+			t, _ := d.tokenCollector.Collect()
+			tokenChan <- tokenResult{metrics: t}
 		}()
+
+		// Tmux metrics: try cache first, collect if leader or cache miss
 		go func() {
-			tmuxChan <- tmuxResult{metrics: d.tmuxCollector.Collect()}
+			if !isLeader {
+				if data, ok := cache.GetCachedMetrics(metricTypeTmux); ok {
+					var cached metrics.TmuxMetrics
+					if json.Unmarshal(data, &cached) == nil {
+						tmuxChan <- tmuxResult{metrics: &cached}
+						return
+					}
+				}
+			}
+			// Leader or cache miss: collect fresh
+			m := d.tmuxCollector.Collect()
+			if isLeader {
+				if data, err := json.Marshal(m); err == nil {
+					cache.SetCachedMetrics(metricTypeTmux, data)
+				}
+			}
+			tmuxChan <- tmuxResult{metrics: m}
 		}()
 
 		// Wait for results with 3 second timeout
 		timeout := time.After(3 * time.Second)
-
-		var system metrics.SystemMetrics
-		var tokens *metrics.TokenMetrics
-		var tmux *metrics.TmuxMetrics
 
 		// Collect results as they come in, or timeout
 		for i := 0; i < 3; i++ {

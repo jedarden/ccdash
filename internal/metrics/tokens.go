@@ -126,6 +126,11 @@ func (tc *TokenCollector) GetLookback() time.Time {
 	return tc.lookbackFrom
 }
 
+// GetCache returns the underlying token cache for shared metrics operations
+func (tc *TokenCollector) GetCache() *TokenCache {
+	return tc.cache
+}
+
 // claudeMessage represents the structure of Claude API messages in JSONL
 type claudeMessage struct {
 	Message   messageData `json:"message"`
@@ -532,11 +537,6 @@ func getPricingForModel(model string) ModelPricing {
 	}
 
 	return defaultPricing
-}
-
-// GetCache returns the token cache (useful for accessing the SQLite database directly)
-func (tc *TokenCollector) GetCache() *TokenCache {
-	return tc.cache
 }
 
 // GetCacheDBPath returns the path to the SQLite database for external tools like DuckDB

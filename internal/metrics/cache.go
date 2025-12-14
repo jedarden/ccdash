@@ -41,7 +41,13 @@ type TokenCache struct {
 const (
 	cacheDirName  = ".ccdash"
 	cacheDBName   = "tokens.db"
-	schemaVersion = 1
+	schemaVersion = 2
+
+	// Metrics cache TTL - how long cached metrics are valid
+	metricsCacheTTL = 2 * time.Second
+
+	// Lease duration - how long a collector holds the lease
+	collectorLeaseDuration = 5 * time.Second
 )
 
 // withRetry executes a database operation with exponential backoff retry on lock errors
@@ -218,6 +224,22 @@ func (tc *TokenCache) initDB() error {
 		source_file TEXT PRIMARY KEY,
 		last_line INTEGER DEFAULT 0,
 		last_modified INTEGER DEFAULT 0
+	);
+
+	-- Metrics cache for leader election pattern
+	-- Only one instance collects, others read from cache
+	CREATE TABLE IF NOT EXISTS metrics_cache (
+		metric_type TEXT PRIMARY KEY,
+		data BLOB NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+
+	-- Collector lease for leader election
+	-- Instance with valid lease is the collector
+	CREATE TABLE IF NOT EXISTS collector_lease (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		instance_id TEXT NOT NULL,
+		expires_at INTEGER NOT NULL
 	);
 	`
 
@@ -697,4 +719,123 @@ func (tc *TokenCache) GetStatsContext(ctx context.Context) (eventCount int64, fi
 	}
 
 	return
+}
+
+// TryAcquireLease attempts to acquire or renew the collector lease
+// Returns true if this instance is the leader (should collect metrics)
+func (tc *TokenCache) TryAcquireLease(instanceID string) bool {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.db == nil {
+		return true // No DB, collect locally
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	now := time.Now().Unix()
+	expiresAt := now + int64(collectorLeaseDuration.Seconds())
+
+	// Try to acquire or renew lease atomically
+	// This uses INSERT OR REPLACE with a check that either:
+	// 1. No lease exists
+	// 2. Lease is expired
+	// 3. We already hold the lease
+	result, err := withRetry(ctx, func() (sql.Result, error) {
+		return tc.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO collector_lease (id, instance_id, expires_at)
+			SELECT 1, ?, ?
+			WHERE NOT EXISTS (
+				SELECT 1 FROM collector_lease
+				WHERE id = 1 AND expires_at > ? AND instance_id != ?
+			)
+		`, instanceID, expiresAt, now, instanceID)
+	})
+
+	if err != nil {
+		return true // On error, collect locally to be safe
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return true
+	}
+
+	return rowsAffected > 0
+}
+
+// GetCachedMetrics retrieves cached metrics if they're still valid
+// Returns nil if cache is stale or doesn't exist
+func (tc *TokenCache) GetCachedMetrics(metricType string) ([]byte, bool) {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	if tc.db == nil {
+		return nil, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	now := time.Now().Unix()
+	cutoff := now - int64(metricsCacheTTL.Seconds())
+
+	result, err := withRetry(ctx, func() ([]byte, error) {
+		var data []byte
+		err := tc.db.QueryRowContext(ctx, `
+			SELECT data FROM metrics_cache
+			WHERE metric_type = ? AND updated_at >= ?
+		`, metricType, cutoff).Scan(&data)
+		return data, err
+	})
+
+	if err != nil {
+		return nil, false
+	}
+
+	return result, true
+}
+
+// SetCachedMetrics stores metrics in the cache
+func (tc *TokenCache) SetCachedMetrics(metricType string, data []byte) error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.db == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	now := time.Now().Unix()
+
+	return withRetryNoResult(ctx, func() error {
+		_, err := tc.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO metrics_cache (metric_type, data, updated_at)
+			VALUES (?, ?, ?)
+		`, metricType, data, now)
+		return err
+	})
+}
+
+// ReleaseLease releases the collector lease (called on shutdown)
+func (tc *TokenCache) ReleaseLease(instanceID string) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.db == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	withRetryNoResult(ctx, func() error {
+		_, err := tc.db.ExecContext(ctx, `
+			DELETE FROM collector_lease WHERE id = 1 AND instance_id = ?
+		`, instanceID)
+		return err
+	})
 }
