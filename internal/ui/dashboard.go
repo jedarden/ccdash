@@ -376,11 +376,61 @@ type errMsg struct {
 }
 
 // collectMetrics returns a command that collects all metrics
+// Each collector runs in parallel with a timeout to prevent UI blocking
 func (d *Dashboard) collectMetrics() tea.Cmd {
 	return func() tea.Msg {
-		system := d.systemCollector.Collect()
-		tokens, _ := d.tokenCollector.Collect()
-		tmux := d.tmuxCollector.Collect()
+		// Use channels to collect results with timeout
+		type systemResult struct {
+			metrics metrics.SystemMetrics
+		}
+		type tokenResult struct {
+			metrics *metrics.TokenMetrics
+		}
+		type tmuxResult struct {
+			metrics *metrics.TmuxMetrics
+		}
+
+		systemChan := make(chan systemResult, 1)
+		tokenChan := make(chan tokenResult, 1)
+		tmuxChan := make(chan tmuxResult, 1)
+
+		// Collect in parallel
+		go func() {
+			systemChan <- systemResult{metrics: d.systemCollector.Collect()}
+		}()
+		go func() {
+			tokens, _ := d.tokenCollector.Collect()
+			tokenChan <- tokenResult{metrics: tokens}
+		}()
+		go func() {
+			tmuxChan <- tmuxResult{metrics: d.tmuxCollector.Collect()}
+		}()
+
+		// Wait for results with 3 second timeout
+		timeout := time.After(3 * time.Second)
+
+		var system metrics.SystemMetrics
+		var tokens *metrics.TokenMetrics
+		var tmux *metrics.TmuxMetrics
+
+		// Collect results as they come in, or timeout
+		for i := 0; i < 3; i++ {
+			select {
+			case r := <-systemChan:
+				system = r.metrics
+			case r := <-tokenChan:
+				tokens = r.metrics
+			case r := <-tmuxChan:
+				tmux = r.metrics
+			case <-timeout:
+				// Return whatever we have so far
+				return metricsMsg{
+					system: system,
+					tokens: tokens,
+					tmux:   tmux,
+				}
+			}
+		}
 
 		return metricsMsg{
 			system: system,
