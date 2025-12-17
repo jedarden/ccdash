@@ -1205,7 +1205,8 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	contentWidth = width - 4 // -4 for borders (2) and padding (2)
 
 	// Calculate columns needed to show ALL sessions (priority: show everything)
-	minCellWidth := 28 // Minimum readable session cell
+	minCellWidth := 28  // Minimum readable session cell
+	maxCellWidth := 55  // Maximum cell width to avoid excessive whitespace
 	cols := 1
 	if sessionCount > availableLines {
 		// Calculate columns needed to fit all sessions
@@ -1224,8 +1225,19 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		cols = 4 // Reasonable maximum for readability
 	}
 
-	// Calculate cell width based on actual columns used
+	// Calculate cell width based on actual columns used, but cap to avoid whitespace
 	cellWidth := (contentWidth - (cols - 1)) / cols
+	if cellWidth > maxCellWidth {
+		// Increase columns to reduce cell width
+		optimalCols := (contentWidth + maxCellWidth - 1) / maxCellWidth
+		if optimalCols > cols && optimalCols <= 4 {
+			cols = optimalCols
+			cellWidth = (contentWidth - (cols - 1)) / cols
+		} else {
+			// Can't add more columns, just cap the width
+			cellWidth = maxCellWidth
+		}
+	}
 
 	// Show ALL sessions - calculate how many we can actually display
 	maxDisplayed := availableLines * cols
