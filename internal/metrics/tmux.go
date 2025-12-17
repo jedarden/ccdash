@@ -285,21 +285,21 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 	// Calculate idle duration (how long content unchanged)
 	session.IdleDuration = now.Sub(session.LastContentChange)
 
-	// Priority 1: Check if Claude Code is at a prompt (READY)
-	// This must be checked FIRST because working indicators like "(esc to interrupt)"
-	// can persist on screen even when Claude is waiting for input
+	// Priority 1: Check for Claude Code-specific WORKING indicators FIRST
+	// Working indicators like "(esc to interrupt)" take precedence over prompt detection
+	// because both can appear on screen simultaneously while Claude is processing
+	if tc.isClaudeWorking(content) {
+		session.Status = StatusWorking
+		return session
+	}
+
+	// Priority 2: Check if Claude Code is at a prompt (READY)
 	if tc.isClaudeWaiting(content) {
 		if session.IdleDuration > 30*time.Second {
 			session.Status = StatusReady
 		} else {
 			session.Status = StatusActive
 		}
-		return session
-	}
-
-	// Priority 2: Check for Claude Code-specific WORKING indicators
-	if tc.isClaudeWorking(content) {
-		session.Status = StatusWorking
 		return session
 	}
 
@@ -338,21 +338,32 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 // Uses the same patterns as unified-dashboard
 func (tc *TmuxCollector) isClaudeWorking(content string) bool {
 	workingPatterns := []string{
+		// Claude Code status messages (with ellipsis character …)
+		"Finagling…",
+		"Puzzling…",
+		"Listing…",
+		"Running…",
+		"Waiting…",
+		"Architecting…",
+		"Reasoning…",
+		"Thinking…",
+		"Connecting…",
+		"Initializing…",
+		// Fallback with three dots (...)
 		"Finagling...",
 		"Puzzling...",
 		"Listing...",
+		"Thinking...",
+		// Other working indicators
 		"Waiting for",
 		"Analyzing",
 		"Processing",
-		"Running…",
-		"Waiting…",
 		"Thought for",
 		"(esc to interrupt",
+		"esc to interrupt",
 		"background task",
 		"Spawning agent",
 		"Agent is",
-		// Additional patterns from ccdash observations
-		"Thinking...",
 		"<function_calls>",
 		"<invoke",
 		"Tool:",
