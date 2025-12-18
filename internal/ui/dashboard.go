@@ -615,9 +615,7 @@ func (d *Dashboard) getTmuxColumnCount(panelHeight int) int {
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
-	// Panel height: total height minus status bar (1 line)
-	// The View() function will pad any remaining space
-	panelHeight := d.height - 1
+	panelHeight := d.height - 3
 
 	// Step 1: System panel gets fixed width for CPU bars
 	systemWidth := 60
@@ -730,10 +728,8 @@ func (d *Dashboard) renderUltraWide() string {
 // renderWide renders 2 panels on top, 1 on bottom
 func (d *Dashboard) renderWide() string {
 	panelWidth := (d.width - 3) / 2 // 2 panels with spacing
-	// Height calculation: total height minus status bar (1 line), split between top and bottom
-	availableHeight := d.height - 1 // -1 for status bar
-	topHeight := availableHeight / 2
-	bottomHeight := availableHeight - topHeight
+	topHeight := (d.height - 4) / 2 // Split height
+	bottomHeight := d.height - topHeight - 4
 
 	systemPanel := d.renderSystemPanel(panelWidth, topHeight)
 	tokenPanel := d.renderTokenPanel(panelWidth, topHeight)
@@ -747,9 +743,7 @@ func (d *Dashboard) renderWide() string {
 // renderNarrow renders panels stacked vertically
 func (d *Dashboard) renderNarrow() string {
 	panelWidth := d.width - 2
-	// Height calculation: total height minus status bar (1 line), divided by 3 panels
-	availableHeight := d.height - 1 // -1 for status bar
-	panelHeight := availableHeight / 3
+	panelHeight := (d.height - 5) / 3 // 3 panels stacked
 
 	systemPanel := d.renderSystemPanel(panelWidth, panelHeight)
 	tokenPanel := d.renderTokenPanel(panelWidth, panelHeight)
