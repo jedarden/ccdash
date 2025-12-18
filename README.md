@@ -1,6 +1,6 @@
 # 📊 ccdash
 
-**Version:** `0.6.0`
+**Version:** `0.6.27`
 
 > A lightweight TUI (Terminal User Interface) dashboard for monitoring system resources, Claude Code token usage, and tmux sessions.
 

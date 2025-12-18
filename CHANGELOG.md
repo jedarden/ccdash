@@ -5,6 +5,18 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.27] - 2025-12-18
+
+### Fixed
+- **Display bleed-through bug**: Fixed issue where external process output (like Tailscale "wgengine: reconfig" logs) would appear at the bottom of the display
+  - Root cause: View() output didn't fill entire terminal height, leaving bottom rows unrendered
+  - Solution: Added padding to ensure View() always outputs exactly `d.height` lines
+  - Resizing no longer required to clear stray log messages
+- **Improved panel height calculations**: All layout modes now properly calculate panel heights
+  - `renderUltraWide()`: Fixed `panelHeight` calculation (was `d.height - 3`, now `d.height - 1`)
+  - `renderWide()`: Fixed height split calculation for top/bottom panels
+  - `renderNarrow()`: Fixed height division for stacked panels
+
 ## [0.6.0] - 2025-12-05
 
 ### Added
@@ -162,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Content change detection with timing rules
 - 2-second refresh interval for metrics
 
+[0.6.27]: https://github.com/jedarden/ccdash/releases/tag/v0.6.27
 [0.6.0]: https://github.com/jedarden/ccdash/releases/tag/v0.6.0
 [0.5.0]: https://github.com/jedarden/ccdash/releases/tag/v0.5.0
 [0.3.0]: https://github.com/jedarden/ccdash/releases/tag/v0.3.0
