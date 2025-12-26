@@ -1446,8 +1446,16 @@ func (d *Dashboard) renderLookbackPicker() string {
 		lines = append(lines, dimStyle.Render("  Enter: apply  Esc: back to presets"))
 	} else {
 		// Preset selection
+		// Calculate available content lines: panelHeight - 4 (borders + padding)
+		availableLines := panelHeight - 4
+		// Compact mode needed if: title(1) + instruction(1) + presets(7*2=14) + nav(1) = 17 > available
+		// Use compact single-line format when height is constrained
+		compactMode := availableLines < 17
+
 		lines = append(lines, "Select a lookback period:")
-		lines = append(lines, "")
+		if !compactMode {
+			lines = append(lines, "")
+		}
 
 		for i, preset := range d.lookbackPresets {
 			prefix := "  "
@@ -1466,14 +1474,26 @@ func (d *Dashboard) renderLookbackPicker() string {
 				}
 			}
 
-			lines = append(lines, fmt.Sprintf("%s%s%s",
-				prefix,
-				style.Render(preset.Name),
-				dimStyle.Render(timeStr)))
-			lines = append(lines, fmt.Sprintf("   %s", dimStyle.Render(preset.Description)))
+			if compactMode {
+				// Single-line compact format: "▶ Name - Description (time)"
+				lines = append(lines, fmt.Sprintf("%s%s %s%s",
+					prefix,
+					style.Render(preset.Name),
+					dimStyle.Render("- "+preset.Description),
+					dimStyle.Render(timeStr)))
+			} else {
+				// Full two-line format
+				lines = append(lines, fmt.Sprintf("%s%s%s",
+					prefix,
+					style.Render(preset.Name),
+					dimStyle.Render(timeStr)))
+				lines = append(lines, fmt.Sprintf("   %s", dimStyle.Render(preset.Description)))
+			}
 		}
 
-		lines = append(lines, "")
+		if !compactMode {
+			lines = append(lines, "")
+		}
 		lines = append(lines, dimStyle.Render("  ↑/↓/j/k: navigate  Enter/Space: select  Esc/l: close"))
 	}
 
