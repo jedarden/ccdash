@@ -111,7 +111,8 @@ func (tc *TmuxCollector) GetHookCollector() *HookSessionCollector {
 	return tc.hookCollector
 }
 
-// Collect gathers current tmux session information
+// Collect gathers current tmux session information using a hybrid approach
+// that merges both hook-based and tmux-based session tracking
 func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	metrics := &TmuxMetrics{
 		Sessions:   make([]TmuxSession, 0),
@@ -125,51 +126,67 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		metrics.HooksAvailable = tc.hookCollector.IsAvailable()
 	}
 
-	// Try hook-based session tracking first (primary source)
+	// Collect hook-based sessions (these have accurate status from Claude Code)
+	hookSessionMap := make(map[string]TmuxSession) // keyed by project dir basename
 	if tc.hookCollector != nil && metrics.HooksAvailable {
 		hookSessions, err := tc.hookCollector.CollectSessions()
-		if err == nil && len(hookSessions) > 0 {
+		if err == nil {
 			for _, hs := range hookSessions {
 				session := hs.ToTmuxSession()
 				session.Source = "hooks"
-				metrics.Sessions = append(metrics.Sessions, session)
+				hookSessionMap[session.Name] = session
 			}
-			metrics.Source = "hooks"
-			metrics.Available = true
-			metrics.Total = len(metrics.Sessions)
-			return metrics
 		}
 	}
 
-	// Fall back to tmux-based session tracking
-	if !tc.isTmuxAvailable() {
-		metrics.Available = false
+	// Collect tmux-based sessions
+	tmuxSessions := make([]TmuxSession, 0)
+	if tc.isTmuxAvailable() {
+		sessions, err := tc.listSessions()
+		if err == nil {
+			for i := range sessions {
+				sessions[i].Source = "tmux"
+			}
+			tmuxSessions = sessions
+		}
+	}
+
+	// Merge sessions: prefer hook data when available (more accurate status),
+	// but include all tmux sessions to catch those started before hooks were installed
+	seenNames := make(map[string]bool)
+
+	// First, add all hook-tracked sessions (these have accurate Claude Code status)
+	for _, session := range hookSessionMap {
+		metrics.Sessions = append(metrics.Sessions, session)
+		seenNames[session.Name] = true
+	}
+
+	// Then, add tmux sessions that aren't already tracked by hooks
+	for _, session := range tmuxSessions {
+		if !seenNames[session.Name] {
+			metrics.Sessions = append(metrics.Sessions, session)
+			seenNames[session.Name] = true
+		}
+	}
+
+	// Determine source label
+	hasHooks := len(hookSessionMap) > 0
+	hasTmux := len(tmuxSessions) > 0
+	switch {
+	case hasHooks && hasTmux:
+		metrics.Source = "hybrid"
+	case hasHooks:
+		metrics.Source = "hooks"
+	case hasTmux:
+		metrics.Source = "tmux"
+	}
+
+	metrics.Available = hasTmux || hasHooks
+	metrics.Total = len(metrics.Sessions)
+
+	if !metrics.Available && !tc.isTmuxAvailable() {
 		metrics.Error = "tmux is not installed or not available in PATH"
-		return metrics
 	}
-
-	metrics.Available = true
-
-	// Get session list from tmux
-	sessions, err := tc.listSessions()
-	if err != nil {
-		// Not necessarily an error - could just mean no sessions are running
-		if strings.Contains(err.Error(), "no server running") ||
-			strings.Contains(err.Error(), "no sessions") {
-			metrics.Total = 0
-			return metrics
-		}
-		metrics.Error = err.Error()
-		return metrics
-	}
-
-	// Mark tmux sessions as sourced from tmux
-	for i := range sessions {
-		sessions[i].Source = "tmux"
-	}
-
-	metrics.Sessions = sessions
-	metrics.Total = len(sessions)
 
 	return metrics
 }
