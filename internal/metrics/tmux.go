@@ -70,15 +70,20 @@ type TmuxSession struct {
 	Created           time.Time     `json:"created"`
 	LastContentChange time.Time     `json:"last_content_change"`
 	IdleDuration      time.Duration `json:"idle_duration"` // How long content unchanged
+	LastLines         []string      `json:"last_lines,omitempty"`
+	Source            string        `json:"source,omitempty"` // "tmux" or "hooks"
 }
 
 // TmuxMetrics holds information about all tmux sessions
 type TmuxMetrics struct {
-	Sessions   []TmuxSession `json:"sessions"`
-	Total      int           `json:"total"`
-	Available  bool          `json:"available"`
-	Error      string        `json:"error,omitempty"`
-	LastUpdate time.Time     `json:"last_update"`
+	Sessions       []TmuxSession `json:"sessions"`
+	Total          int           `json:"total"`
+	Available      bool          `json:"available"`
+	Error          string        `json:"error,omitempty"`
+	LastUpdate     time.Time     `json:"last_update"`
+	HooksAvailable bool          `json:"hooks_available"` // Whether hook-based tracking is active
+	HooksInstalled bool          `json:"hooks_installed"` // Whether hooks are installed
+	Source         string        `json:"source"`          // "hooks", "tmux", or "hybrid"
 }
 
 // TmuxCollector collects metrics about tmux sessions
@@ -87,14 +92,23 @@ type TmuxCollector struct {
 	sessionActivityMap map[string]time.Time
 	// sessionContentCache stores recent pane content for change detection
 	sessionContentCache map[string]string
+	// hookCollector handles hook-based session tracking
+	hookCollector *HookSessionCollector
 }
 
 // NewTmuxCollector creates a new TmuxCollector instance
 func NewTmuxCollector() *TmuxCollector {
+	hookCollector, _ := NewHookSessionCollector()
 	return &TmuxCollector{
 		sessionActivityMap:  make(map[string]time.Time),
 		sessionContentCache: make(map[string]string),
+		hookCollector:       hookCollector,
 	}
+}
+
+// GetHookCollector returns the hook session collector
+func (tc *TmuxCollector) GetHookCollector() *HookSessionCollector {
+	return tc.hookCollector
 }
 
 // Collect gathers current tmux session information
@@ -102,9 +116,32 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	metrics := &TmuxMetrics{
 		Sessions:   make([]TmuxSession, 0),
 		LastUpdate: time.Now(),
+		Source:     "tmux",
 	}
 
-	// Check if tmux is available
+	// Check hook availability
+	if tc.hookCollector != nil {
+		metrics.HooksInstalled = tc.hookCollector.AreHooksInstalled()
+		metrics.HooksAvailable = tc.hookCollector.IsAvailable()
+	}
+
+	// Try hook-based session tracking first (primary source)
+	if tc.hookCollector != nil && metrics.HooksAvailable {
+		hookSessions, err := tc.hookCollector.CollectSessions()
+		if err == nil && len(hookSessions) > 0 {
+			for _, hs := range hookSessions {
+				session := hs.ToTmuxSession()
+				session.Source = "hooks"
+				metrics.Sessions = append(metrics.Sessions, session)
+			}
+			metrics.Source = "hooks"
+			metrics.Available = true
+			metrics.Total = len(metrics.Sessions)
+			return metrics
+		}
+	}
+
+	// Fall back to tmux-based session tracking
 	if !tc.isTmuxAvailable() {
 		metrics.Available = false
 		metrics.Error = "tmux is not installed or not available in PATH"
@@ -113,7 +150,7 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 
 	metrics.Available = true
 
-	// Get session list
+	// Get session list from tmux
 	sessions, err := tc.listSessions()
 	if err != nil {
 		// Not necessarily an error - could just mean no sessions are running
@@ -124,6 +161,11 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		}
 		metrics.Error = err.Error()
 		return metrics
+	}
+
+	// Mark tmux sessions as sourced from tmux
+	for i := range sessions {
+		sessions[i].Source = "tmux"
 	}
 
 	metrics.Sessions = sessions

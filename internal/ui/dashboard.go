@@ -1198,7 +1198,17 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	statusSummary := strings.Join(statusParts, " ")
 
 	// Title with total count and status summary right-justified
-	title := successStyle.Render(fmt.Sprintf("📺 TMUX Sessions (%d)", d.tmuxMetrics.Total))
+	// Show source indicator: 🔗 for hooks, 📺 for tmux
+	sourceIcon := "📺"
+	sourceLabel := "Sessions"
+	if d.tmuxMetrics.Source == "hooks" {
+		sourceIcon = "🔗"
+		sourceLabel = "Sessions"
+	} else if d.tmuxMetrics.HooksInstalled && !d.tmuxMetrics.HooksAvailable {
+		// Hooks installed but no hook sessions, falling back to tmux
+		sourceLabel = "Sessions (tmux)"
+	}
+	title := successStyle.Render(fmt.Sprintf("%s %s (%d)", sourceIcon, sourceLabel, d.tmuxMetrics.Total))
 	titleLen := lipgloss.Width(title)
 	summaryLen := lipgloss.Width(statusSummary)
 	spacing := contentWidth - titleLen - summaryLen
