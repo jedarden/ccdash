@@ -945,7 +945,22 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	title := successStyle.Render("💰 Token Usage")
 	lookbackInfo := ""
 	if d.tokenMetrics != nil && !d.tokenMetrics.LookbackFrom.IsZero() {
-		lookbackInfo = dimStyle.Render(d.tokenMetrics.LookbackFrom.Format("Mon 3:04pm"))
+		// Format start time - use date if not this week
+		now := time.Now()
+		startTime := d.tokenMetrics.LookbackFrom
+		elapsed := now.Sub(startTime)
+
+		// Choose format based on how long ago
+		var timeStr string
+		if elapsed < 7*24*time.Hour {
+			timeStr = startTime.Format("Mon 3:04pm")
+		} else {
+			timeStr = startTime.Format("Jan 2 3:04pm")
+		}
+
+		// Add human-readable duration
+		durationStr := metrics.FormatDuration(elapsed)
+		lookbackInfo = dimStyle.Render(fmt.Sprintf("%s → Now (%s)", timeStr, durationStr))
 	} else if d.tokenMetrics != nil {
 		lookbackInfo = dimStyle.Render("All time")
 	}
