@@ -162,11 +162,14 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	seenNames := make(map[string]bool)
 
 	// First, add all hook-tracked sessions
-	// For stale/error hook sessions, check tmux pane content to see if actually active
+	// Enhance hook sessions with tmux data (attached status, working detection)
 	for _, session := range hookSessionMap {
-		// If hook says session is stale/error, verify with tmux pane content
-		if session.Status == StatusError {
-			if tmuxSession, exists := tmuxSessionMap[session.Name]; exists {
+		if tmuxSession, exists := tmuxSessionMap[session.Name]; exists {
+			// Use actual tmux attached status (hooks don't track this)
+			session.Attached = tmuxSession.Attached
+
+			// If hook says session is stale/error, verify with tmux pane content
+			if session.Status == StatusError {
 				// Use tmux-based status detection (checks pane content for working indicators)
 				if tmuxSession.Status == StatusWorking || tmuxSession.Status == StatusActive {
 					session.Status = tmuxSession.Status
