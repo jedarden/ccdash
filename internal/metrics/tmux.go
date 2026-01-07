@@ -151,12 +151,29 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		}
 	}
 
+	// Build a map of tmux sessions for quick lookup
+	tmuxSessionMap := make(map[string]TmuxSession)
+	for _, session := range tmuxSessions {
+		tmuxSessionMap[session.Name] = session
+	}
+
 	// Merge sessions: prefer hook data when available (more accurate status),
 	// but include all tmux sessions to catch those started before hooks were installed
 	seenNames := make(map[string]bool)
 
-	// First, add all hook-tracked sessions (these have accurate Claude Code status)
+	// First, add all hook-tracked sessions
+	// For stale/error hook sessions, check tmux pane content to see if actually active
 	for _, session := range hookSessionMap {
+		// If hook says session is stale/error, verify with tmux pane content
+		if session.Status == StatusError {
+			if tmuxSession, exists := tmuxSessionMap[session.Name]; exists {
+				// Use tmux-based status detection (checks pane content for working indicators)
+				if tmuxSession.Status == StatusWorking || tmuxSession.Status == StatusActive {
+					session.Status = tmuxSession.Status
+					session.Source = "hybrid" // Mark as hybrid since we used both sources
+				}
+			}
+		}
 		metrics.Sessions = append(metrics.Sessions, session)
 		seenNames[session.Name] = true
 	}
