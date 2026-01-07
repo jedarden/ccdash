@@ -105,6 +105,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Auto-install hooks if not already installed
+	ensureHooksInstalled()
+
 	// Create and run the dashboard
 	dashboard := ui.NewDashboard(version)
 
@@ -118,6 +121,34 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running dashboard: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// ensureHooksInstalled checks if Claude Code hooks are installed and installs them if not
+func ensureHooksInstalled() {
+	collector, err := metrics.NewHookSessionCollector()
+	if err != nil {
+		// Silently continue - hooks are optional
+		return
+	}
+
+	if collector.AreHooksInstalled() {
+		// Already installed
+		return
+	}
+
+	// Install hooks silently
+	if err := collector.InstallHooks(); err != nil {
+		// Installation failed - continue without hooks (tmux fallback will be used)
+		fmt.Fprintf(os.Stderr, "Note: Could not install Claude Code hooks: %v\n", err)
+		fmt.Fprintf(os.Stderr, "      Session tracking will use tmux fallback.\n")
+		fmt.Fprintf(os.Stderr, "      Run 'ccdash --install-hooks' to retry.\n\n")
+		return
+	}
+
+	// Notify user that hooks were installed
+	fmt.Println("✓ Installed Claude Code hooks for session tracking")
+	fmt.Println("  Restart Claude Code sessions for hooks to take effect.")
+	fmt.Println()
 }
 
 func printHelp() {
