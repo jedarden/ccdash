@@ -29,6 +29,7 @@ type TokenMetrics struct {
 	CacheReadTokens     int64         `json:"cache_read_tokens"`
 	CacheCreationTokens int64         `json:"cache_creation_tokens"`
 	TotalTokens         int64         `json:"total_tokens"`
+	Prompts             int64         `json:"prompts"` // Number of prompt/response cycles
 	TotalCost           float64       `json:"total_cost"`
 	Rate                float64       `json:"rate"`             // tokens/min over 60s window
 	SessionAvgRate      float64       `json:"session_avg_rate"` // average tokens/min for entire session
@@ -232,6 +233,7 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics.CacheCreationTokens = aggregated.CacheCreationTokens
 	metrics.TotalTokens = aggregated.InputTokens + aggregated.OutputTokens +
 		aggregated.CacheReadTokens + aggregated.CacheCreationTokens
+	metrics.Prompts = aggregated.EventCount
 	metrics.EarliestTimestamp = aggregated.EarliestTimestamp
 	metrics.LatestTimestamp = aggregated.LatestTimestamp
 

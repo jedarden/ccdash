@@ -998,6 +998,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		leftLines = append(leftLines, fmt.Sprintf("Create:%s", metrics.FormatTokensCompact(d.tokenMetrics.CacheCreationTokens)))
 	}
 	leftLines = append(leftLines, fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens))))
+	leftLines = append(leftLines, fmt.Sprintf("Reqs:  %d", d.tokenMetrics.Prompts))
 	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
 	if hasRate {
 		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
