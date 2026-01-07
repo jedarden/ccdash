@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -201,6 +202,11 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	case hasTmux:
 		metrics.Source = "tmux"
 	}
+
+	// Sort sessions alphabetically by name for consistent display
+	sort.Slice(metrics.Sessions, func(i, j int) bool {
+		return metrics.Sessions[i].Name < metrics.Sessions[j].Name
+	})
 
 	metrics.Available = hasTmux || hasHooks
 	metrics.Total = len(metrics.Sessions)
