@@ -120,7 +120,11 @@ func (u *Updater) CheckForUpdate() *UpdateInfo {
 	}
 
 	u.lastCheck = time.Now()
-	u.cachedInfo = info
+	// Only cache if we have a download URL - if assets aren't uploaded yet,
+	// we want to re-check on next request rather than cache stale info
+	if info.DownloadURL != "" || !info.UpdateAvailable {
+		u.cachedInfo = info
+	}
 
 	return info
 }
