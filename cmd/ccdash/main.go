@@ -6,6 +6,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jedarden/ccdash/internal/metrics"
 	"github.com/jedarden/ccdash/internal/ui"
 	"golang.org/x/term"
 )
@@ -17,8 +18,10 @@ var version = "dev"
 func main() {
 	// Parse command-line flags
 	var (
-		showVersion = flag.Bool("version", false, "Show version information")
-		showHelp    = flag.Bool("help", false, "Show help information")
+		showVersion  = flag.Bool("version", false, "Show version information")
+		showHelp     = flag.Bool("help", false, "Show help information")
+		installHooks = flag.Bool("install-hooks", false, "Install Claude Code hooks for session tracking")
+		checkHooks   = flag.Bool("check-hooks", false, "Check if Claude Code hooks are installed")
 	)
 
 	flag.Parse()
@@ -33,6 +36,66 @@ func main() {
 	// Handle --help
 	if *showHelp {
 		printHelp()
+		os.Exit(0)
+	}
+
+	// Handle --install-hooks
+	if *installHooks {
+		collector, err := metrics.NewHookSessionCollector()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if collector.AreHooksInstalled() {
+			fmt.Println("✓ Claude Code hooks are already installed")
+			fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
+			os.Exit(0)
+		}
+
+		fmt.Println("Installing Claude Code hooks for session tracking...")
+		if err := collector.InstallHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("✓ Hooks installed successfully!")
+		fmt.Println()
+		fmt.Println("The following hooks have been added to ~/.claude/settings.json:")
+		fmt.Println("  • SessionStart - Registers new Claude Code sessions")
+		fmt.Println("  • SessionEnd   - Unregisters sessions when they end")
+		fmt.Println("  • Stop         - Updates session activity timestamps")
+		fmt.Println()
+		fmt.Printf("Session data will be written to: %s/sessions/\n", collector.GetBaseDir())
+		fmt.Println()
+		fmt.Println("Restart any running Claude Code sessions for hooks to take effect.")
+		os.Exit(0)
+	}
+
+	// Handle --check-hooks
+	if *checkHooks {
+		collector, err := metrics.NewHookSessionCollector()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if collector.AreHooksInstalled() {
+			fmt.Println("✓ Claude Code hooks are installed")
+			fmt.Printf("  Hook scripts: %s/hooks/\n", collector.GetBaseDir())
+			fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
+
+			// Check for active sessions
+			sessions, err := collector.CollectSessions()
+			if err == nil {
+				fmt.Printf("  Active sessions: %d\n", len(sessions))
+			}
+		} else {
+			fmt.Println("✗ Claude Code hooks are NOT installed")
+			fmt.Println()
+			fmt.Println("Run 'ccdash --install-hooks' to install them.")
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -66,8 +129,10 @@ func printHelp() {
 	fmt.Println("  ccdash [OPTIONS]")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
-	fmt.Println("  --version    Show version information")
-	fmt.Println("  --help       Show this help message")
+	fmt.Println("  --version        Show version information")
+	fmt.Println("  --help           Show this help message")
+	fmt.Println("  --install-hooks  Install Claude Code hooks for session tracking")
+	fmt.Println("  --check-hooks    Check if Claude Code hooks are installed")
 	fmt.Println()
 	fmt.Println("KEYBOARD SHORTCUTS:")
 	fmt.Println("  q, Ctrl+C    Quit the dashboard")
@@ -76,35 +141,48 @@ func printHelp() {
 	fmt.Println("  l            Open token usage lookback picker")
 	fmt.Println("  1            Focus on System Resources panel")
 	fmt.Println("  2            Focus on Token Usage panel")
-	fmt.Println("  3            Focus on TMUX Sessions panel")
+	fmt.Println("  3            Focus on Sessions panel")
 	fmt.Println()
 	fmt.Println("PANELS:")
 	fmt.Println("  System Resources  - CPU, memory, swap, disk I/O, and load averages")
 	fmt.Println("  Token Usage       - Claude Code token consumption and costs")
-	fmt.Println("  TMUX Sessions     - Active tmux sessions with status indicators")
+	fmt.Println("  Sessions          - Active Claude Code sessions with status indicators")
+	fmt.Println()
+	fmt.Println("SESSION TRACKING:")
+	fmt.Println("  ccdash supports two methods for tracking Claude Code sessions:")
+	fmt.Println()
+	fmt.Println("  1. Hooks (recommended) - Real-time tracking via Claude Code hooks")
+	fmt.Println("     Run 'ccdash --install-hooks' to enable")
+	fmt.Println("     Icon: 🔗 indicates hook-based tracking is active")
+	fmt.Println()
+	fmt.Println("  2. Tmux (fallback) - Monitors tmux sessions for Claude Code")
+	fmt.Println("     Icon: 📺 indicates tmux-based tracking")
+	fmt.Println("     Requires Claude Code to run in tmux sessions")
 	fmt.Println()
 	fmt.Println("LAYOUT MODES:")
 	fmt.Println("  Ultra-wide (>=240 cols)           - 3 panels side-by-side")
 	fmt.Println("  Wide (120-239 cols, >=30 lines)   - 2 panels top, 1 bottom")
 	fmt.Println("  Narrow (<120 cols)                - Panels stacked vertically")
 	fmt.Println()
-	fmt.Println("STATUS INDICATORS (TMUX):")
+	fmt.Println("STATUS INDICATORS:")
 	fmt.Println("  🟢 WORKING   - Claude Code is actively processing")
 	fmt.Println("  🔴 READY     - Waiting for input at prompt")
 	fmt.Println("  🟡 ACTIVE    - Recent activity detected")
 	fmt.Println("  💤 IDLE      - No activity for >5 minutes")
-	fmt.Println("  ⚠️  STALLED  - Error or no progress detected")
+	fmt.Println("  ⚠️  STALLED  - Error or stale session detected")
 	fmt.Println()
 	fmt.Println("REQUIREMENTS:")
 	fmt.Println("  - Terminal size: minimum 80x24 characters")
 	fmt.Println("  - True color support recommended")
-	fmt.Println("  - tmux (optional, for session monitoring)")
 	fmt.Println("  - Claude Code with ~/.claude/projects (for token usage)")
+	fmt.Println("  - jq (for hooks, usually pre-installed)")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
-	fmt.Println("  ccdash              Start the dashboard")
-	fmt.Println("  ccdash --version    Show version")
-	fmt.Println("  ccdash --help       Show this help")
+	fmt.Println("  ccdash                  Start the dashboard")
+	fmt.Println("  ccdash --install-hooks  Install Claude Code hooks")
+	fmt.Println("  ccdash --check-hooks    Verify hooks installation")
+	fmt.Println("  ccdash --version        Show version")
+	fmt.Println("  ccdash --help           Show this help")
 	fmt.Println()
 	fmt.Println("For more information, visit: https://github.com/jedarden/ccdash")
 }
