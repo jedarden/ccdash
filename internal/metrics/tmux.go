@@ -46,18 +46,19 @@ func (s SessionStatus) GetColor() string {
 }
 
 // GetEmoji returns the emoji representation for the status
+// All emojis use single codepoints for consistent terminal rendering
 func (s SessionStatus) GetEmoji() string {
 	switch s {
 	case StatusWorking:
-		return "🟢"
+		return "🟢" // U+1F7E2 - Green circle
 	case StatusReady:
-		return "🔴"
+		return "🔴" // U+1F534 - Red circle
 	case StatusActive:
-		return "🟡"
+		return "🟡" // U+1F7E1 - Yellow circle
 	case StatusError:
-		return "⚠️"
+		return "❌" // U+274C - Cross mark (single codepoint, consistent width)
 	default:
-		return "❓"
+		return "❓" // U+2753 - Question mark
 	}
 }
 
@@ -481,25 +482,45 @@ func (tc *TmuxCollector) isClaudeWaiting(content string) bool {
 	return false
 }
 
-// hasError checks for error indicators in the session
-// Uses the same approach as unified-dashboard (checks last 5 lines only)
+// hasError checks for Claude Code specific error states
+// Only detects actual Claude Code errors, not error text from command output being displayed
 func (tc *TmuxCollector) hasError(content string) bool {
-	errorPatterns := []string{
-		"error",
-		"Error",
-		"ERROR",
-		"failed",
-		"Failed",
-		"FAILED",
-		"panic:",
-		"fatal:",
-		"exception",
-		"Exception",
-		"traceback",
-		"Traceback",
+	// Skip error detection if Claude is at a prompt (functioning normally)
+	if strings.Contains(content, "⏵⏵ bypass permissions") ||
+		strings.Contains(content, "esc to interrupt") {
+		return false
 	}
 
-	// Look in last 5 lines only (like unified-dashboard)
+	// Claude Code specific error patterns - these indicate actual problems with Claude
+	claudeErrorPatterns := []string{
+		"APIError",
+		"API error",
+		"RateLimitError",
+		"rate limit",
+		"Rate limit",
+		"AuthenticationError",
+		"Connection error",
+		"connection refused",
+		"ECONNREFUSED",
+		"network error",
+		"Network error",
+		"timed out",
+		"Request timed out",
+		"Claude Code encountered",
+		"session crashed",
+		"Session crashed",
+		"unexpected error",
+		"Unexpected error",
+		"panic: runtime",
+		"fatal error:",
+		"FATAL:",
+		"Traceback (most recent call last):", // Python stack trace
+		"Error: EPERM",
+		"Error: EACCES",
+		"Permission denied",
+	}
+
+	// Look in last 5 lines only
 	lines := strings.Split(content, "\n")
 	lastLines := ""
 	if len(lines) > 5 {
@@ -508,7 +529,7 @@ func (tc *TmuxCollector) hasError(content string) bool {
 		lastLines = content
 	}
 
-	for _, pattern := range errorPatterns {
+	for _, pattern := range claudeErrorPatterns {
 		if strings.Contains(lastLines, pattern) {
 			return true
 		}

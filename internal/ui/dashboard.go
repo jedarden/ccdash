@@ -1193,7 +1193,7 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		statusParts = append(statusParts, fmt.Sprintf("🟡%d", count))
 	}
 	if count := statusCounts[metrics.StatusError]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("⚠️%d", count))
+		statusParts = append(statusParts, fmt.Sprintf("❌%d", count))
 	}
 	statusSummary := strings.Join(statusParts, " ")
 
@@ -1617,7 +1617,7 @@ Status (analyzes pane content):
   🟢 WORKING - Claude Code processing
   🔴 READY - Waiting for user input
   🟡 ACTIVE - User in session
-  ⚠️  ERROR - Error or undefined state
+  ❌ ERROR - Error or undefined state
 
 Detection: Analyzes last 15 lines for:
   Working indicators, prompts, errors

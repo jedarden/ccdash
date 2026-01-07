@@ -200,7 +200,7 @@ func printHelp() {
 	fmt.Println("  🔴 READY     - Waiting for input at prompt")
 	fmt.Println("  🟡 ACTIVE    - Recent activity detected")
 	fmt.Println("  💤 IDLE      - No activity for >5 minutes")
-	fmt.Println("  ⚠️  STALLED  - Error or stale session detected")
+	fmt.Println("  ❌ STALLED  - Error or stale session detected")
 	fmt.Println()
 	fmt.Println("REQUIREMENTS:")
 	fmt.Println("  - Terminal size: minimum 80x24 characters")
