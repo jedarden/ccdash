@@ -22,13 +22,14 @@ const (
 
 // HookSession represents a Claude Code session tracked via hooks
 type HookSession struct {
-	SessionID    string    `json:"session_id"`
-	ProjectDir   string    `json:"project_dir"`
-	StartedAt    time.Time `json:"started_at"`
-	LastActivity time.Time `json:"last_activity"`
-	LastStop     time.Time `json:"last_stop,omitempty"`
-	PID          int       `json:"pid,omitempty"`
-	Status       string    `json:"status"` // "active", "stopped", "working"
+	SessionID       string    `json:"session_id"`
+	ProjectDir      string    `json:"project_dir"`
+	TmuxSessionName string    `json:"tmux_session_name,omitempty"` // Name of the tmux session
+	StartedAt       time.Time `json:"started_at"`
+	LastActivity    time.Time `json:"last_activity"`
+	LastStop        time.Time `json:"last_stop,omitempty"`
+	PID             int       `json:"pid,omitempty"`
+	Status          string    `json:"status"` // "active", "stopped", "working"
 }
 
 // HookSessionCollector reads session data from hook-generated files
@@ -198,8 +199,11 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 		status = StatusError
 	}
 
-	// Extract project name from path
-	name := filepath.Base(hs.ProjectDir)
+	// Use tmux session name if available, otherwise fall back to project dir basename
+	name := hs.TmuxSessionName
+	if name == "" {
+		name = filepath.Base(hs.ProjectDir)
+	}
 	if name == "" || name == "." {
 		name = hs.SessionID[:8] // Use truncated session ID
 	}
@@ -236,6 +240,12 @@ if [ -z "$SESSION_ID" ]; then
     exit 0
 fi
 
+# Get tmux session name if running inside tmux
+TMUX_SESSION=""
+if [ -n "$TMUX" ]; then
+    TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+fi
+
 # Ensure directories exist
 mkdir -p "$SESSIONS_DIR"
 
@@ -244,6 +254,7 @@ cat > "$SESSIONS_DIR/${SESSION_ID}.json" << EOF
 {
   "session_id": "$SESSION_ID",
   "project_dir": "$CWD",
+  "tmux_session_name": "$TMUX_SESSION",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "last_activity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "pid": $$,
@@ -295,14 +306,21 @@ if [ -z "$SESSION_ID" ]; then
     exit 0
 fi
 
+# Get tmux session name if running inside tmux
+TMUX_SESSION=""
+if [ -n "$TMUX" ]; then
+    TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+fi
+
 SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
 
 # Update or create session file
 if [ -f "$SESSION_FILE" ]; then
-    # Update last_activity and status
+    # Update last_activity, status, and tmux_session_name (in case it wasn't set)
     TMP_FILE=$(mktemp)
     jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .last_stop = $now | .status = "stopped"' \
+       --arg tmux "$TMUX_SESSION" \
+       '.last_activity = $now | .last_stop = $now | .status = "stopped" | if .tmux_session_name == "" or .tmux_session_name == null then .tmux_session_name = $tmux else . end' \
        "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
 else
     # Create new session file if it doesn't exist
@@ -311,6 +329,7 @@ else
 {
   "session_id": "$SESSION_ID",
   "project_dir": "$CWD",
+  "tmux_session_name": "$TMUX_SESSION",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "last_activity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "last_stop": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
