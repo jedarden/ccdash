@@ -289,7 +289,7 @@ exit 0
 `,
 
 	"stop.sh": `#!/bin/bash
-# Claude Code Stop hook - updates session activity timestamp
+# Claude Code Stop hook - marks session as stopped (waiting for input)
 set -e
 
 CCDASH_DIR="$HOME/.ccdash"
@@ -300,43 +300,49 @@ INPUT=$(cat)
 
 # Extract session info
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 if [ -z "$SESSION_ID" ]; then
     exit 0
 fi
 
-# Get tmux session name if running inside tmux
-TMUX_SESSION=""
-if [ -n "$TMUX" ]; then
-    TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+
+# Update status to stopped (waiting for input)
+if [ -f "$SESSION_FILE" ]; then
+    TMP_FILE=$(mktemp)
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.last_activity = $now | .last_stop = $now | .status = "stopped"' \
+       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
+fi
+
+exit 0
+`,
+
+	"prompt-submit.sh": `#!/bin/bash
+# Claude Code UserPromptSubmit hook - marks session as working
+set -e
+
+CCDASH_DIR="$HOME/.ccdash"
+SESSIONS_DIR="$CCDASH_DIR/sessions"
+
+# Read hook input from stdin
+INPUT=$(cat)
+
+# Extract session info
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
 fi
 
 SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
 
-# Update or create session file
+# Update status to working
 if [ -f "$SESSION_FILE" ]; then
-    # Update last_activity, status, and tmux_session_name (in case it wasn't set)
     TMP_FILE=$(mktemp)
     jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       --arg tmux "$TMUX_SESSION" \
-       '.last_activity = $now | .last_stop = $now | .status = "stopped" | if .tmux_session_name == "" or .tmux_session_name == null then .tmux_session_name = $tmux else . end' \
+       '.last_activity = $now | .status = "working"' \
        "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-else
-    # Create new session file if it doesn't exist
-    mkdir -p "$SESSIONS_DIR"
-    cat > "$SESSION_FILE" << EOF
-{
-  "session_id": "$SESSION_ID",
-  "project_dir": "$CWD",
-  "tmux_session_name": "$TMUX_SESSION",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "last_activity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "last_stop": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "pid": $$,
-  "status": "stopped"
-}
-EOF
 fi
 
 exit 0
@@ -345,9 +351,10 @@ exit 0
 
 // ClaudeHooksConfig represents the hooks section of Claude settings
 type ClaudeHooksConfig struct {
-	SessionStart []HookEntry `json:"SessionStart,omitempty"`
-	SessionEnd   []HookEntry `json:"SessionEnd,omitempty"`
-	Stop         []HookEntry `json:"Stop,omitempty"`
+	SessionStart     []HookEntry `json:"SessionStart,omitempty"`
+	SessionEnd       []HookEntry `json:"SessionEnd,omitempty"`
+	Stop             []HookEntry `json:"Stop,omitempty"`
+	UserPromptSubmit []HookEntry `json:"UserPromptSubmit,omitempty"`
 }
 
 // HookEntry represents a single hook configuration
@@ -426,6 +433,16 @@ func (h *HookSessionCollector) updateClaudeSettings() error {
 					{
 						"type":    "command",
 						"command": filepath.Join(hooksDir, "session-end.sh"),
+					},
+				},
+			},
+		},
+		"UserPromptSubmit": {
+			{
+				"hooks": []map[string]interface{}{
+					{
+						"type":    "command",
+						"command": filepath.Join(hooksDir, "prompt-submit.sh"),
 					},
 				},
 			},

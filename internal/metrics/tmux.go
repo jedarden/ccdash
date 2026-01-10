@@ -421,47 +421,9 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 }
 
 // isClaudeWorking checks for active Claude Code processing indicators
-// Uses the same patterns as unified-dashboard
+// Claude Code shows "(esc to interrupt" whenever it's actively processing
 func (tc *TmuxCollector) isClaudeWorking(content string) bool {
-	workingPatterns := []string{
-		// Claude Code status messages (with ellipsis character …)
-		"Finagling…",
-		"Puzzling…",
-		"Listing…",
-		"Running…",
-		"Waiting…",
-		"Architecting…",
-		"Reasoning…",
-		"Thinking…",
-		"Connecting…",
-		"Initializing…",
-		// Fallback with three dots (...)
-		"Finagling...",
-		"Puzzling...",
-		"Listing...",
-		"Thinking...",
-		// Other working indicators
-		"Waiting for",
-		"Analyzing",
-		"Processing",
-		"Thought for",
-		"(esc to interrupt",
-		"esc to interrupt",
-		"background task",
-		"Spawning agent",
-		"Agent is",
-		"<function_calls>",
-		"<invoke",
-		"Tool:",
-		"━━━", // Progress bars
-	}
-
-	for _, pattern := range workingPatterns {
-		if strings.Contains(content, pattern) {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(content, "(esc to interrupt")
 }
 
 // isClaudeWaiting checks if Claude Code is at a prompt waiting for input
