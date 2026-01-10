@@ -47,12 +47,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if collector.AreHooksInstalled() {
-			fmt.Println("✓ Claude Code hooks are already installed")
-			fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
-			os.Exit(0)
-		}
-
+		// Always run InstallHooks - it's idempotent and will add any missing hooks
 		fmt.Println("Installing Claude Code hooks for session tracking...")
 		if err := collector.InstallHooks(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
@@ -62,9 +57,10 @@ func main() {
 		fmt.Println("✓ Hooks installed successfully!")
 		fmt.Println()
 		fmt.Println("The following hooks have been added to ~/.claude/settings.json:")
-		fmt.Println("  • SessionStart - Registers new Claude Code sessions")
-		fmt.Println("  • SessionEnd   - Unregisters sessions when they end")
-		fmt.Println("  • Stop         - Updates session activity timestamps")
+		fmt.Println("  • SessionStart      - Registers new Claude Code sessions")
+		fmt.Println("  • UserPromptSubmit  - Marks session as working")
+		fmt.Println("  • Stop              - Marks session as waiting for input")
+		fmt.Println("  • SessionEnd        - Unregisters sessions when they end")
 		fmt.Println()
 		fmt.Printf("Session data will be written to: %s/sessions/\n", collector.GetBaseDir())
 		fmt.Println()
@@ -123,7 +119,7 @@ func main() {
 	}
 }
 
-// ensureHooksInstalled checks if Claude Code hooks are installed and installs them if not
+// ensureHooksInstalled ensures Claude Code hooks are installed/updated
 func ensureHooksInstalled() {
 	collector, err := metrics.NewHookSessionCollector()
 	if err != nil {
@@ -131,12 +127,9 @@ func ensureHooksInstalled() {
 		return
 	}
 
-	if collector.AreHooksInstalled() {
-		// Already installed
-		return
-	}
+	wasInstalled := collector.AreHooksInstalled()
 
-	// Install hooks silently
+	// Always run InstallHooks - it's idempotent and will add any missing hooks
 	if err := collector.InstallHooks(); err != nil {
 		// Installation failed - continue without hooks (tmux fallback will be used)
 		fmt.Fprintf(os.Stderr, "Note: Could not install Claude Code hooks: %v\n", err)
@@ -145,10 +138,12 @@ func ensureHooksInstalled() {
 		return
 	}
 
-	// Notify user that hooks were installed
-	fmt.Println("✓ Installed Claude Code hooks for session tracking")
-	fmt.Println("  Restart Claude Code sessions for hooks to take effect.")
-	fmt.Println()
+	// Only notify on fresh install (not on updates)
+	if !wasInstalled {
+		fmt.Println("✓ Installed Claude Code hooks for session tracking")
+		fmt.Println("  Restart Claude Code sessions for hooks to take effect.")
+		fmt.Println()
+	}
 }
 
 func printHelp() {
