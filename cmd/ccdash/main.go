@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jedarden/ccdash/internal/metrics"
@@ -101,8 +103,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Auto-install hooks if not already installed
-	ensureHooksInstalled()
+	// Set up hook management with cleanup on exit
+	hookCollector := setupHooks()
+	if hookCollector != nil {
+		defer hookCollector.Cleanup()
+
+		// Set up signal handler for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			hookCollector.Cleanup()
+			os.Exit(0)
+		}()
+	}
 
 	// Create and run the dashboard
 	dashboard := ui.NewDashboard(version)
@@ -119,12 +133,12 @@ func main() {
 	}
 }
 
-// ensureHooksInstalled ensures Claude Code hooks are installed/updated
-func ensureHooksInstalled() {
+// setupHooks installs hooks, registers this instance, and returns the collector for cleanup
+func setupHooks() *metrics.HookSessionCollector {
 	collector, err := metrics.NewHookSessionCollector()
 	if err != nil {
 		// Silently continue - hooks are optional
-		return
+		return nil
 	}
 
 	wasInstalled := collector.AreHooksInstalled()
@@ -135,7 +149,13 @@ func ensureHooksInstalled() {
 		fmt.Fprintf(os.Stderr, "Note: Could not install Claude Code hooks: %v\n", err)
 		fmt.Fprintf(os.Stderr, "      Session tracking will use tmux fallback.\n")
 		fmt.Fprintf(os.Stderr, "      Run 'ccdash --install-hooks' to retry.\n\n")
-		return
+		return nil
+	}
+
+	// Register this instance for multi-instance tracking
+	if err := collector.RegisterInstance(); err != nil {
+		// Non-fatal, continue without instance tracking
+		return collector
 	}
 
 	// Only notify on fresh install (not on updates)
@@ -144,6 +164,8 @@ func ensureHooksInstalled() {
 		fmt.Println("  Restart Claude Code sessions for hooks to take effect.")
 		fmt.Println()
 	}
+
+	return collector
 }
 
 func printHelp() {
