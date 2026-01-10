@@ -176,6 +176,11 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 				// Tmux says working - trust it (hook may have stale data)
 				session.Status = StatusWorking
 				session.Source = "hybrid"
+			} else if session.Status == StatusWorking && tmuxSession.Status != StatusWorking {
+				// Hook says working but tmux doesn't see "(esc to interrupt"
+				// Claude probably finished - downgrade to ready
+				session.Status = StatusReady
+				session.Source = "hybrid"
 			} else if session.Status == StatusError {
 				// Hook says error but tmux shows activity - prefer tmux
 				if tmuxSession.Status == StatusActive {
