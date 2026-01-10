@@ -170,12 +170,17 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 			// Use actual tmux attached status (hooks don't track this)
 			session.Attached = tmuxSession.Attached
 
-			// If hook says session is stale/error, verify with tmux pane content
-			if session.Status == StatusError {
-				// Use tmux-based status detection (checks pane content for working indicators)
-				if tmuxSession.Status == StatusWorking || tmuxSession.Status == StatusActive {
+			// Always verify hook status with tmux pane content as ground truth
+			// Tmux checks for "(esc to interrupt" which is the definitive working indicator
+			if tmuxSession.Status == StatusWorking {
+				// Tmux says working - trust it (hook may have stale data)
+				session.Status = StatusWorking
+				session.Source = "hybrid"
+			} else if session.Status == StatusError {
+				// Hook says error but tmux shows activity - prefer tmux
+				if tmuxSession.Status == StatusActive {
 					session.Status = tmuxSession.Status
-					session.Source = "hybrid" // Mark as hybrid since we used both sources
+					session.Source = "hybrid"
 				}
 			}
 		}
