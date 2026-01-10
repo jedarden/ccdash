@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -16,6 +19,8 @@ const (
 	SessionsSubdir = "sessions"
 	// HooksSubdir is the subdirectory for hook scripts
 	HooksSubdir = "hooks"
+	// InstancesSubdir is the subdirectory for instance PID files
+	InstancesSubdir = "instances"
 	// StaleSessionThreshold is how long before a session is considered stale
 	StaleSessionThreshold = 5 * time.Minute
 )
@@ -554,4 +559,165 @@ func (h *HookSessionCollector) AreHooksInstalled() bool {
 	}
 
 	return false
+}
+
+// RegisterInstance creates a PID file to track this ccdash instance
+func (h *HookSessionCollector) RegisterInstance() error {
+	instancesDir := filepath.Join(h.baseDir, InstancesSubdir)
+	if err := os.MkdirAll(instancesDir, 0755); err != nil {
+		return err
+	}
+
+	pid := os.Getpid()
+	pidFile := filepath.Join(instancesDir, fmt.Sprintf("%d.pid", pid))
+	return os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644)
+}
+
+// UnregisterInstance removes this instance's PID file
+func (h *HookSessionCollector) UnregisterInstance() {
+	pid := os.Getpid()
+	pidFile := filepath.Join(h.baseDir, InstancesSubdir, fmt.Sprintf("%d.pid", pid))
+	os.Remove(pidFile)
+}
+
+// GetActiveInstanceCount returns the number of running ccdash instances
+func (h *HookSessionCollector) GetActiveInstanceCount() int {
+	instancesDir := filepath.Join(h.baseDir, InstancesSubdir)
+	entries, err := os.ReadDir(instancesDir)
+	if err != nil {
+		return 0
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pid") {
+			continue
+		}
+
+		// Extract PID from filename
+		pidStr := strings.TrimSuffix(entry.Name(), ".pid")
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			// Invalid PID file, clean it up
+			os.Remove(filepath.Join(instancesDir, entry.Name()))
+			continue
+		}
+
+		// Check if process is still running
+		if isProcessRunning(pid) {
+			count++
+		} else {
+			// Stale PID file, clean it up
+			os.Remove(filepath.Join(instancesDir, entry.Name()))
+		}
+	}
+
+	return count
+}
+
+// isProcessRunning checks if a process with the given PID is running
+func isProcessRunning(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// On Unix, FindProcess always succeeds. Use Signal(0) to check if process exists.
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// UninstallHooks removes ccdash hooks from Claude Code settings
+func (h *HookSessionCollector) UninstallHooks() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+	hooksDir := filepath.Join(h.baseDir, HooksSubdir)
+
+	// Read existing settings
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil // No settings file, nothing to uninstall
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		return nil // No hooks section, nothing to uninstall
+	}
+
+	// Remove ccdash hooks from each event type
+	modified := false
+	for event, hookList := range hooks {
+		existing, ok := hookList.([]interface{})
+		if !ok {
+			continue
+		}
+
+		// Filter out ccdash hooks
+		filtered := make([]interface{}, 0, len(existing))
+		for _, h := range existing {
+			isCcdashHook := false
+			if hMap, ok := h.(map[string]interface{}); ok {
+				if hList, ok := hMap["hooks"].([]interface{}); ok {
+					for _, hook := range hList {
+						if hookConfig, ok := hook.(map[string]interface{}); ok {
+							if cmd, ok := hookConfig["command"].(string); ok {
+								if filepath.Dir(cmd) == hooksDir {
+									isCcdashHook = true
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			if !isCcdashHook {
+				filtered = append(filtered, h)
+			} else {
+				modified = true
+			}
+		}
+
+		if len(filtered) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = filtered
+		}
+	}
+
+	if !modified {
+		return nil // No ccdash hooks found
+	}
+
+	// Remove hooks section if empty
+	if len(hooks) == 0 {
+		delete(settings, "hooks")
+	} else {
+		settings["hooks"] = hooks
+	}
+
+	// Write updated settings
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(settingsPath, data, 0644)
+}
+
+// Cleanup removes hooks if this is the last instance, otherwise just unregisters
+func (h *HookSessionCollector) Cleanup() {
+	h.UnregisterInstance()
+
+	// Only uninstall hooks if no other instances are running
+	if h.GetActiveInstanceCount() == 0 {
+		h.UninstallHooks()
+	}
 }
