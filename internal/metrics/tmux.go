@@ -171,13 +171,13 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 			session.Attached = tmuxSession.Attached
 
 			// Always verify hook status with tmux pane content as ground truth
-			// Tmux checks for "(esc to interrupt" which is the definitive working indicator
+			// Tmux checks for interrupt hints which are the definitive working indicators
 			if tmuxSession.Status == StatusWorking {
 				// Tmux says working - trust it (hook may have stale data)
 				session.Status = StatusWorking
 				session.Source = "hybrid"
 			} else if session.Status == StatusWorking && tmuxSession.Status != StatusWorking {
-				// Hook says working but tmux doesn't see "(esc to interrupt"
+				// Hook says working but tmux doesn't see interrupt hint
 				// Claude probably finished - downgrade to ready
 				session.Status = StatusReady
 				session.Source = "hybrid"
@@ -382,7 +382,7 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 	session.IdleDuration = now.Sub(session.LastContentChange)
 
 	// Priority 1: Check for Claude Code-specific WORKING indicators FIRST
-	// Working indicators like "(esc to interrupt)" take precedence over prompt detection
+	// Working indicators like "(esc to interrupt)" or "(ctrl+c to interrupt)" take precedence over prompt detection
 	// because both can appear on screen simultaneously while Claude is processing
 	if tc.isClaudeWorking(content) {
 		session.Status = StatusWorking
@@ -431,9 +431,12 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 }
 
 // isClaudeWorking checks for active Claude Code processing indicators
-// Claude Code shows "(esc to interrupt" whenever it's actively processing
+// Claude Code shows an interrupt hint whenever it's actively processing
+// - macOS/Linux: "(esc to interrupt"
+// - Windows: "(ctrl+c to interrupt"
 func (tc *TmuxCollector) isClaudeWorking(content string) bool {
-	return strings.Contains(content, "(esc to interrupt")
+	return strings.Contains(content, "(esc to interrupt") ||
+		strings.Contains(content, "(ctrl+c to interrupt")
 }
 
 // isClaudeWaiting checks if Claude Code is at a prompt waiting for input
@@ -465,7 +468,8 @@ func (tc *TmuxCollector) isClaudeWaiting(content string) bool {
 func (tc *TmuxCollector) hasError(content string) bool {
 	// Skip error detection if Claude is at a prompt (functioning normally)
 	if strings.Contains(content, "⏵⏵ bypass permissions") ||
-		strings.Contains(content, "esc to interrupt") {
+		strings.Contains(content, "esc to interrupt") ||
+		strings.Contains(content, "ctrl+c to interrupt") {
 		return false
 	}
 
