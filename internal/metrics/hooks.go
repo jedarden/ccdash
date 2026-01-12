@@ -198,10 +198,9 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 	switch hs.Status {
 	case "working":
 		status = StatusWorking
-	case "stopped", "ready":
+	case "stopped", "ready", "stale":
+		// Stale sessions (idle > 5min) are just waiting for input, not errors
 		status = StatusReady
-	case "stale":
-		status = StatusError
 	}
 
 	// Use tmux session name if available, otherwise fall back to project dir basename
