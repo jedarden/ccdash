@@ -5,6 +5,32 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.14] - 2026-01-12
+
+### Added
+- **File pre-aggregation for complete sessions**: Dramatically improves token metrics loading performance
+  - Files not modified in 30+ minutes are automatically detected as "complete"
+  - Complete files are aggregated once and stored in `file_aggregates` table
+  - Future queries skip file I/O entirely for complete files, reading only pre-computed totals
+  - Individual events are deleted after aggregation to reduce database size
+  - Files that become active again are automatically reactivated and reprocessed
+
+### Changed
+- Token queries now use hybrid approach: pre-aggregated totals + individual events
+- Schema version bumped to 3 (automatic migration on first run)
+- Reduced redundant file scanning - complete files checked via DB, not filesystem
+
+### Performance
+- First load after restart: Pre-computed aggregates load instantly
+- Typical session with 50+ old files: ~90% reduction in file I/O operations
+- Database size: Reduced by removing individual events for complete files
+
+### Technical Details
+- New `file_aggregates` table stores per-file totals with model breakdown (JSON)
+- `GetFileAggregate()` / `MarkFileComplete()` / `MarkFileActive()` cache methods
+- `QueryTokensHybrid()` combines aggregates and events in single query
+- `GetFileCompleteThreshold()` returns 30-minute threshold (configurable constant)
+
 ## [0.6.28] - 2025-12-18
 
 ### Fixed

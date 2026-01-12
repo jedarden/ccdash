@@ -207,20 +207,40 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	}
 
 	// Step 1: Ingest any new data from JSONL files into SQLite
-	// Continue processing even if individual files fail (for resilience)
-	var lastIngestErr error
+	// Uses pre-aggregation for complete files to reduce I/O
+	completeThreshold := GetFileCompleteThreshold()
 	for _, file := range files {
-		if err := tc.ingestJSONLFile(file); err != nil {
-			lastIngestErr = err
-			// Continue processing other files even if one fails
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			continue // File may have been deleted
 		}
-	}
-	// Note: lastIngestErr is tracked but not returned to avoid blocking queries
-	// when only some files have issues. The error is silently logged for debugging.
-	_ = lastIngestErr
 
-	// Step 2: Query SQLite for aggregated metrics based on lookback
-	aggregated, err := tc.cache.QueryTokensSince(tc.lookbackFrom)
+		// Check if file is already marked complete and unchanged
+		if agg, ok := tc.cache.GetFileAggregate(file); ok && agg.IsComplete {
+			if !fileInfo.ModTime().After(agg.CompletedAt) {
+				// File is complete and unchanged - skip all file I/O
+				continue
+			}
+			// File was modified after being marked complete - reactivate it
+			tc.cache.MarkFileActive(file)
+		}
+
+		// Check if file should be marked complete (hasn't been modified in threshold duration)
+		if time.Since(fileInfo.ModTime()) > completeThreshold {
+			// Process any remaining data first
+			if err := tc.ingestJSONLFile(file); err == nil {
+				// Mark as complete and pre-aggregate
+				tc.cache.MarkFileComplete(file)
+			}
+			continue
+		}
+
+		// Active file - normal incremental processing
+		tc.ingestJSONLFile(file)
+	}
+
+	// Step 2: Query SQLite using hybrid approach (pre-aggregated + active events)
+	aggregated, err := tc.cache.QueryTokensHybrid(tc.lookbackFrom)
 	if err != nil {
 		metrics.Error = fmt.Sprintf("Failed to query token cache: %v", err)
 		return metrics, nil

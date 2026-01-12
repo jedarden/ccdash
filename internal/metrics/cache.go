@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,10 @@ type TokenCache struct {
 const (
 	cacheDirName  = ".ccdash"
 	cacheDBName   = "tokens.db"
-	schemaVersion = 2
+	schemaVersion = 3
+
+	// Threshold for marking a file as complete (no longer being written to)
+	fileCompleteThreshold = 30 * time.Minute
 
 	// Metrics cache TTL - how long cached metrics are valid
 	metricsCacheTTL = 2 * time.Second
@@ -241,6 +245,24 @@ func (tc *TokenCache) initDB() error {
 		instance_id TEXT NOT NULL,
 		expires_at INTEGER NOT NULL
 	);
+
+	-- Pre-aggregated totals for complete files (not being written to anymore)
+	-- Allows skipping file I/O and individual event queries for old sessions
+	CREATE TABLE IF NOT EXISTS file_aggregates (
+		source_file TEXT PRIMARY KEY,
+		is_complete BOOLEAN DEFAULT 0,
+		completed_at INTEGER DEFAULT 0,
+		total_input_tokens INTEGER DEFAULT 0,
+		total_output_tokens INTEGER DEFAULT 0,
+		total_cache_read_tokens INTEGER DEFAULT 0,
+		total_cache_creation_tokens INTEGER DEFAULT 0,
+		event_count INTEGER DEFAULT 0,
+		earliest_timestamp INTEGER DEFAULT 0,
+		latest_timestamp INTEGER DEFAULT 0,
+		model_breakdown TEXT DEFAULT '{}'
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_file_aggregates_complete ON file_aggregates(is_complete);
 	`
 
 	_, err = tc.db.Exec(schema)
@@ -483,6 +505,370 @@ type ModelAggregation struct {
 	OutputTokens        int64
 	CacheReadTokens     int64
 	CacheCreationTokens int64
+}
+
+// FileAggregate contains pre-computed totals for a complete file
+type FileAggregate struct {
+	SourceFile          string
+	IsComplete          bool
+	CompletedAt         time.Time
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	TotalCacheRead      int64
+	TotalCacheCreation  int64
+	EventCount          int64
+	EarliestTimestamp   time.Time
+	LatestTimestamp     time.Time
+	ModelBreakdown      map[string]*ModelAggregation
+}
+
+// GetFileAggregate returns the pre-computed aggregate for a file if it exists
+func (tc *TokenCache) GetFileAggregate(sourceFile string) (*FileAggregate, bool) {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	if tc.db == nil {
+		return nil, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	result, err := withRetry(ctx, func() (*FileAggregate, error) {
+		var agg FileAggregate
+		var completedAt, earliest, latest int64
+		var modelJSON string
+		var isComplete int
+
+		err := tc.db.QueryRowContext(ctx, `
+			SELECT source_file, is_complete, completed_at, total_input_tokens, total_output_tokens,
+			       total_cache_read_tokens, total_cache_creation_tokens, event_count,
+			       earliest_timestamp, latest_timestamp, model_breakdown
+			FROM file_aggregates WHERE source_file = ?
+		`, sourceFile).Scan(
+			&agg.SourceFile, &isComplete, &completedAt,
+			&agg.TotalInputTokens, &agg.TotalOutputTokens,
+			&agg.TotalCacheRead, &agg.TotalCacheCreation, &agg.EventCount,
+			&earliest, &latest, &modelJSON,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		agg.IsComplete = isComplete == 1
+		agg.CompletedAt = time.Unix(completedAt, 0)
+		agg.EarliestTimestamp = time.Unix(earliest, 0)
+		agg.LatestTimestamp = time.Unix(latest, 0)
+
+		// Parse model breakdown JSON
+		agg.ModelBreakdown = make(map[string]*ModelAggregation)
+		if modelJSON != "" && modelJSON != "{}" {
+			json.Unmarshal([]byte(modelJSON), &agg.ModelBreakdown)
+		}
+
+		return &agg, nil
+	})
+
+	if err != nil {
+		return nil, false
+	}
+	return result, true
+}
+
+// IsFileComplete checks if a file is marked as complete
+func (tc *TokenCache) IsFileComplete(sourceFile string) bool {
+	agg, ok := tc.GetFileAggregate(sourceFile)
+	return ok && agg.IsComplete
+}
+
+// MarkFileComplete aggregates all events for a file and marks it as complete
+// This allows future queries to skip individual event processing for this file
+func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.db == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	return withRetryNoResult(ctx, func() error {
+		// Aggregate all events for this file
+		var totalInput, totalOutput, totalCacheRead, totalCacheCreate int64
+		var eventCount int64
+		var minTS, maxTS sql.NullInt64
+
+		err := tc.db.QueryRowContext(ctx, `
+			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0),
+			       COUNT(*), MIN(timestamp_unix), MAX(timestamp_unix)
+			FROM token_events WHERE source_file = ?
+		`, sourceFile).Scan(&totalInput, &totalOutput, &totalCacheRead, &totalCacheCreate,
+			&eventCount, &minTS, &maxTS)
+		if err != nil {
+			return err
+		}
+
+		// Get per-model breakdown
+		modelBreakdown := make(map[string]*ModelAggregation)
+		rows, err := tc.db.QueryContext(ctx, `
+			SELECT model, SUM(input_tokens), SUM(output_tokens),
+			       SUM(cache_read_tokens), SUM(cache_creation_tokens)
+			FROM token_events WHERE source_file = ?
+			GROUP BY model
+		`, sourceFile)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var model string
+			var input, output, cacheRead, cacheCreate int64
+			if err := rows.Scan(&model, &input, &output, &cacheRead, &cacheCreate); err != nil {
+				continue
+			}
+			modelBreakdown[model] = &ModelAggregation{
+				InputTokens:         input,
+				OutputTokens:        output,
+				CacheReadTokens:     cacheRead,
+				CacheCreationTokens: cacheCreate,
+			}
+		}
+
+		modelJSON, _ := json.Marshal(modelBreakdown)
+
+		var earliest, latest int64
+		if minTS.Valid {
+			earliest = minTS.Int64
+		}
+		if maxTS.Valid {
+			latest = maxTS.Int64
+		}
+
+		// Insert or update the aggregate
+		_, err = tc.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO file_aggregates
+			(source_file, is_complete, completed_at, total_input_tokens, total_output_tokens,
+			 total_cache_read_tokens, total_cache_creation_tokens, event_count,
+			 earliest_timestamp, latest_timestamp, model_breakdown)
+			VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, sourceFile, time.Now().Unix(), totalInput, totalOutput, totalCacheRead, totalCacheCreate,
+			eventCount, earliest, latest, string(modelJSON))
+		if err != nil {
+			return err
+		}
+
+		// Delete individual events for this file to save space
+		_, err = tc.db.ExecContext(ctx, `DELETE FROM token_events WHERE source_file = ?`, sourceFile)
+		return err
+	})
+}
+
+// MarkFileActive marks a file as no longer complete (it's being written to again)
+func (tc *TokenCache) MarkFileActive(sourceFile string) error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.db == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	return withRetryNoResult(ctx, func() error {
+		_, err := tc.db.ExecContext(ctx, `
+			UPDATE file_aggregates SET is_complete = 0 WHERE source_file = ?
+		`, sourceFile)
+		return err
+	})
+}
+
+// GetFileCompleteThreshold returns the threshold duration for marking files as complete
+func GetFileCompleteThreshold() time.Duration {
+	return fileCompleteThreshold
+}
+
+// QueryTokensHybrid returns aggregated token metrics using both pre-aggregated
+// complete files and individual events for active files
+func (tc *TokenCache) QueryTokensHybrid(since time.Time) (*AggregatedTokens, error) {
+	return tc.QueryTokensHybridContext(context.Background(), since)
+}
+
+// QueryTokensHybridContext returns aggregated token metrics with context support
+func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.Time) (*AggregatedTokens, error) {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	if tc.db == nil {
+		return &AggregatedTokens{}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
+	return withRetry(ctx, func() (*AggregatedTokens, error) {
+		result := &AggregatedTokens{
+			ModelTokens:  make(map[string]int64),
+			ModelMetrics: make(map[string]*ModelAggregation),
+		}
+
+		var sinceUnix int64
+		if !since.IsZero() {
+			sinceUnix = since.Unix()
+		}
+
+		// Query 1: Sum from complete file aggregates (fast path)
+		aggQuery := `
+			SELECT COALESCE(SUM(total_input_tokens), 0), COALESCE(SUM(total_output_tokens), 0),
+			       COALESCE(SUM(total_cache_read_tokens), 0), COALESCE(SUM(total_cache_creation_tokens), 0),
+			       COALESCE(SUM(event_count), 0), MIN(earliest_timestamp), MAX(latest_timestamp)
+			FROM file_aggregates
+			WHERE is_complete = 1 AND latest_timestamp >= ?
+		`
+
+		var aggInput, aggOutput, aggCacheRead, aggCacheCreate, aggCount int64
+		var aggMinTS, aggMaxTS sql.NullInt64
+
+		err := tc.db.QueryRowContext(ctx, aggQuery, sinceUnix).Scan(
+			&aggInput, &aggOutput, &aggCacheRead, &aggCacheCreate,
+			&aggCount, &aggMinTS, &aggMaxTS,
+		)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+
+		// Get model breakdown from complete files
+		aggModelQuery := `
+			SELECT model_breakdown FROM file_aggregates
+			WHERE is_complete = 1 AND latest_timestamp >= ?
+		`
+		aggModelRows, err := tc.db.QueryContext(ctx, aggModelQuery, sinceUnix)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if aggModelRows != nil {
+			defer aggModelRows.Close()
+			for aggModelRows.Next() {
+				var modelJSON string
+				if err := aggModelRows.Scan(&modelJSON); err != nil {
+					continue
+				}
+				var breakdown map[string]*ModelAggregation
+				if json.Unmarshal([]byte(modelJSON), &breakdown) == nil {
+					for model, ma := range breakdown {
+						if existing, ok := result.ModelMetrics[model]; ok {
+							existing.InputTokens += ma.InputTokens
+							existing.OutputTokens += ma.OutputTokens
+							existing.CacheReadTokens += ma.CacheReadTokens
+							existing.CacheCreationTokens += ma.CacheCreationTokens
+						} else {
+							result.ModelMetrics[model] = &ModelAggregation{
+								InputTokens:         ma.InputTokens,
+								OutputTokens:        ma.OutputTokens,
+								CacheReadTokens:     ma.CacheReadTokens,
+								CacheCreationTokens: ma.CacheCreationTokens,
+							}
+						}
+						result.ModelTokens[model] += ma.InputTokens + ma.OutputTokens +
+							ma.CacheReadTokens + ma.CacheCreationTokens
+					}
+				}
+			}
+		}
+
+		// Query 2: Sum from individual events (for active/incomplete files)
+		eventQuery := `
+			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0),
+			       MIN(timestamp_unix), MAX(timestamp_unix), COUNT(*)
+			FROM token_events
+			WHERE timestamp_unix >= ?
+		`
+
+		var evtInput, evtOutput, evtCacheRead, evtCacheCreate, evtCount int64
+		var evtMinTS, evtMaxTS sql.NullInt64
+
+		err = tc.db.QueryRowContext(ctx, eventQuery, sinceUnix).Scan(
+			&evtInput, &evtOutput, &evtCacheRead, &evtCacheCreate,
+			&evtMinTS, &evtMaxTS, &evtCount,
+		)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+
+		// Get model breakdown from active events
+		evtModelQuery := `
+			SELECT model, SUM(input_tokens), SUM(output_tokens),
+			       SUM(cache_read_tokens), SUM(cache_creation_tokens)
+			FROM token_events WHERE timestamp_unix >= ?
+			GROUP BY model
+		`
+		evtModelRows, err := tc.db.QueryContext(ctx, evtModelQuery, sinceUnix)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if evtModelRows != nil {
+			defer evtModelRows.Close()
+			for evtModelRows.Next() {
+				var model string
+				var input, output, cacheRead, cacheCreate int64
+				if err := evtModelRows.Scan(&model, &input, &output, &cacheRead, &cacheCreate); err != nil {
+					continue
+				}
+				if existing, ok := result.ModelMetrics[model]; ok {
+					existing.InputTokens += input
+					existing.OutputTokens += output
+					existing.CacheReadTokens += cacheRead
+					existing.CacheCreationTokens += cacheCreate
+				} else {
+					result.ModelMetrics[model] = &ModelAggregation{
+						InputTokens:         input,
+						OutputTokens:        output,
+						CacheReadTokens:     cacheRead,
+						CacheCreationTokens: cacheCreate,
+					}
+				}
+				result.ModelTokens[model] += input + output + cacheRead + cacheCreate
+			}
+		}
+
+		// Combine results
+		result.InputTokens = aggInput + evtInput
+		result.OutputTokens = aggOutput + evtOutput
+		result.CacheReadTokens = aggCacheRead + evtCacheRead
+		result.CacheCreationTokens = aggCacheCreate + evtCacheCreate
+		result.EventCount = aggCount + evtCount
+
+		// Determine earliest/latest timestamps
+		var minTS, maxTS int64 = 0, 0
+		if aggMinTS.Valid && aggMinTS.Int64 > 0 {
+			minTS = aggMinTS.Int64
+		}
+		if evtMinTS.Valid && evtMinTS.Int64 > 0 {
+			if minTS == 0 || evtMinTS.Int64 < minTS {
+				minTS = evtMinTS.Int64
+			}
+		}
+		if aggMaxTS.Valid {
+			maxTS = aggMaxTS.Int64
+		}
+		if evtMaxTS.Valid && evtMaxTS.Int64 > maxTS {
+			maxTS = evtMaxTS.Int64
+		}
+
+		if minTS > 0 {
+			result.EarliestTimestamp = time.Unix(minTS, 0)
+		}
+		if maxTS > 0 {
+			result.LatestTimestamp = time.Unix(maxTS, 0)
+		}
+
+		return result, nil
+	})
 }
 
 // QueryRecentEvents returns token events from the last N seconds for rate calculation
