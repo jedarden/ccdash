@@ -189,11 +189,18 @@ func (tc *TokenCache) initDB() error {
 
 	tc.db = db
 
+	// Explicitly set WAL mode - the connection string parameter doesn't always work
+	// WAL mode is critical for concurrent read/write access across multiple instances
+	if _, err := tc.db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		// Log but don't fail - will fall back to rollback journal
+	}
+
 	// Apply additional PRAGMA settings for better concurrent performance
 	pragmas := []string{
 		"PRAGMA temp_store=MEMORY",           // Store temp tables in memory
 		"PRAGMA wal_autocheckpoint=1000",     // Checkpoint every 1000 pages
 		"PRAGMA journal_size_limit=67108864", // Limit WAL to 64MB
+		"PRAGMA busy_timeout=30000",          // Ensure busy timeout is set (backup for conn string)
 	}
 	for _, pragma := range pragmas {
 		if _, err := tc.db.Exec(pragma); err != nil {

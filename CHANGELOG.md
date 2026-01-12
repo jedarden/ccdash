@@ -5,6 +5,19 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.15] - 2026-01-12
+
+### Fixed
+- **SQLite WAL mode not activating**: Fixed issue where WAL mode was not being enabled despite connection string parameter
+  - WAL mode is now explicitly set via `PRAGMA journal_mode=WAL` after database open
+  - Added backup `PRAGMA busy_timeout=30000` to ensure timeout is set
+  - Resolves lock contention when running multiple ccdash instances concurrently
+
+### Technical Details
+- Connection string WAL parameter (`?_journal_mode=WAL`) doesn't always work with modernc.org/sqlite
+- Explicit PRAGMA execution ensures WAL mode is active (creates `.db-wal` and `.db-shm` files)
+- Two concurrent ccdash instances should now work reliably via leader election
+
 ## [0.7.14] - 2026-01-12
 
 ### Added
