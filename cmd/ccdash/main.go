@@ -152,6 +152,11 @@ func setupHooks() *metrics.HookSessionCollector {
 		return nil
 	}
 
+	// Clean up orphaned session files on startup
+	// This removes sessions where the process died or tmux session was killed
+	// without the session-end hook firing
+	collector.CleanupOrphanedSessions()
+
 	// Register this instance for multi-instance tracking
 	if err := collector.RegisterInstance(); err != nil {
 		// Non-fatal, continue without instance tracking
