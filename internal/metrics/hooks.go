@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -190,6 +191,84 @@ func (h *HookSessionCollector) CleanupStaleSessions(threshold time.Duration) (in
 	}
 
 	return cleaned, nil
+}
+
+// CleanupOrphanedSessions removes session files where the process is dead
+// or the tmux session no longer exists. This handles cases where sessions
+// were terminated abruptly without the session-end hook firing.
+func (h *HookSessionCollector) CleanupOrphanedSessions() (int, error) {
+	if !h.available {
+		return 0, nil
+	}
+
+	entries, err := os.ReadDir(h.sessionsDir)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get list of active tmux sessions
+	activeTmuxSessions := h.getActiveTmuxSessions()
+
+	cleaned := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		sessionPath := filepath.Join(h.sessionsDir, entry.Name())
+		session, err := h.readSessionFile(sessionPath)
+		if err != nil {
+			// Remove unreadable files
+			os.Remove(sessionPath)
+			cleaned++
+			continue
+		}
+
+		shouldRemove := false
+
+		// Check if the PID is still running
+		if session.PID > 0 && !isProcessRunning(session.PID) {
+			shouldRemove = true
+		}
+
+		// Check if the tmux session still exists (if one was recorded)
+		if session.TmuxSessionName != "" {
+			if _, exists := activeTmuxSessions[session.TmuxSessionName]; !exists {
+				shouldRemove = true
+			}
+		}
+
+		if shouldRemove {
+			os.Remove(sessionPath)
+			cleaned++
+		}
+	}
+
+	return cleaned, nil
+}
+
+// getActiveTmuxSessions returns a map of active tmux session names
+func (h *HookSessionCollector) getActiveTmuxSessions() map[string]bool {
+	sessions := make(map[string]bool)
+
+	// Run tmux list-sessions to get active sessions
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		// tmux not available or no sessions - return empty map
+		return sessions
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			sessions[name] = true
+		}
+	}
+
+	return sessions
 }
 
 // ToTmuxSession converts a HookSession to TmuxSession for UI compatibility
