@@ -5,6 +5,31 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.17] - 2026-01-16
+
+### Added
+- **Automatic cleanup of orphaned session files on startup**: New `CleanupOrphanedSessions()` method removes stale hook session files where:
+  - The process (PID) is no longer running
+  - The tmux session no longer exists
+- Cleanup runs silently on every ccdash startup, preventing accumulation of orphaned files
+
+### Technical Details
+- Uses `tmux list-sessions` to detect which tmux sessions are still active
+- Uses `kill -0` signal check to verify if PIDs are still running
+- Combined with v0.7.16, provides two-level protection against phantom sessions
+
+## [0.7.16] - 2026-01-16
+
+### Fixed
+- **Phantom sessions displaying in dashboard**: Fixed bug where hook session files from terminated tmux sessions would appear in the dashboard
+  - Root cause: Hook session files persist when sessions are killed abruptly (kill -9, terminal crash) without the session-end hook firing
+  - The merge logic unconditionally displayed all hook sessions regardless of whether a corresponding tmux session existed
+  - Solution: Skip hook sessions that don't have a matching live tmux session
+
+### Technical Details
+- Modified `Collect()` in `tmux.go` to filter out hook sessions without tmux counterparts
+- Hook sessions are only displayed if `tmuxSessionMap[session.Name]` exists
+
 ## [0.7.15] - 2026-01-12
 
 ### Fixed
