@@ -163,32 +163,39 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	// but include all tmux sessions to catch those started before hooks were installed
 	seenNames := make(map[string]bool)
 
-	// First, add all hook-tracked sessions
-	// Enhance hook sessions with tmux data (attached status, working detection)
+	// First, add hook-tracked sessions that have corresponding live tmux sessions
+	// Skip phantom sessions where the tmux session no longer exists (e.g., session was
+	// killed abruptly without the session-end hook firing)
 	for _, session := range hookSessionMap {
-		if tmuxSession, exists := tmuxSessionMap[session.Name]; exists {
-			// Use actual tmux attached status (hooks don't track this)
-			session.Attached = tmuxSession.Attached
+		tmuxSession, exists := tmuxSessionMap[session.Name]
+		if !exists {
+			// No corresponding tmux session - this is a phantom/orphaned hook session
+			// Skip it to avoid displaying sessions that no longer exist
+			continue
+		}
 
-			// Always verify hook status with tmux pane content as ground truth
-			// Tmux checks for interrupt hints which are the definitive working indicators
-			if tmuxSession.Status == StatusWorking {
-				// Tmux says working - trust it (hook may have stale data)
-				session.Status = StatusWorking
+		// Use actual tmux attached status (hooks don't track this)
+		session.Attached = tmuxSession.Attached
+
+		// Always verify hook status with tmux pane content as ground truth
+		// Tmux checks for interrupt hints which are the definitive working indicators
+		if tmuxSession.Status == StatusWorking {
+			// Tmux says working - trust it (hook may have stale data)
+			session.Status = StatusWorking
+			session.Source = "hybrid"
+		} else if session.Status == StatusWorking && tmuxSession.Status != StatusWorking {
+			// Hook says working but tmux doesn't see interrupt hint
+			// Claude probably finished - downgrade to ready
+			session.Status = StatusReady
+			session.Source = "hybrid"
+		} else if session.Status == StatusError {
+			// Hook says error but tmux shows activity - prefer tmux
+			if tmuxSession.Status == StatusActive {
+				session.Status = tmuxSession.Status
 				session.Source = "hybrid"
-			} else if session.Status == StatusWorking && tmuxSession.Status != StatusWorking {
-				// Hook says working but tmux doesn't see interrupt hint
-				// Claude probably finished - downgrade to ready
-				session.Status = StatusReady
-				session.Source = "hybrid"
-			} else if session.Status == StatusError {
-				// Hook says error but tmux shows activity - prefer tmux
-				if tmuxSession.Status == StatusActive {
-					session.Status = tmuxSession.Status
-					session.Source = "hybrid"
-				}
 			}
 		}
+
 		metrics.Sessions = append(metrics.Sessions, session)
 		seenNames[session.Name] = true
 	}
