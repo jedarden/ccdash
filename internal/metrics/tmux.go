@@ -318,12 +318,12 @@ func (tc *TmuxCollector) parseSessionLine(line string) (TmuxSession, error) {
 	}
 	session.Windows = windows
 
-	// Parse attached status (1 = attached, 0 = detached)
+	// Parse attached status (number of clients attached, 0 = detached)
 	attached, err := strconv.Atoi(parts[2])
 	if err != nil {
 		return TmuxSession{}, fmt.Errorf("invalid attached status: %s", parts[2])
 	}
-	session.Attached = attached == 1
+	session.Attached = attached > 0
 
 	// Parse created timestamp (Unix timestamp)
 	createdUnix, err := strconv.ParseInt(parts[3], 10, 64)
