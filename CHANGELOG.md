@@ -5,6 +5,14 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.18] - 2026-01-17
+
+### Fixed
+- **Attached indicator (📎) disappearing with multiple clients**: Fixed bug where the attachment indicator would disappear when connecting to a tmux session from a second computer
+  - Root cause: `#{session_attached}` returns the count of attached clients, not a boolean
+  - The check `attached == 1` failed when 2+ clients were attached
+  - Solution: Changed to `attached > 0` to correctly detect any attached clients
+
 ## [0.7.17] - 2026-01-16
 
 ### Added
