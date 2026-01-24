@@ -439,11 +439,12 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 
 // isClaudeWorking checks for active Claude Code processing indicators
 // Claude Code shows an interrupt hint whenever it's actively processing
-// - macOS/Linux: "(esc to interrupt"
+// - macOS/Linux: "(Esc to interrupt" (case varies by version)
 // - Windows: "(ctrl+c to interrupt"
 func (tc *TmuxCollector) isClaudeWorking(content string) bool {
-	return strings.Contains(content, "(esc to interrupt") ||
-		strings.Contains(content, "(ctrl+c to interrupt")
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "(esc to interrupt") ||
+		strings.Contains(lower, "(ctrl+c to interrupt")
 }
 
 // isClaudeWaiting checks if Claude Code is at a prompt waiting for input
@@ -474,9 +475,10 @@ func (tc *TmuxCollector) isClaudeWaiting(content string) bool {
 // Only detects actual Claude Code errors, not error text from command output being displayed
 func (tc *TmuxCollector) hasError(content string) bool {
 	// Skip error detection if Claude is at a prompt (functioning normally)
+	lower := strings.ToLower(content)
 	if strings.Contains(content, "⏵⏵ bypass permissions") ||
-		strings.Contains(content, "esc to interrupt") ||
-		strings.Contains(content, "ctrl+c to interrupt") {
+		strings.Contains(lower, "esc to interrupt") ||
+		strings.Contains(lower, "ctrl+c to interrupt") {
 		return false
 	}
 
