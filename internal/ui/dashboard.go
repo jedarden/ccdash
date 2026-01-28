@@ -93,6 +93,13 @@ func NewDashboard(version string) *Dashboard {
 			},
 		},
 		{
+			Name:        "5 hours",
+			Description: "Last 5 hours (2400 req limit)",
+			GetTime: func() time.Time {
+				return time.Now().Add(-5 * time.Hour)
+			},
+		},
+		{
 			Name:        "24 hours",
 			Description: "Last 24 hours",
 			GetTime: func() time.Time {
