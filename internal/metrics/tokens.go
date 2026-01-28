@@ -392,8 +392,8 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) error {
 			continue
 		}
 
-		// Only process assistant messages with usage data
-		if msg.Type != "assistant" || msg.Message.Usage.OutputTokens == 0 {
+		// Only process assistant messages (count all requests, even with zero tokens)
+		if msg.Type != "assistant" {
 			continue
 		}
 
