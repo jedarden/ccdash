@@ -1215,7 +1215,12 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		// Hooks installed but no hook sessions, falling back to tmux
 		sourceLabel = "Sessions (tmux)"
 	}
-	title := successStyle.Render(fmt.Sprintf("%s %s (%d)", sourceIcon, sourceLabel, d.tmuxMetrics.Total))
+	// Show process count if different from tracked sessions (indicates detection gap)
+	countStr := fmt.Sprintf("%d", d.tmuxMetrics.Total)
+	if d.tmuxMetrics.RunningProcesses > 0 && d.tmuxMetrics.RunningProcesses != d.tmuxMetrics.Total {
+		countStr = fmt.Sprintf("%d/%d procs", d.tmuxMetrics.Total, d.tmuxMetrics.RunningProcesses)
+	}
+	title := successStyle.Render(fmt.Sprintf("%s %s (%s)", sourceIcon, sourceLabel, countStr))
 	titleLen := lipgloss.Width(title)
 	summaryLen := lipgloss.Width(statusSummary)
 	spacing := contentWidth - titleLen - summaryLen

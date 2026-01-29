@@ -78,14 +78,15 @@ type TmuxSession struct {
 
 // TmuxMetrics holds information about all tmux sessions
 type TmuxMetrics struct {
-	Sessions       []TmuxSession `json:"sessions"`
-	Total          int           `json:"total"`
-	Available      bool          `json:"available"`
-	Error          string        `json:"error,omitempty"`
-	LastUpdate     time.Time     `json:"last_update"`
-	HooksAvailable bool          `json:"hooks_available"` // Whether hook-based tracking is active
-	HooksInstalled bool          `json:"hooks_installed"` // Whether hooks are installed
-	Source         string        `json:"source"`          // "hooks", "tmux", or "hybrid"
+	Sessions         []TmuxSession `json:"sessions"`
+	Total            int           `json:"total"`
+	Available        bool          `json:"available"`
+	Error            string        `json:"error,omitempty"`
+	LastUpdate       time.Time     `json:"last_update"`
+	HooksAvailable   bool          `json:"hooks_available"`   // Whether hook-based tracking is active
+	HooksInstalled   bool          `json:"hooks_installed"`   // Whether hooks are installed
+	Source           string        `json:"source"`            // "hooks", "tmux", or "hybrid"
+	RunningProcesses int           `json:"running_processes"` // Number of running claude processes
 }
 
 // TmuxCollector collects metrics about tmux sessions
@@ -227,6 +228,7 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 
 	metrics.Available = hasTmux || hasHooks
 	metrics.Total = len(metrics.Sessions)
+	metrics.RunningProcesses = tc.countRunningClaudeProcesses()
 
 	if !metrics.Available && !tc.isTmuxAvailable() {
 		metrics.Error = "tmux is not installed or not available in PATH"
@@ -570,6 +572,28 @@ func (tc *TmuxCollector) fallbackStatus(session TmuxSession, now time.Time) Sess
 
 	// Default to ready for detached sessions
 	return StatusReady
+}
+
+// countRunningClaudeProcesses counts the number of running claude processes
+// This provides a reliable count independent of hooks or tmux
+func (tc *TmuxCollector) countRunningClaudeProcesses() int {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+
+	// Use pgrep to count claude processes (exact match to avoid false positives)
+	cmd := exec.CommandContext(ctx, "pgrep", "-x", "claude")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	_ = cmd.Run() // Ignore error - pgrep returns 1 if no matches
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		return 0
+	}
+
+	// Count lines (each line is a PID)
+	return len(strings.Split(output, "\n"))
 }
 
 // GetMetrics is a convenience method that returns the collected metrics
