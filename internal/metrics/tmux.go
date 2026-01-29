@@ -440,34 +440,19 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 }
 
 // isClaudeWorking checks for active Claude Code processing indicators
-// Claude Code shows various indicators when actively processing:
-// - Interrupt hints: "esc to interrupt", "(ctrl+c to interrupt"
-// - Running command: "(running)" at end of line
-// - Processing spinners: "✶ Fluttering", "✻ Baked", etc.
+// Claude Code shows these indicators ONLY while actively processing:
+// - Interrupt hints: "esc to interrupt", "ctrl+c to interrupt"
+// - Running command: "(running)" suffix on active tool calls
+// Note: Spinners like ✶/✻ are completion summaries and persist after work stops
 func (tc *TmuxCollector) isClaudeWorking(content string) bool {
 	lower := strings.ToLower(content)
-	// Classic interrupt hints
+	// Interrupt hints - definitive working indicator
 	if strings.Contains(lower, "esc to interrupt") ||
 		strings.Contains(lower, "ctrl+c to interrupt") {
 		return true
 	}
-	// New Claude Code: "(running)" indicator for active commands
+	// "(running)" indicator for active tool/command execution
 	if strings.Contains(content, "(running)") {
-		return true
-	}
-	// Processing spinners (Unicode characters)
-	if strings.Contains(content, "✶") || // Fluttering
-		strings.Contains(content, "✻") || // Baked
-		strings.Contains(content, "⠋") || // Braille spinner
-		strings.Contains(content, "⠙") ||
-		strings.Contains(content, "⠹") ||
-		strings.Contains(content, "⠸") ||
-		strings.Contains(content, "⠼") ||
-		strings.Contains(content, "⠴") ||
-		strings.Contains(content, "⠦") ||
-		strings.Contains(content, "⠧") ||
-		strings.Contains(content, "⠇") ||
-		strings.Contains(content, "⠏") {
 		return true
 	}
 	return false
