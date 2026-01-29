@@ -472,15 +472,47 @@ func (h *HookSessionCollector) InstallHooks() error {
 	return h.updateClaudeSettings()
 }
 
-// updateClaudeSettings adds ccdash hooks to ~/.claude/settings.json
+// updateClaudeSettings adds ccdash hooks to all ~/.claude/settings*.json files
 func (h *HookSessionCollector) updateClaudeSettings() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 
-	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+	claudeDir := filepath.Join(homeDir, ".claude")
 	hooksDir := filepath.Join(h.baseDir, HooksSubdir)
+
+	// Find all settings files
+	settingsFiles, err := filepath.Glob(filepath.Join(claudeDir, "settings*.json"))
+	if err != nil {
+		return err
+	}
+
+	// Always include settings.json even if it doesn't exist yet
+	mainSettings := filepath.Join(claudeDir, "settings.json")
+	hasMainSettings := false
+	for _, f := range settingsFiles {
+		if f == mainSettings {
+			hasMainSettings = true
+			break
+		}
+	}
+	if !hasMainSettings {
+		settingsFiles = append(settingsFiles, mainSettings)
+	}
+
+	// Update each settings file
+	var lastErr error
+	for _, settingsPath := range settingsFiles {
+		if err := h.updateSingleSettingsFile(settingsPath, hooksDir); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+// updateSingleSettingsFile adds ccdash hooks to a single settings file
+func (h *HookSessionCollector) updateSingleSettingsFile(settingsPath, hooksDir string) error {
 
 	// Read existing settings
 	var settings map[string]interface{}
@@ -589,7 +621,7 @@ func (h *HookSessionCollector) updateClaudeSettings() error {
 	return os.WriteFile(settingsPath, data, 0644)
 }
 
-// AreHooksInstalled checks if ccdash hooks are already installed
+// AreHooksInstalled checks if ccdash hooks are installed in the main settings.json
 func (h *HookSessionCollector) AreHooksInstalled() bool {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -597,6 +629,31 @@ func (h *HookSessionCollector) AreHooksInstalled() bool {
 	}
 
 	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+	return h.areHooksInSettingsFile(settingsPath)
+}
+
+// GetSettingsFilesStatus returns status of hooks in all settings files
+func (h *HookSessionCollector) GetSettingsFilesStatus() map[string]bool {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	claudeDir := filepath.Join(homeDir, ".claude")
+	settingsFiles, err := filepath.Glob(filepath.Join(claudeDir, "settings*.json"))
+	if err != nil {
+		return nil
+	}
+
+	status := make(map[string]bool)
+	for _, f := range settingsFiles {
+		status[filepath.Base(f)] = h.areHooksInSettingsFile(f)
+	}
+	return status
+}
+
+// areHooksInSettingsFile checks if ccdash hooks are in a specific settings file
+func (h *HookSessionCollector) areHooksInSettingsFile(settingsPath string) bool {
 	hooksDir := filepath.Join(h.baseDir, HooksSubdir)
 
 	data, err := os.ReadFile(settingsPath)
@@ -620,11 +677,11 @@ func (h *HookSessionCollector) AreHooksInstalled() bool {
 		return false
 	}
 
-	for _, h := range sessionStart {
-		if hMap, ok := h.(map[string]interface{}); ok {
+	for _, hook := range sessionStart {
+		if hMap, ok := hook.(map[string]interface{}); ok {
 			if hList, ok := hMap["hooks"].([]interface{}); ok {
-				for _, hook := range hList {
-					if hookConfig, ok := hook.(map[string]interface{}); ok {
+				for _, h := range hList {
+					if hookConfig, ok := h.(map[string]interface{}); ok {
 						if cmd, ok := hookConfig["command"].(string); ok {
 							if filepath.Dir(cmd) == hooksDir {
 								return true
