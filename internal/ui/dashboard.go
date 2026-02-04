@@ -636,9 +636,9 @@ func (d *Dashboard) renderUltraWide() string {
 
 	// Ideal token width: side-by-side layout with comfortable model display
 	// Left column (22) + separator (2) + right column for models
-	// Right column needs: model name (up to 20) + cost (8) + tokens (15) = ~43
-	// Total ideal: 22 + 2 + 43 + 4 (borders) = 71
-	idealTokenWidth := 71
+	// Right column needs: model name (up to 15) + cost (8) + tokens (12) = ~35
+	// Total ideal: 22 + 2 + 35 + 4 (borders) = 60
+	idealTokenWidth := 60
 
 	// Ideal tmux width: minimum cell width + some padding for session names
 	// Use 35 chars per cell (28 min + 7 for longer names)
@@ -1032,7 +1032,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	// Determine layout based on width
 	// For narrow panels, stack vertically; for wider panels, use side-by-side
 	modelCount := len(d.tokenMetrics.ModelUsages)
-	useSideBySide := contentWidth >= 50 && modelCount > 0
+	useSideBySide := contentWidth >= 48 && modelCount > 0
 
 	// Calculate available width for model names based on layout
 	// In side-by-side: rightWidth = contentWidth - leftWidth(22) - separator(2)
