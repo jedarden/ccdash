@@ -5,6 +5,25 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.23] - 2026-02-09
+
+### Fixed
+- **Session PID tracking bug**: Session hooks now correctly track the Claude Code process PID instead of the hook script's PID
+  - Previously, hooks stored `$$` (the hook script's PID) which became invalid immediately after the hook exited
+  - This caused all sessions to show as "ready" even when actively running
+  - Now walks up the process tree to find the actual `claude` process and stores its PID
+- **Stale session cleanup**: Automatically removes old session files when Claude Code restarts in the same tmux window
+  - Prevents accumulation of orphaned session files with dead PIDs
+  - Ensures only the current active session is tracked per tmux window
+- **PID refresh in prompt-submit hook**: Updates the PID when user submits a prompt
+  - Handles edge cases where the Claude process may have restarted
+  - Ensures PID stays current throughout the session lifecycle
+
+### Changed
+- Session hooks now search for the parent `claude` process instead of using `$$`
+- `session-start.sh` hook includes cleanup logic for old session files in the same tmux session
+- `prompt-submit.sh` hook now updates the PID field along with status and activity time
+
 ## [0.7.18] - 2026-01-17
 
 ### Fixed
