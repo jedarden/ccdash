@@ -329,8 +329,40 @@ if [ -n "$TMUX" ]; then
     TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
 fi
 
+# Find the actual Claude Code process PID by walking up the process tree
+# The hook runs as a child of Claude Code, so find the first "claude" process
+CLAUDE_PID=""
+CURRENT_PID=$PPID
+while [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "1" ]; do
+    PROC_NAME=$(ps -p "$CURRENT_PID" -o comm= 2>/dev/null || echo "")
+    if [ "$PROC_NAME" = "claude" ]; then
+        CLAUDE_PID="$CURRENT_PID"
+        break
+    fi
+    # Move up to parent
+    CURRENT_PID=$(ps -p "$CURRENT_PID" -o ppid= 2>/dev/null | tr -d ' ' || echo "")
+done
+
+# Fallback to PPID if we couldn't find claude process
+if [ -z "$CLAUDE_PID" ]; then
+    CLAUDE_PID=$PPID
+fi
+
 # Ensure directories exist
 mkdir -p "$SESSIONS_DIR"
+
+# Clean up old session files for the same tmux session if they exist
+# This handles the case where Claude Code restarted in the same tmux window
+if [ -n "$TMUX_SESSION" ]; then
+    for old_file in "$SESSIONS_DIR"/*.json; do
+        if [ -f "$old_file" ] && [ "$old_file" != "$SESSIONS_DIR/${SESSION_ID}.json" ]; then
+            OLD_TMUX=$(jq -r '.tmux_session_name // empty' "$old_file" 2>/dev/null || echo "")
+            if [ "$OLD_TMUX" = "$TMUX_SESSION" ]; then
+                rm -f "$old_file"
+            fi
+        fi
+    done
+fi
 
 # Write session file
 cat > "$SESSIONS_DIR/${SESSION_ID}.json" << EOF
@@ -340,7 +372,7 @@ cat > "$SESSIONS_DIR/${SESSION_ID}.json" << EOF
   "tmux_session_name": "$TMUX_SESSION",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "last_activity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "pid": $$,
+  "pid": $CLAUDE_PID,
   "status": "active"
 }
 EOF
@@ -420,11 +452,27 @@ fi
 
 SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
 
-# Update status to working
+# Find the actual Claude Code process PID
+CLAUDE_PID=""
+CURRENT_PID=$PPID
+while [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "1" ]; do
+    PROC_NAME=$(ps -p "$CURRENT_PID" -o comm= 2>/dev/null || echo "")
+    if [ "$PROC_NAME" = "claude" ]; then
+        CLAUDE_PID="$CURRENT_PID"
+        break
+    fi
+    CURRENT_PID=$(ps -p "$CURRENT_PID" -o ppid= 2>/dev/null | tr -d ' ' || echo "")
+done
+if [ -z "$CLAUDE_PID" ]; then
+    CLAUDE_PID=$PPID
+fi
+
+# Update status to working and refresh PID
 if [ -f "$SESSION_FILE" ]; then
     TMP_FILE=$(mktemp)
     jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .status = "working"' \
+       --argjson pid "$CLAUDE_PID" \
+       '.last_activity = $now | .status = "working" | .pid = $pid' \
        "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
 fi
 
