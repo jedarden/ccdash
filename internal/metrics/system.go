@@ -17,6 +17,7 @@ type SystemMetrics struct {
 	Load       LoadMetrics
 	Memory     MemoryMetrics
 	Swap       SwapMetrics
+	DiskUsage  DiskUsageMetrics
 	DiskIO     DiskIOMetrics
 	NetIO      NetIOMetrics
 	LastUpdate time.Time
@@ -50,6 +51,16 @@ type SwapMetrics struct {
 	Used       uint64
 	Total      uint64
 	Percentage float64
+	Error      error
+}
+
+// DiskUsageMetrics holds disk space usage information
+type DiskUsageMetrics struct {
+	Used       uint64
+	Total      uint64
+	Free       uint64
+	Percentage float64
+	Path       string // Mount point being monitored
 	Error      error
 }
 
@@ -104,6 +115,9 @@ func (sc *SystemCollector) Collect() SystemMetrics {
 
 	// Collect swap metrics
 	metrics.Swap = sc.collectSwap()
+
+	// Collect disk usage metrics
+	metrics.DiskUsage = sc.collectDiskUsage()
 
 	// Collect disk I/O metrics
 	metrics.DiskIO = sc.collectDiskIO()
@@ -187,6 +201,26 @@ func (sc *SystemCollector) collectSwap() SwapMetrics {
 	swapMetrics.Percentage = swap.UsedPercent
 
 	return swapMetrics
+}
+
+// collectDiskUsage collects disk space usage metrics for root filesystem
+func (sc *SystemCollector) collectDiskUsage() DiskUsageMetrics {
+	diskMetrics := DiskUsageMetrics{
+		Path: "/", // Monitor root filesystem
+	}
+
+	usage, err := disk.Usage("/")
+	if err != nil {
+		diskMetrics.Error = fmt.Errorf("failed to collect disk usage: %w", err)
+		return diskMetrics
+	}
+
+	diskMetrics.Used = usage.Used
+	diskMetrics.Total = usage.Total
+	diskMetrics.Free = usage.Free
+	diskMetrics.Percentage = usage.UsedPercent
+
+	return diskMetrics
 }
 
 // collectDiskIO collects disk I/O rate metrics

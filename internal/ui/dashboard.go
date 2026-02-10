@@ -915,6 +915,22 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 			swpUsed, swpTotal))
 	}
 
+	// Disk Usage - always compact (one line)
+	if d.systemMetrics.DiskUsage.Error == nil {
+		diskUsed := metrics.FormatBytes(d.systemMetrics.DiskUsage.Used)
+		diskTotal := metrics.FormatBytes(d.systemMetrics.DiskUsage.Total)
+		// Use same calculation as Memory for consistency
+		barWidth := contentWidth - 5 - len(diskUsed) - 1 - len(diskTotal)
+		if barWidth < 10 {
+			barWidth = 10
+		}
+		lines = append(lines, fmt.Sprintf("Dsk %s %s/%s",
+			d.renderBar(d.systemMetrics.DiskUsage.Percentage, barWidth),
+			diskUsed, diskTotal))
+	} else {
+		lines = append(lines, errorStyle.Render("Dsk: N/A"))
+	}
+
 	// Disk I/O - verbose format with pipe separators
 	if d.systemMetrics.DiskIO.Error == nil {
 		lines = append(lines, fmt.Sprintf("Disk I/O | Read: %s | Write: %s",
@@ -1577,6 +1593,9 @@ CPU: Overall + per-core usage as N:[||| XX%]
 
 Memory/Swap: Used/Total with percentage bars
   Formatted in GB/MB for readability
+
+Disk: Root filesystem (/) usage with percentage bar
+  Shows used/total space in GB/TB
 
 Disk I/O: Read/write speeds in bytes/s or KB/s
 
