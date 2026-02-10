@@ -5,7 +5,7 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-02-10
 
 ### Added
 - **Disk usage monitoring**: System Resources panel now shows root filesystem (/) space usage
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses same compact format as Memory and Swap for consistency
   - Color-coded progress bar: Green<60%, Yellow 60-79%, Orange 80-94%, Red≥95%
   - Updated help text to document the new disk usage metric
+  - Positioned between Swap and Disk I/O for logical resource grouping
 
 ## [0.7.23] - 2026-02-09
 
