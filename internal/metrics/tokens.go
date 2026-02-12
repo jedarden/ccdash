@@ -507,7 +507,7 @@ type ModelPricing struct {
 	CacheCreatePerMillion float64
 }
 
-// Model pricing constants (as of November 2025)
+// Model pricing constants (as of February 2026)
 var modelPricing = map[string]ModelPricing{
 	// Claude Opus 4.5 pricing
 	"claude-opus-4-5-20251101": {
@@ -530,14 +530,172 @@ var modelPricing = map[string]ModelPricing{
 		CacheReadPerMillion:   0.10,
 		CacheCreatePerMillion: 1.25,
 	},
+	// GLM-5 pricing (Zhipu AI) - flagship model
+	"glm-5": {
+		InputPerMillion:       1.0,
+		OutputPerMillion:      3.2,
+		CacheReadPerMillion:   0.20,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-5-Code - coding specialized
+	"glm-5-code": {
+		InputPerMillion:       1.2,
+		OutputPerMillion:      5.0,
+		CacheReadPerMillion:   0.30,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-4.7 pricing - latest generation
+	"glm-4-7": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.7": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-7-flashx": {
+		InputPerMillion:       0.07,
+		OutputPerMillion:      0.4,
+		CacheReadPerMillion:   0.01,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.7-flashx": {
+		InputPerMillion:       0.07,
+		OutputPerMillion:      0.4,
+		CacheReadPerMillion:   0.01,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-4.7-Flash and GLM-4.5-Flash are FREE
+	"glm-4-7-flash": {
+		InputPerMillion:       0.0,
+		OutputPerMillion:      0.0,
+		CacheReadPerMillion:   0.0,
+		CacheCreatePerMillion: 0.0,
+	},
+	"glm-4.7-flash": {
+		InputPerMillion:       0.0,
+		OutputPerMillion:      0.0,
+		CacheReadPerMillion:   0.0,
+		CacheCreatePerMillion: 0.0,
+	},
+	// GLM-4.6 pricing
+	"glm-4-6": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.6": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-4.5 pricing
+	"glm-4-5": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.5": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-5-x": {
+		InputPerMillion:       2.2,
+		OutputPerMillion:      8.9,
+		CacheReadPerMillion:   0.45,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.5-x": {
+		InputPerMillion:       2.2,
+		OutputPerMillion:      8.9,
+		CacheReadPerMillion:   0.45,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-5-air": {
+		InputPerMillion:       0.2,
+		OutputPerMillion:      1.1,
+		CacheReadPerMillion:   0.03,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.5-air": {
+		InputPerMillion:       0.2,
+		OutputPerMillion:      1.1,
+		CacheReadPerMillion:   0.03,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-5-airx": {
+		InputPerMillion:       1.1,
+		OutputPerMillion:      4.5,
+		CacheReadPerMillion:   0.22,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4.5-airx": {
+		InputPerMillion:       1.1,
+		OutputPerMillion:      4.5,
+		CacheReadPerMillion:   0.22,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-4.5-Flash is FREE
+	"glm-4-5-flash": {
+		InputPerMillion:       0.0,
+		OutputPerMillion:      0.0,
+		CacheReadPerMillion:   0.0,
+		CacheCreatePerMillion: 0.0,
+	},
+	"glm-4.5-flash": {
+		InputPerMillion:       0.0,
+		OutputPerMillion:      0.0,
+		CacheReadPerMillion:   0.0,
+		CacheCreatePerMillion: 0.0,
+	},
+	// GLM-4 pricing (legacy) - pricing from docs.z.ai
+	"glm-4": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-plus": {
+		InputPerMillion:       1.2,
+		OutputPerMillion:      5.0,
+		CacheReadPerMillion:   0.20,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-9b-chat": {
+		InputPerMillion:       0.6,
+		OutputPerMillion:      2.2,
+		CacheReadPerMillion:   0.11,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-air": {
+		InputPerMillion:       0.2,
+		OutputPerMillion:      1.1,
+		CacheReadPerMillion:   0.03,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-4-flash": {
+		InputPerMillion:       0.07,
+		OutputPerMillion:      0.4,
+		CacheReadPerMillion:   0.01,
+		CacheCreatePerMillion: 0.00,
+	},
 }
 
-// defaultPricing uses Claude Sonnet 4.5 as the fallback
+// defaultPricing uses GLM-4.5 as the fallback (most common model for Z.AI proxy)
 var defaultPricing = ModelPricing{
-	InputPerMillion:       3.0,
-	OutputPerMillion:      15.0,
-	CacheReadPerMillion:   0.30,
-	CacheCreatePerMillion: 3.75,
+	InputPerMillion:       0.6,
+	OutputPerMillion:      2.2,
+	CacheReadPerMillion:   0.11,
+	CacheCreatePerMillion: 0.00,
 }
 
 // getPricingForModel returns the pricing for a given model name
@@ -548,6 +706,60 @@ func getPricingForModel(model string) ModelPricing {
 	}
 
 	// Check for model family prefix matches
+	// GLM-5 models (flagship)
+	if strings.Contains(model, "glm-5-code") {
+		return modelPricing["glm-5-code"]
+	}
+	if strings.Contains(model, "glm-5") {
+		return modelPricing["glm-5"]
+	}
+	// GLM-4.7 models (latest generation)
+	if strings.Contains(model, "glm-4.7-flashx") || strings.Contains(model, "glm-4-7-flashx") {
+		return modelPricing["glm-4.7-flashx"]
+	}
+	if strings.Contains(model, "glm-4.7-flash") || strings.Contains(model, "glm-4-7-flash") {
+		return modelPricing["glm-4.7-flash"]
+	}
+	if strings.Contains(model, "glm-4.7") || strings.Contains(model, "glm-4-7") {
+		return modelPricing["glm-4.7"]
+	}
+	// GLM-4.6 models
+	if strings.Contains(model, "glm-4.6") || strings.Contains(model, "glm-4-6") {
+		return modelPricing["glm-4.6"]
+	}
+	// GLM-4.5 models
+	if strings.Contains(model, "glm-4.5-x") || strings.Contains(model, "glm-4-5-x") {
+		return modelPricing["glm-4.5-x"]
+	}
+	if strings.Contains(model, "glm-4.5-airx") || strings.Contains(model, "glm-4-5-airx") {
+		return modelPricing["glm-4.5-airx"]
+	}
+	if strings.Contains(model, "glm-4.5-air") || strings.Contains(model, "glm-4-5-air") {
+		return modelPricing["glm-4.5-air"]
+	}
+	if strings.Contains(model, "glm-4.5-flash") || strings.Contains(model, "glm-4-5-flash") {
+		return modelPricing["glm-4.5-flash"]
+	}
+	if strings.Contains(model, "glm-4.5") || strings.Contains(model, "glm-4-5") {
+		return modelPricing["glm-4.5"]
+	}
+	// GLM-4 models (legacy)
+	if strings.Contains(model, "glm-4-plus") {
+		return modelPricing["glm-4-plus"]
+	}
+	if strings.Contains(model, "glm-4-air") {
+		return modelPricing["glm-4-air"]
+	}
+	if strings.Contains(model, "glm-4-flash") {
+		return modelPricing["glm-4-flash"]
+	}
+	if strings.Contains(model, "glm-4-9b") {
+		return modelPricing["glm-4-9b-chat"]
+	}
+	if strings.Contains(model, "glm-4") || strings.Contains(model, "glm-3") {
+		return modelPricing["glm-4"]
+	}
+	// Claude models
 	if strings.Contains(model, "opus-4-5") || strings.Contains(model, "opus-4.5") {
 		return modelPricing["claude-opus-4-5-20251101"]
 	}
