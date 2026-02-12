@@ -1015,6 +1015,8 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color("#4ecdc4")) // Cyan for Sonnet
 		} else if strings.Contains(modelName, "haiku") {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color("#95e1d3")) // Light green for Haiku
+		} else if strings.Contains(modelName, "glm") {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#00bfff")) // Blue for GLM
 		}
 		return dimStyle
 	}
@@ -1123,7 +1125,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	return style.Width(width).Height(height).Render(content)
 }
 
-// shortenModelName shortens common Claude model names for display
+// shortenModelName shortens common model names for display
 func shortenModelName(name string) string {
 	// Common patterns to shorten
 	replacements := map[string]string{
@@ -1135,13 +1137,28 @@ func shortenModelName(name string) string {
 		"claude-3-opus-20240229":      "Opus 3",
 		"claude-3-sonnet-20240229":    "Sonnet 3",
 		"claude-3-haiku-20240307":     "Haiku 3",
+		// GLM models (Zhipu AI)
+		"glm-4-alltools":                "GLM 4",
+		"glm-4-alltools":                 "GLM 4",
+		"glm-4-9b-chat":                "GLM 4",
+		"glm-4-air":                     "GLM 4",
+		"glm-4-flash":                   "GLM 4",
+		"glm-4-plus":                    "GLM 4+",
 	}
 
 	if short, ok := replacements[name]; ok {
 		return short
 	}
 
-	// Try partial matches
+	// Try GLM partial matches
+	if strings.Contains(name, "glm-4") {
+		return "GLM 4"
+	}
+	if strings.Contains(name, "glm-3") {
+		return "GLM 3"
+	}
+
+	// Try Claude partial matches
 	if strings.Contains(name, "opus-4-5") || strings.Contains(name, "opus-4.5") {
 		return "Opus 4.5"
 	}
@@ -1607,11 +1624,11 @@ Load: 1min, 5min, 15min averages
 	case 2: // Token Usage
 		title = "Token Usage Panel"
 		panel = d.renderTokenPanel(panelWidth, panelHeight)
-		helpText = `Tracks Claude Code token usage from ~/.claude/projects:
+		helpText = `Tracks token usage from ~/.claude/projects (Claude) and zai-proxy metrics (GLM):
 
 Tokens:
   In/Out: Input/output tokens
-  Cache Read/Create: Cache operations
+  Cache Read/Create: Cache operations (Claude only)
   Total: All tokens combined
   Cost: Estimated API cost ($)
 
@@ -1628,8 +1645,12 @@ Lookback: Press 'l' to open time picker
   Custom: Set specific date/time with arrows
 
 Models: Per-model cost breakdown
-  Color-coded: Opus(red) Sonnet(cyan) Haiku(green)
+  Color-coded: Opus(red) Sonnet(cyan) Haiku(green) GLM(blue)
   Sorted by cost (highest first)
+
+Data Sources:
+  - Claude: ~/.claude/projects/*.jsonl (sessions)
+  - GLM: Not currently tracked (zai-proxy only exports Prometheus)
 
 SQLite Cache: .ccdash/tokens.db
   Queryable with DuckDB or any SQLite tool
