@@ -21,6 +21,7 @@ const (
 	LayoutNarrow     LayoutMode = iota // <120 cols
 	LayoutWide                          // 120-239 cols, >=30 lines
 	LayoutUltraWide                     // >=240 cols
+	LayoutCompact                       // <120 cols: tmux top, tokens middle, system bottom
 )
 
 // tickMsg is sent every 2 seconds to trigger refresh
@@ -356,6 +357,8 @@ func (d *Dashboard) View() string {
 			content = d.renderUltraWide()
 		case LayoutWide:
 			content = d.renderWide()
+		case LayoutCompact:
+			content = d.renderCompact()
 		default:
 			content = d.renderNarrow()
 		}
@@ -383,8 +386,13 @@ func (d *Dashboard) View() string {
 
 // updateLayout determines the current layout mode based on terminal size
 func (d *Dashboard) updateLayout() {
-	// Always use 3-column layout
-	d.layoutMode = LayoutUltraWide
+	if d.width < 120 {
+		// Compact stacked layout: tmux top, tokens middle, system bottom
+		d.layoutMode = LayoutCompact
+	} else {
+		// Always use 3-column layout for wide terminals
+		d.layoutMode = LayoutUltraWide
+	}
 }
 
 // tick returns a command that sends a tick message every 2 seconds
@@ -760,6 +768,41 @@ func (d *Dashboard) renderNarrow() string {
 		systemPanel,
 		tokenPanel,
 		tmuxPanel,
+	)
+}
+
+// renderCompact renders panels stacked vertically for narrow terminals (e.g. 75x68):
+// tmux sessions on top, token usage in the middle, system resources on the bottom.
+// Height is distributed with tmux getting extra rows since session lists are tall.
+func (d *Dashboard) renderCompact() string {
+	panelWidth := d.width - 2
+	available := d.height - 5 // 3 border pairs + status bar
+
+	// Give tmux a bit more room — sessions need more lines than the other panels
+	tmuxHeight := available / 2
+	remaining := available - tmuxHeight
+	tokenHeight := remaining / 2
+	systemHeight := remaining - tokenHeight
+
+	// Enforce a sensible minimum so panels don't collapse
+	if tmuxHeight < 8 {
+		tmuxHeight = 8
+	}
+	if tokenHeight < 8 {
+		tokenHeight = 8
+	}
+	if systemHeight < 8 {
+		systemHeight = 8
+	}
+
+	tmuxPanel := d.renderTmuxPanel(panelWidth, tmuxHeight)
+	tokenPanel := d.renderTokenPanel(panelWidth, tokenHeight)
+	systemPanel := d.renderSystemPanel(panelWidth, systemHeight)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		tmuxPanel,
+		tokenPanel,
+		systemPanel,
 	)
 }
 
@@ -1139,7 +1182,6 @@ func shortenModelName(name string) string {
 		"claude-3-haiku-20240307":     "Haiku 3",
 		// GLM models (Zhipu AI)
 		"glm-4-alltools":                "GLM 4",
-		"glm-4-alltools":                 "GLM 4",
 		"glm-4-9b-chat":                "GLM 4",
 		"glm-4-air":                     "GLM 4",
 		"glm-4-flash":                   "GLM 4",
