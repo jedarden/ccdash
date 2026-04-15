@@ -776,7 +776,7 @@ func (d *Dashboard) renderNarrow() string {
 // Height is distributed with tmux getting extra rows since session lists are tall.
 func (d *Dashboard) renderCompact() string {
 	panelWidth := d.width - 2
-	available := d.height - 5 // 3 border pairs + status bar
+	available := d.height - 7 // 3×2 border rows + 1 status bar
 
 	// Give tmux a bit more room — sessions need more lines than the other panels
 	tmuxHeight := available / 2
