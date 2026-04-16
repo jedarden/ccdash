@@ -630,7 +630,7 @@ func (d *Dashboard) getTmuxColumnCount(panelHeight int) int {
 func (d *Dashboard) renderUltraWide() string {
 	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
 	totalPanelWidth := d.width - 6
-	panelHeight := d.height - 3
+	panelHeight := d.height - 4 // -2 borders, -1 status line, -1 repo/updater line
 
 	// Step 1: System panel gets fixed width for CPU bars
 	systemWidth := 60
@@ -743,8 +743,8 @@ func (d *Dashboard) renderUltraWide() string {
 // renderWide renders 2 panels on top, 1 on bottom
 func (d *Dashboard) renderWide() string {
 	panelWidth := (d.width - 3) / 2 // 2 panels with spacing
-	topHeight := (d.height - 4) / 2 // Split height
-	bottomHeight := d.height - topHeight - 4
+	topHeight := (d.height - 5) / 2 // Split height (-4 layout, -1 extra status line)
+	bottomHeight := d.height - topHeight - 5
 
 	systemPanel := d.renderSystemPanel(panelWidth, topHeight)
 	tokenPanel := d.renderTokenPanel(panelWidth, topHeight)
@@ -776,7 +776,7 @@ func (d *Dashboard) renderNarrow() string {
 // Height is distributed with tmux getting extra rows since session lists are tall.
 func (d *Dashboard) renderCompact() string {
 	panelWidth := d.width - 2
-	available := d.height - 7 // 3×2 border rows + 1 status bar
+	available := d.height - 8 // 3×2 border rows + 1 status line + 1 repo/updater line
 
 	// Give tmux a bit more room — sessions need more lines than the other panels
 	tmuxHeight := available / 2
@@ -1817,51 +1817,56 @@ Self-Update: Press 'u' when update available
 	return lipgloss.JoinHorizontal(lipgloss.Top, panel, " ", helpPanel)
 }
 
-// renderStatusBar renders the bottom status bar (single line, compact)
+// renderStatusBar renders the bottom two-line status bar.
+// Line 1: repo link (always) or update notification when one is available.
+// Line 2: time/version on the left, dimensions+shortcuts on the right.
 func (d *Dashboard) renderStatusBar() string {
-	// Compact format: time + version, github, dimensions, shortcuts - all on one line
+	// --- Line 1: repo link / updater notice ---
+	var topLine string
+	if d.updating {
+		topLine = warningStyle.Render(d.updateStatus)
+	} else if d.updateStatus != "" {
+		topLine = errorStyle.Render(d.updateStatus)
+	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
+		topLine = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update", d.updateInfo.LatestVersion))
+	} else {
+		topLine = dimStyle.Render("https://github.com/jedarden/ccdash")
+	}
+	// Centre the top line within the terminal width
+	topWidth := lipgloss.Width(topLine)
+	topPad := max(0, (d.width-topWidth)/2)
+	topLine = strings.Repeat(" ", topPad) + topLine
+
+	// --- Line 2: time+version | dimensions+shortcuts ---
 	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 
-	// Show update status or normal middle content
-	var middle string
-	if d.updating {
-		middle = warningStyle.Render(d.updateStatus)
-	} else if d.updateStatus != "" {
-		middle = errorStyle.Render(d.updateStatus)
-	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-		middle = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update", d.updateInfo.LatestVersion))
-	} else {
-		middle = dimStyle.Render("https://github.com/jedarden/ccdash")
-	}
-
-	// Build shortcuts - include 'u' if update available
 	shortcuts := "l:lookback h:help q:quit r:refresh"
 	if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
 		shortcuts = "u:update l:lookback h:help q:quit r:refresh"
 	}
 	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
-	// Calculate spacing (account for statusBarStyle padding of 2 chars)
-	totalContent := lipgloss.Width(left) + lipgloss.Width(middle) + lipgloss.Width(right)
+	totalContent := lipgloss.Width(left) + lipgloss.Width(right)
 	availableSpace := d.width - totalContent - 2 // -2 for padding
 
-	if availableSpace < 4 {
-		// Not enough space, use ultra-compact format
-		compactShortcuts := "l h q r"
+	var statusLine string
+	if availableSpace < 2 {
+		// Ultra-compact: drop lookback
+		compactShortcuts := "h q r"
 		if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-			compactShortcuts = "u l h q r"
+			compactShortcuts = "u h q r"
 		}
-		return statusBarStyle.Render(fmt.Sprintf("%s %s %dx%d %s",
-			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))
+		statusLine = fmt.Sprintf("%s %s %dx%d %s",
+			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts)
+	} else {
+		spacer := strings.Repeat(" ", availableSpace)
+		statusLine = left + spacer + right
 	}
 
-	// Distribute space evenly on both sides of middle
-	leftSpacer := strings.Repeat(" ", max(0, availableSpace/2))
-	rightSpacer := strings.Repeat(" ", max(0, availableSpace-availableSpace/2))
-
-	statusLine := left + leftSpacer + middle + rightSpacer + right
-
-	return statusBarStyle.Render(statusLine)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		topLine,
+		statusBarStyle.Render(statusLine),
+	)
 }
 
 // renderBar renders a progress bar with percentage inside (unified-dashboard style)
