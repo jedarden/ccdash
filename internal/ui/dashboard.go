@@ -1352,9 +1352,12 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		cols = 4 // Reasonable maximum for readability
 	}
 
-	// Calculate cell width based on actual columns used, but cap to avoid whitespace
+	// Calculate cell width based on actual columns used, but cap to avoid whitespace.
+	// Only add columns for aesthetic reasons (reducing cell width) when we're already
+	// in multi-column mode due to session count — never force multiple columns purely
+	// for width when sessions fit comfortably in one column.
 	cellWidth := (contentWidth - (cols - 1)) / cols
-	if cellWidth > maxCellWidth {
+	if cols > 1 && cellWidth > maxCellWidth {
 		// Increase columns to reduce cell width
 		optimalCols := (contentWidth + maxCellWidth - 1) / maxCellWidth
 		if optimalCols > cols && optimalCols <= 4 {
