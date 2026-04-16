@@ -92,7 +92,7 @@ release:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-linux-arm64 ./cmd/ccdash
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-darwin-amd64 ./cmd/ccdash
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o bin/ccdash-darwin-arm64 ./cmd/ccdash
-	@cd bin && for f in ccdash-*; do sha256sum "$$f" > "$$f.sha256" 2>/dev/null || shasum -a 256 "$$f" > "$$f.sha256"; done
+	@cd bin && rm -f *.sha256 && for f in ccdash-linux-amd64 ccdash-linux-arm64 ccdash-darwin-amd64 ccdash-darwin-arm64; do sha256sum "$$f" > "$$f.sha256" 2>/dev/null || shasum -a 256 "$$f" > "$$f.sha256"; done
 	@echo "Release binaries built in bin/"
 	@ls -la bin/
 
