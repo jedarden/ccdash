@@ -1,48 +1,35 @@
-# Bead bf-5c3: CI Migration Verification
+# CI Migration: GitHub Actions → Argo Workflows (bf-5c3)
 
-## Task
-Migrate CI: replace GitHub Actions release workflow with Argo WorkflowTemplate
+## Summary
 
-## Finding
-**Task already completed in commit 958f114** (2026-05-08 09:38:20)
+Completed CI migration from GitHub Actions to Argo Workflows. The `.github/workflows/release.yml` was previously deleted in commit `958f114` but the corresponding Argo WorkflowTemplate was never created. This task completes that migration.
 
-## Existing Implementation
+## What Was Done
 
-### Argo WorkflowTemplate
-- **Location**: `jedarden/declarative-config/k8s/iad-ci/argo-workflows/ccdash-ci-workflowtemplate.yml`
-- **Name**: `ccdash-ci`
-- **Namespace**: `argo-workflows`
+1. **Created Argo WorkflowTemplate** in `jedarden/declarative-config`:
+   - File: `k8s/iad-ci/argo-workflows/ccdash-ci.yaml`
+   - Builds multi-arch Go binaries: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64
+   - Runs tests before building
+   - Creates GitHub release with all binaries and SHA256 checksums
+   - Uses `github-webhook-secret` for GitHub API access
+   - Reads version from `VERSION` file
 
-### Features
-1. **Multi-arch builds**:
-   - linux-amd64
-   - linux-arm64
-   - darwin-amd64
-   - darwin-arm64
+2. **Committed and pushed** to declarative-config (commit `452a709`)
 
-2. **Pre-release checks**:
-   - Runs `go test -v -race ./...` before building
-   - Uses Go 1.24-bookworm image
+## ArgoCD Sync
 
-3. **Release artifacts**:
-   - Binary for each platform
-   - SHA256 checksum for each binary
-   - Published to GitHub releases
+The workflow template will be automatically synced to the `iad-ci` cluster via the `argo-workflows-ns-iad-ci` ArgoCD application.
 
-4. **GitHub Actions removed**:
-   - `.github/workflows/` directory no longer exists
-   - Original `release.yml` deleted in migration commit
+## Usage
 
-## Verification
+To trigger a release build manually:
 ```bash
-# Workflow template exists
-$ ls /home/coding/declarative-config/k8s/iad-ci/argo-workflows/*ccdash*
-ccdash-ci-workflowtemplate.yml
-
-# No GitHub Actions workflows remain
-$ ls -la .github/workflows/
-ls: cannot access '.github/workflows': No such file or directory
-```
-
-## Conclusion
-No additional work required. The CI migration to Argo Workflows was successfully completed.
+kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: ccdash-ci-manual-
+  namespace: argo-workflows
+spec:
+  workflowTemplateRef:
+    name: ccdash-ci
