@@ -181,28 +181,30 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		return metrics, nil
 	}
 
-	// Find the current project directory (based on cwd)
-	cwd, err := os.Getwd()
+	// Discover all project directories under ~/.claude/projects/
+	projectDirs, err := tc.findAllProjectDirs()
 	if err != nil {
-		metrics.Error = fmt.Sprintf("Failed to get current directory: %v", err)
+		metrics.Error = fmt.Sprintf("Failed to find project directories: %v", err)
 		return metrics, nil
 	}
 
-	projectDir := tc.findProjectDir(cwd)
-	if projectDir == "" {
-		metrics.Error = "No Claude project found for current directory"
+	if len(projectDirs) == 0 {
+		metrics.Error = "No Claude projects found"
 		return metrics, nil
 	}
 
-	// Read all JSONL files in the project directory
-	files, err := filepath.Glob(filepath.Join(projectDir, "*.jsonl"))
-	if err != nil {
-		metrics.Error = fmt.Sprintf("Failed to read project files: %v", err)
-		return metrics, nil
+	// Collect JSONL files from all project directories
+	var files []string
+	for _, projectDir := range projectDirs {
+		dirFiles, err := filepath.Glob(filepath.Join(projectDir, "*.jsonl"))
+		if err != nil {
+			continue
+		}
+		files = append(files, dirFiles...)
 	}
 
 	if len(files) == 0 {
-		metrics.Error = "No JSONL files found in project"
+		metrics.Error = "No JSONL files found in any project"
 		return metrics, nil
 	}
 
@@ -457,6 +459,31 @@ func (tc *TokenCollector) findProjectDir(cwd string) string {
 	}
 
 	return ""
+}
+
+// findAllProjectDirs returns all project directories under the Claude projects root
+func (tc *TokenCollector) findAllProjectDirs() ([]string, error) {
+	if tc.projectsDir == "" {
+		return nil, nil
+	}
+
+	if _, err := os.Stat(tc.projectsDir); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	entries, err := os.ReadDir(tc.projectsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read projects directory: %w", err)
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, filepath.Join(tc.projectsDir, entry.Name()))
+		}
+	}
+
+	return dirs, nil
 }
 
 // calculate60sRate calculates the token rate over the last 60 seconds
