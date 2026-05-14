@@ -148,6 +148,14 @@ func NewDashboard(version string) *Dashboard {
 	}
 }
 
+// AddProjectsDirs adds additional root directories to scan for JSONL files.
+// Call this after NewDashboard to include directories beyond the default ~/.claude/projects.
+func (d *Dashboard) AddProjectsDirs(dirs []string) {
+	for _, dir := range dirs {
+		d.tokenCollector.AddProjectsDir(dir)
+	}
+}
+
 // Init initializes the dashboard
 func (d *Dashboard) Init() tea.Cmd {
 	return tea.Batch(
