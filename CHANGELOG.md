@@ -5,6 +5,14 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-05-14
+
+### Added
+- **Subagent JSONL inclusion**: Token usage now includes costs from subagent sessions spawned via the Agent tool
+  - Recursively scans `<project>/<uuid>/subagents/agent-*.jsonl` in addition to top-level JSONL files
+  - Subagent JSONL format is identical to main session JSONL — no extra parsing needed
+  - Provides complete cost accounting for all Claude Code activity across all projects and sessions
+
 ## [0.9.5] - 2026-05-14
 
 ### Added

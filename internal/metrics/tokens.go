@@ -193,10 +193,10 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		return metrics, nil
 	}
 
-	// Collect JSONL files from all project directories
+	// Collect JSONL files from all project directories (recursive — includes subagents)
 	var files []string
 	for _, projectDir := range projectDirs {
-		dirFiles, err := filepath.Glob(filepath.Join(projectDir, "*.jsonl"))
+		dirFiles, err := findJSONLFilesRecursive(projectDir)
 		if err != nil {
 			continue
 		}
@@ -484,6 +484,23 @@ func (tc *TokenCollector) findAllProjectDirs() ([]string, error) {
 	}
 
 	return dirs, nil
+}
+
+// findJSONLFilesRecursive returns all *.jsonl files under dir, including subdirectories.
+// This captures subagent files stored at <project>/<uuid>/subagents/agent-*.jsonl
+// in addition to the top-level <project>/<uuid>.jsonl conversation files.
+func findJSONLFilesRecursive(dir string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".jsonl") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
 }
 
 // calculate60sRate calculates the token rate over the last 60 seconds
