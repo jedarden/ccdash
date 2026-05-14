@@ -48,3 +48,10 @@ EOF
 
 Automatic trigger fires on push to main when the `ccdash` event source receives a webhook.
 The template is idempotent — it skips release creation if `v${VERSION}` already exists.
+
+## Retrospective
+
+- **What worked:** Following existing WorkflowTemplate patterns in declarative-config made the structure straightforward; the `gh release create` approach with prebuilt binaries is clean
+- **What didn't:** VERSION extraction — initial attempt used `grep '^version'` which didn't match the bare `0.9.4` format; also `gh release create` paths broke after `cd bin` (needed `./ccdash-*` not `ccdash-*`); a duplicate template file needed removal
+- **Surprise:** A duplicate `ccdash-ci.yaml` existed alongside `ccdash-ci-workflowtemplate.yml` in declarative-config from an earlier partial attempt — the duplicate was missing `gh` CLI installation and would have failed silently
+- **Reusable pattern:** For Go binary release workflows: always use `cat VERSION` not grep patterns for VERSION extraction; always use relative paths (`./artifact-*`) after `cd` in shell steps; verify no duplicate template files exist before syncing
