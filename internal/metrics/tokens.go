@@ -46,8 +46,8 @@ type TokenMetrics struct {
 
 // TokenCollector collects and aggregates token usage from Claude Code sessions
 type TokenCollector struct {
-	projectsDir  string
-	lookbackFrom time.Time // Only include data from this time onwards
+	projectsDirs []string   // Root directories to scan for JSONL files
+	lookbackFrom time.Time  // Only include data from this time onwards
 	cache        *TokenCache
 }
 
@@ -74,18 +74,29 @@ func GetMondayNineAM() time.Time {
 	return monday
 }
 
-// NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
-func NewTokenCollector() *TokenCollector {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return &TokenCollector{
-			projectsDir:  "",
-			lookbackFrom: GetMondayNineAM(),
-			cache:        NewTokenCache(),
+// buildDefaultProjectsDirs returns the list of root directories to scan.
+// Always includes ~/.claude/projects as the primary directory.
+// Also reads CCDASH_EXTRA_DIRS (colon-separated) for additional roots.
+func buildDefaultProjectsDirs(home string) []string {
+	var dirs []string
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".claude", "projects"))
+	}
+	if extra := os.Getenv("CCDASH_EXTRA_DIRS"); extra != "" {
+		for _, d := range strings.Split(extra, ":") {
+			if d = strings.TrimSpace(d); d != "" {
+				dirs = append(dirs, d)
+			}
 		}
 	}
+	return dirs
+}
+
+// NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
+func NewTokenCollector() *TokenCollector {
+	home, _ := os.UserHomeDir()
 	return &TokenCollector{
-		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		projectsDirs: buildDefaultProjectsDirs(home),
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
 	}
@@ -93,16 +104,9 @@ func NewTokenCollector() *TokenCollector {
 
 // NewTokenCollectorWithLookback creates a TokenCollector with a custom lookback time
 func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return &TokenCollector{
-			projectsDir:  "",
-			lookbackFrom: lookbackFrom,
-			cache:        NewTokenCache(),
-		}
-	}
+	home, _ := os.UserHomeDir()
 	return &TokenCollector{
-		projectsDir:  filepath.Join(home, ".claude", "projects"),
+		projectsDirs: buildDefaultProjectsDirs(home),
 		lookbackFrom: lookbackFrom,
 		cache:        NewTokenCache(),
 	}
@@ -111,10 +115,15 @@ func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
 	return &TokenCollector{
-		projectsDir:  path,
+		projectsDirs: []string{path},
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
 	}
+}
+
+// AddProjectsDir adds an additional root directory to scan for JSONL files.
+func (tc *TokenCollector) AddProjectsDir(path string) {
+	tc.projectsDirs = append(tc.projectsDirs, path)
 }
 
 // SetLookback sets the lookback time filter
@@ -170,18 +179,13 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		Models:       []string{},
 	}
 
-	// Check if projects directory exists
-	if tc.projectsDir == "" {
-		metrics.Error = "Could not determine home directory"
+	// Check that at least one directory is configured
+	if len(tc.projectsDirs) == 0 {
+		metrics.Error = "No projects directories configured"
 		return metrics, nil
 	}
 
-	if _, err := os.Stat(tc.projectsDir); os.IsNotExist(err) {
-		metrics.Error = "Claude projects directory not found"
-		return metrics, nil
-	}
-
-	// Discover all project directories under ~/.claude/projects/
+	// Discover all project directories across all configured roots
 	projectDirs, err := tc.findAllProjectDirs()
 	if err != nil {
 		metrics.Error = fmt.Sprintf("Failed to find project directories: %v", err)
@@ -447,42 +451,39 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) error {
 	return nil
 }
 
-// findProjectDir finds the Claude project directory for the given working directory
+// findProjectDir finds the Claude project directory for the given working directory,
+// searching across all configured roots.
 func (tc *TokenCollector) findProjectDir(cwd string) string {
-	// Convert path to project directory name format
-	// e.g., /workspaces/test-agor -> -workspaces-test-agor
 	projectName := strings.ReplaceAll(cwd, "/", "-")
-	projectPath := filepath.Join(tc.projectsDir, projectName)
-
-	if _, err := os.Stat(projectPath); err == nil {
-		return projectPath
+	for _, root := range tc.projectsDirs {
+		projectPath := filepath.Join(root, projectName)
+		if _, err := os.Stat(projectPath); err == nil {
+			return projectPath
+		}
 	}
-
 	return ""
 }
 
-// findAllProjectDirs returns all project directories under the Claude projects root
+// findAllProjectDirs returns all project directories found under all configured roots.
 func (tc *TokenCollector) findAllProjectDirs() ([]string, error) {
-	if tc.projectsDir == "" {
-		return nil, nil
-	}
-
-	if _, err := os.Stat(tc.projectsDir); os.IsNotExist(err) {
-		return nil, nil
-	}
-
-	entries, err := os.ReadDir(tc.projectsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read projects directory: %w", err)
-	}
-
 	var dirs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirs = append(dirs, filepath.Join(tc.projectsDir, entry.Name()))
+	for _, root := range tc.projectsDirs {
+		if root == "" {
+			continue
+		}
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				dirs = append(dirs, filepath.Join(root, entry.Name()))
+			}
 		}
 	}
-
 	return dirs, nil
 }
 

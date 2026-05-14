@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,7 @@ func main() {
 		showHelp     = flag.Bool("help", false, "Show help information")
 		installHooks = flag.Bool("install-hooks", false, "Install Claude Code hooks for session tracking")
 		checkHooks   = flag.Bool("check-hooks", false, "Check if Claude Code hooks are installed")
+		extraDirs    = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
 	)
 
 	flag.Parse()
@@ -121,6 +123,19 @@ func main() {
 	// Create and run the dashboard
 	dashboard := ui.NewDashboard(version)
 
+	// Add any extra project directories specified via --extra-dirs flag
+	if *extraDirs != "" {
+		var dirs []string
+		for _, d := range strings.Split(*extraDirs, ",") {
+			if d = strings.TrimSpace(d); d != "" {
+				dirs = append(dirs, d)
+			}
+		}
+		if len(dirs) > 0 {
+			dashboard.AddProjectsDirs(dirs)
+		}
+	}
+
 	p := tea.NewProgram(
 		dashboard,
 		tea.WithAltScreen(),       // Use alternate screen buffer
@@ -182,10 +197,13 @@ func printHelp() {
 	fmt.Println("  ccdash [OPTIONS]")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
-	fmt.Println("  --version        Show version information")
-	fmt.Println("  --help           Show this help message")
-	fmt.Println("  --install-hooks  Install Claude Code hooks for session tracking")
-	fmt.Println("  --check-hooks    Check if Claude Code hooks are installed")
+	fmt.Println("  --version             Show version information")
+	fmt.Println("  --help                Show this help message")
+	fmt.Println("  --install-hooks       Install Claude Code hooks for session tracking")
+	fmt.Println("  --check-hooks         Check if Claude Code hooks are installed")
+	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
+	fmt.Println("                        Comma-separated list of paths")
+	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
 	fmt.Println()
 	fmt.Println("KEYBOARD SHORTCUTS:")
 	fmt.Println("  q, Ctrl+C    Quit the dashboard")
@@ -231,11 +249,14 @@ func printHelp() {
 	fmt.Println("  - jq (for hooks, usually pre-installed)")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
-	fmt.Println("  ccdash                  Start the dashboard")
-	fmt.Println("  ccdash --install-hooks  Install Claude Code hooks")
-	fmt.Println("  ccdash --check-hooks    Verify hooks installation")
-	fmt.Println("  ccdash --version        Show version")
-	fmt.Println("  ccdash --help           Show this help")
+	fmt.Println("  ccdash                                    Start the dashboard")
+	fmt.Println("  ccdash --install-hooks                    Install Claude Code hooks")
+	fmt.Println("  ccdash --check-hooks                      Verify hooks installation")
+	fmt.Println("  ccdash --version                          Show version")
+	fmt.Println("  ccdash --help                             Show this help")
+	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
+	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
+	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")
 	fmt.Println()
 	fmt.Println("For more information, visit: https://github.com/jedarden/ccdash")
 }
