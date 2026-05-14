@@ -5,6 +5,15 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] - 2026-05-14
+
+### Added
+- **Multi-directory JSONL support**: Token tracking now spans multiple Claude project root directories
+  - `--extra-dirs=<dirs>` CLI flag accepts a comma-separated list of additional root directories to scan
+  - `CCDASH_EXTRA_DIRS` environment variable accepts colon-separated paths (stackable with `--extra-dirs`)
+  - Both mechanisms stack on top of the default `~/.claude/projects` root — no replacement, only addition
+  - Useful for tracking usage across separate Claude Code installations or custom data locations
+
 ## [0.9.6] - 2026-05-14
 
 ### Added
