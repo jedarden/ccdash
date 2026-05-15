@@ -46,9 +46,10 @@ type TokenMetrics struct {
 
 // TokenCollector collects and aggregates token usage from Claude Code sessions
 type TokenCollector struct {
-	projectsDirs []string   // Root directories to scan for JSONL files
-	lookbackFrom time.Time  // Only include data from this time onwards
-	cache        *TokenCache
+	projectsDirs  []string  // Root directories to scan for JSONL files
+	lookbackFrom  time.Time // Only include data from this time onwards
+	cache         *TokenCache
+	stopIngestion chan struct{} // Closed to stop the background ingestion goroutine
 }
 
 // GetMondayNineAM returns the most recent Monday at 9am local time
@@ -95,29 +96,111 @@ func buildDefaultProjectsDirs(home string) []string {
 // NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
 func NewTokenCollector() *TokenCollector {
 	home, _ := os.UserHomeDir()
-	return &TokenCollector{
+	tc := &TokenCollector{
 		projectsDirs: buildDefaultProjectsDirs(home),
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
 	}
+	tc.startBackgroundIngestion()
+	return tc
 }
 
 // NewTokenCollectorWithLookback creates a TokenCollector with a custom lookback time
 func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 	home, _ := os.UserHomeDir()
-	return &TokenCollector{
+	tc := &TokenCollector{
 		projectsDirs: buildDefaultProjectsDirs(home),
 		lookbackFrom: lookbackFrom,
 		cache:        NewTokenCache(),
 	}
+	tc.startBackgroundIngestion()
+	return tc
 }
 
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
-	return &TokenCollector{
+	tc := &TokenCollector{
 		projectsDirs: []string{path},
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
+	}
+	tc.startBackgroundIngestion()
+	return tc
+}
+
+// startBackgroundIngestion starts a goroutine that ingests JSONL files into SQLite
+// independently of the UI refresh cycle. This decouples slow file I/O from the
+// fast DB query that populates the token panel.
+func (tc *TokenCollector) startBackgroundIngestion() {
+	tc.stopIngestion = make(chan struct{})
+	go func() {
+		// Run immediately so data is available as soon as possible
+		tc.runIngestionCycle()
+
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-tc.stopIngestion:
+				return
+			case <-ticker.C:
+				tc.runIngestionCycle()
+			}
+		}
+	}()
+}
+
+// StopBackgroundIngestion shuts down the background ingestion goroutine.
+func (tc *TokenCollector) StopBackgroundIngestion() {
+	if tc.stopIngestion != nil {
+		close(tc.stopIngestion)
+		tc.stopIngestion = nil
+	}
+}
+
+// runIngestionCycle scans all JSONL files and ingests new data into SQLite.
+// Called by the background goroutine; uses ingestMu so it never blocks fast
+// cache/lease operations.
+func (tc *TokenCollector) runIngestionCycle() {
+	if len(tc.projectsDirs) == 0 {
+		return
+	}
+	projectDirs, err := tc.findAllProjectDirs()
+	if err != nil || len(projectDirs) == 0 {
+		return
+	}
+
+	var files []string
+	for _, projectDir := range projectDirs {
+		dirFiles, err := findJSONLFilesRecursive(projectDir)
+		if err != nil {
+			continue
+		}
+		files = append(files, dirFiles...)
+	}
+
+	completeThreshold := GetFileCompleteThreshold()
+	for _, file := range files {
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+
+		if agg, ok := tc.cache.GetFileAggregate(file); ok && agg.IsComplete {
+			if !fileInfo.ModTime().After(agg.CompletedAt) {
+				continue
+			}
+			tc.cache.MarkFileActive(file)
+		}
+
+		if time.Since(fileInfo.ModTime()) > completeThreshold {
+			if err := tc.ingestJSONLFile(file); err == nil {
+				tc.cache.MarkFileComplete(file)
+			}
+			continue
+		}
+
+		tc.ingestJSONLFile(file)
 	}
 }
 
@@ -169,8 +252,9 @@ type cacheCreation struct {
 	Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
 }
 
-// Collect gathers token metrics from all JSONL files in the projects directory
-// Uses SQLite for efficient lookback queries - data is indexed by timestamp
+// Collect returns token metrics from the SQLite cache. File ingestion runs in a
+// background goroutine (started by the constructor) so this method only executes
+// the fast DB query and never blocks on file I/O.
 func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	metrics := &TokenMetrics{
 		Available:    false,
@@ -179,73 +263,12 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		Models:       []string{},
 	}
 
-	// Check that at least one directory is configured
 	if len(tc.projectsDirs) == 0 {
 		metrics.Error = "No projects directories configured"
 		return metrics, nil
 	}
 
-	// Discover all project directories across all configured roots
-	projectDirs, err := tc.findAllProjectDirs()
-	if err != nil {
-		metrics.Error = fmt.Sprintf("Failed to find project directories: %v", err)
-		return metrics, nil
-	}
-
-	if len(projectDirs) == 0 {
-		metrics.Error = "No Claude projects found"
-		return metrics, nil
-	}
-
-	// Collect JSONL files from all project directories (recursive — includes subagents)
-	var files []string
-	for _, projectDir := range projectDirs {
-		dirFiles, err := findJSONLFilesRecursive(projectDir)
-		if err != nil {
-			continue
-		}
-		files = append(files, dirFiles...)
-	}
-
-	if len(files) == 0 {
-		metrics.Error = "No JSONL files found in any project"
-		return metrics, nil
-	}
-
-	// Step 1: Ingest any new data from JSONL files into SQLite
-	// Uses pre-aggregation for complete files to reduce I/O
-	completeThreshold := GetFileCompleteThreshold()
-	for _, file := range files {
-		fileInfo, err := os.Stat(file)
-		if err != nil {
-			continue // File may have been deleted
-		}
-
-		// Check if file is already marked complete and unchanged
-		if agg, ok := tc.cache.GetFileAggregate(file); ok && agg.IsComplete {
-			if !fileInfo.ModTime().After(agg.CompletedAt) {
-				// File is complete and unchanged - skip all file I/O
-				continue
-			}
-			// File was modified after being marked complete - reactivate it
-			tc.cache.MarkFileActive(file)
-		}
-
-		// Check if file should be marked complete (hasn't been modified in threshold duration)
-		if time.Since(fileInfo.ModTime()) > completeThreshold {
-			// Process any remaining data first
-			if err := tc.ingestJSONLFile(file); err == nil {
-				// Mark as complete and pre-aggregate
-				tc.cache.MarkFileComplete(file)
-			}
-			continue
-		}
-
-		// Active file - normal incremental processing
-		tc.ingestJSONLFile(file)
-	}
-
-	// Step 2: Query SQLite using hybrid approach (pre-aggregated + active events)
+	// Query SQLite using hybrid approach (pre-aggregated + active events)
 	aggregated, err := tc.cache.QueryTokensHybrid(tc.lookbackFrom)
 	if err != nil {
 		metrics.Error = fmt.Sprintf("Failed to query token cache: %v", err)

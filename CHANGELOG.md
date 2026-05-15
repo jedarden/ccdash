@@ -5,6 +5,11 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-05-15
+
+### Fixed
+- **Token metrics never loading with large JSONL archives**: `Collect()` was running the full file-scan and ingest loop (64,000+ files, ~50,000 previously unprocessed) synchronously on every UI refresh cycle. With ~10ms per file the loop took 500+ seconds — far exceeding the dashboard's 3-second timeout — so `QueryTokensHybrid()` was never reached and the token panel was always blank. Fixed by moving all file I/O into a background goroutine (`startBackgroundIngestion`) that starts immediately at collector creation and re-runs every 30 seconds. `Collect()` now only executes the fast `QueryTokensHybrid()` DB query, which completes in under 100ms regardless of corpus size.
+
 ## [0.9.9] - 2026-05-15
 
 ### Fixed
