@@ -5,6 +5,11 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-05-15
+
+### Fixed
+- **System and token panels blank with large project counts**: With many JSONL files (64,000+), the token batch-ingest goroutine held the SQLite write mutex for several seconds per cycle. Because lease acquisition, cache reads, and cache writes all shared the same mutex, this blocked the fast gopsutil-based system metrics and cache reads, causing all three operations to time out. Fixed by splitting into two mutexes: `ingestMu` for slow file-scan/DB-ingest operations, and `metaMu` for fast lease/cache operations. Fast operations are now completely independent of ingestion and can never be blocked by it.
+
 ## [0.9.8] - 2026-05-15
 
 ### Fixed
