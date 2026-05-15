@@ -178,16 +178,13 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		// Use actual tmux attached status (hooks don't track this)
 		session.Attached = tmuxSession.Attached
 
-		// Always verify hook status with tmux pane content as ground truth
-		// Tmux checks for interrupt hints which are the definitive working indicators
+		// Merge hook status with tmux observations.
+		// Hooks are authoritative for working/stopped state (Stop hook fires when
+		// Claude finishes). Tmux pane content is a secondary signal — use it to
+		// confirm working, but never to downgrade hook status.
 		if tmuxSession.Status == StatusWorking {
-			// Tmux says working - trust it (hook may have stale data)
+			// Tmux sees interrupt hints — Claude is definitely working
 			session.Status = StatusWorking
-			session.Source = "hybrid"
-		} else if session.Status == StatusWorking && tmuxSession.Status != StatusWorking {
-			// Hook says working but tmux doesn't see interrupt hint
-			// Claude probably finished - downgrade to ready
-			session.Status = StatusReady
 			session.Source = "hybrid"
 		} else if session.Status == StatusError {
 			// Hook says error but tmux shows activity - prefer tmux
@@ -196,6 +193,8 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 				session.Source = "hybrid"
 			}
 		}
+		// If hook says working but tmux doesn't confirm, trust the hook.
+		// The Stop hook fires when Claude finishes and is the authoritative signal.
 
 		metrics.Sessions = append(metrics.Sessions, session)
 		seenNames[session.Name] = true
