@@ -33,10 +33,11 @@ const (
 // TokenCache manages persistent SQLite-based caching of token metrics
 // The database is queryable by external tools like DuckDB for advanced analytics
 type TokenCache struct {
-	dbPath    string
-	db        *sql.DB
-	mu        sync.RWMutex
-	cacheDir  string
+	dbPath   string
+	db       *sql.DB
+	ingestMu sync.RWMutex // Protects slow ingest operations (file scan, batch inserts)
+	metaMu   sync.RWMutex // Protects fast cache/lease operations (never blocked by ingestion)
+	cacheDir string
 }
 
 const (
@@ -164,8 +165,8 @@ func NewTokenCache() *TokenCache {
 
 // initDB initializes the SQLite database with the required schema
 func (tc *TokenCache) initDB() error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	// Enhanced connection string for multi-instance/multi-process support:
 	// _journal_mode=WAL: Write-Ahead Logging for better concurrent read/write support
@@ -289,8 +290,8 @@ func (tc *TokenCache) initDB() error {
 
 // Close closes the database connection
 func (tc *TokenCache) Close() error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db != nil {
 		return tc.db.Close()
@@ -315,8 +316,8 @@ func (tc *TokenCache) InsertTokenEvent(timestamp time.Time, model string, inputT
 
 // InsertTokenEventContext inserts a single token event with context support
 func (tc *TokenCache) InsertTokenEventContext(ctx context.Context, timestamp time.Time, model string, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int64, sourceFile string, lineNumber int64) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -342,8 +343,8 @@ func (tc *TokenCache) InsertTokenEventBatch(events []TokenEvent) error {
 
 // InsertTokenEventBatchContext inserts multiple token events with context support
 func (tc *TokenCache) InsertTokenEventBatchContext(ctx context.Context, events []TokenEvent) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil || len(events) == 0 {
 		return nil
@@ -399,8 +400,8 @@ func (tc *TokenCache) QueryTokensSince(since time.Time) (*AggregatedTokens, erro
 
 // QueryTokensSinceContext returns aggregated token metrics with context support
 func (tc *TokenCache) QueryTokensSinceContext(ctx context.Context, since time.Time) (*AggregatedTokens, error) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return &AggregatedTokens{}, nil
@@ -531,8 +532,8 @@ type FileAggregate struct {
 
 // GetFileAggregate returns the pre-computed aggregate for a file if it exists
 func (tc *TokenCache) GetFileAggregate(sourceFile string) (*FileAggregate, bool) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return nil, false
@@ -591,8 +592,8 @@ func (tc *TokenCache) IsFileComplete(sourceFile string) bool {
 // MarkFileComplete aggregates all events for a file and marks it as complete
 // This allows future queries to skip individual event processing for this file
 func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -676,8 +677,8 @@ func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
 
 // MarkFileActive marks a file as no longer complete (it's being written to again)
 func (tc *TokenCache) MarkFileActive(sourceFile string) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -707,8 +708,8 @@ func (tc *TokenCache) QueryTokensHybrid(since time.Time) (*AggregatedTokens, err
 
 // QueryTokensHybridContext returns aggregated token metrics with context support
 func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.Time) (*AggregatedTokens, error) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return &AggregatedTokens{}, nil
@@ -885,8 +886,8 @@ func (tc *TokenCache) QueryRecentEvents(seconds int64) ([]TimestampedTokens, err
 
 // QueryRecentEventsContext returns token events with context support
 func (tc *TokenCache) QueryRecentEventsContext(ctx context.Context, seconds int64) ([]TimestampedTokens, error) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return nil, nil
@@ -941,8 +942,8 @@ func (tc *TokenCache) GetFileState(sourceFile string) (lastLine int64, lastModif
 
 // GetFileStateContext returns file state with context support
 func (tc *TokenCache) GetFileStateContext(ctx context.Context, sourceFile string) (lastLine int64, lastModified time.Time, exists bool) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return 0, time.Time{}, false
@@ -979,8 +980,8 @@ func (tc *TokenCache) SetFileState(sourceFile string, lastLine int64, lastModifi
 
 // SetFileStateContext updates file state with context support
 func (tc *TokenCache) SetFileStateContext(ctx context.Context, sourceFile string, lastLine int64, lastModified time.Time) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -1014,8 +1015,8 @@ func (tc *TokenCache) InvalidateFile(sourceFile string) error {
 
 // InvalidateFileContext removes file data with context support
 func (tc *TokenCache) InvalidateFileContext(ctx context.Context, sourceFile string) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -1052,8 +1053,8 @@ func (tc *TokenCache) Clear() error {
 
 // ClearContext removes all data with context support
 func (tc *TokenCache) ClearContext(ctx context.Context) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.ingestMu.Lock()
+	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -1090,8 +1091,8 @@ func (tc *TokenCache) GetStats() (eventCount int64, fileCount int64, dbSizeBytes
 
 // GetStatsContext returns stats with context support
 func (tc *TokenCache) GetStatsContext(ctx context.Context) (eventCount int64, fileCount int64, dbSizeBytes int64) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
 
 	if tc.db == nil {
 		return 0, 0, 0
@@ -1117,8 +1118,8 @@ func (tc *TokenCache) GetStatsContext(ctx context.Context) (eventCount int64, fi
 // TryAcquireLease attempts to acquire or renew the collector lease
 // Returns true if this instance is the leader (should collect metrics)
 func (tc *TokenCache) TryAcquireLease(instanceID string) bool {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.metaMu.Lock()
+	defer tc.metaMu.Unlock()
 
 	if tc.db == nil {
 		return true // No DB, collect locally
@@ -1161,8 +1162,8 @@ func (tc *TokenCache) TryAcquireLease(instanceID string) bool {
 // GetCachedMetrics retrieves cached metrics if they're still valid
 // Returns nil if cache is stale or doesn't exist
 func (tc *TokenCache) GetCachedMetrics(metricType string) ([]byte, bool) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+	tc.metaMu.RLock()
+	defer tc.metaMu.RUnlock()
 
 	if tc.db == nil {
 		return nil, false
@@ -1192,8 +1193,8 @@ func (tc *TokenCache) GetCachedMetrics(metricType string) ([]byte, bool) {
 
 // SetCachedMetrics stores metrics in the cache
 func (tc *TokenCache) SetCachedMetrics(metricType string, data []byte) error {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.metaMu.Lock()
+	defer tc.metaMu.Unlock()
 
 	if tc.db == nil {
 		return nil
@@ -1215,8 +1216,8 @@ func (tc *TokenCache) SetCachedMetrics(metricType string, data []byte) error {
 
 // ReleaseLease releases the collector lease (called on shutdown)
 func (tc *TokenCache) ReleaseLease(instanceID string) {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	tc.metaMu.Lock()
+	defer tc.metaMu.Unlock()
 
 	if tc.db == nil {
 		return
