@@ -125,8 +125,10 @@ func (h *HookSessionCollector) CollectSessions() ([]HookSession, error) {
 			continue
 		}
 
-		// Check if session is stale (no activity for StaleSessionThreshold)
-		if now.Sub(session.LastActivity) > StaleSessionThreshold {
+		// Check if session is stale (no activity for StaleSessionThreshold).
+		// Skip "working" sessions — the Stop hook is authoritative for completion;
+		// long-running tasks should not be demoted to stale mid-execution.
+		if session.Status != "working" && now.Sub(session.LastActivity) > StaleSessionThreshold {
 			session.Status = "stale"
 		}
 
@@ -433,6 +435,33 @@ fi
 exit 0
 `,
 
+	"pre-tool-use.sh": `#!/bin/bash
+# Claude Code PreToolUse hook - refreshes last_activity during tool execution
+# Prevents long-running tasks from being marked stale mid-execution
+set -e
+
+CCDASH_DIR="$HOME/.ccdash"
+SESSIONS_DIR="$CCDASH_DIR/sessions"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+
+if [ -f "$SESSION_FILE" ]; then
+    TMP_FILE=$(mktemp)
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.last_activity = $now' \
+       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
+fi
+
+exit 0
+`,
+
 	"prompt-submit.sh": `#!/bin/bash
 # Claude Code UserPromptSubmit hook - marks session as working
 set -e
@@ -606,6 +635,16 @@ func (h *HookSessionCollector) updateSingleSettingsFile(settingsPath, hooksDir s
 					{
 						"type":    "command",
 						"command": filepath.Join(hooksDir, "prompt-submit.sh"),
+					},
+				},
+			},
+		},
+		"PreToolUse": {
+			{
+				"hooks": []map[string]interface{}{
+					{
+						"type":    "command",
+						"command": filepath.Join(hooksDir, "pre-tool-use.sh"),
 					},
 				},
 			},

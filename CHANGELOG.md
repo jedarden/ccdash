@@ -5,6 +5,15 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-05-15
+
+### Fixed
+- **Session working status not recognized**: Hook-tracked sessions showing `WORKING` were incorrectly downgraded to `READY` by the hybrid tmux/hook merge logic. The merge was treating tmux pane content as authoritative, but `⏵⏵ bypass permissions` (always visible in Claude Code's UI chrome) caused `isClaudeWaiting` to return true even during active processing, triggering the downgrade. The `Stop` hook is now the authoritative signal — tmux pane content can only confirm working, not negate it.
+- **Long-running tasks marked stale mid-execution**: Sessions with `status=working` were overridden to `stale` after 5 minutes of inactivity (no new `UserPromptSubmit`). The stale threshold no longer applies to `working` sessions.
+
+### Added
+- **`PreToolUse` hook**: New `~/.ccdash/hooks/pre-tool-use.sh` refreshes `last_activity` on every tool call, keeping the stale threshold from triggering during long multi-step tasks. Installed automatically by `ccdash hooks install`.
+
 ## [0.9.7] - 2026-05-14
 
 ### Added
