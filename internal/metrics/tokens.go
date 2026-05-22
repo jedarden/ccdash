@@ -849,8 +849,11 @@ func (tc *TokenCollector) GetCacheDBPath() string {
 	return ""
 }
 
-// FormatTokensCompact formats tokens with K/M suffixes for compact display
+// FormatTokensCompact formats tokens with K/M/B suffixes for compact display
 func FormatTokensCompact(count int64) string {
+	if count >= 1_000_000_000 {
+		return fmt.Sprintf("%.1fB", float64(count)/1_000_000_000)
+	}
 	if count >= 1_000_000 {
 		return fmt.Sprintf("%.1fM", float64(count)/1_000_000)
 	}
