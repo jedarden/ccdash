@@ -1,198 +1,163 @@
-# 📊 ccdash
+# ccdash
 
-**Version:** `0.6.28`
+A lightweight terminal dashboard for Claude Code — shows token usage, cost, agent session status, and system resources in real time.
 
-> A lightweight TUI (Terminal User Interface) dashboard for monitoring system resources, Claude Code token usage, and tmux sessions.
-
----
-
-## 🎯 What is ccdash?
-
-**ccdash** is a real-time dashboard application that provides:
-
-- 🖥️ **System Resource Monitoring** - Track CPU usage, memory consumption, disk space, and network activity
-- 🤖 **Claude Code Token Tracking** - Monitor token usage across your Claude Code projects by reading from `~/.claude/projects`
-- 🪟 **Tmux Session Management** - View active tmux sessions and their status (optional, works without tmux)
-
-All in a beautiful, terminal-based interface built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ---
 
-## ✨ Key Features
+## What it shows
 
-- ⚡ Real-time system metrics display
-- 📈 Token usage analytics from Claude Code projects
-- 🔄 Tmux session monitoring (when available)
-- 🪶 Lightweight and fast - minimal system overhead
-- 🎨 Beautiful TUI with clean, organized layout
-- ⌨️ Keyboard-driven navigation
-- 📦 No external dependencies beyond Go and optional tmux
-- 🔄 **Self-update** - Press `u` to update when new version available
-- 📅 **Lookback picker** - Press `l` to change time window for token tracking
-- 💰 **Per-model cost tracking** - Color-coded breakdown by Claude model
-- 💾 **SQLite caching** - Queryable `.ccdash/tokens.db` with DuckDB/SQLite support
+**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects`. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown (Opus, Sonnet, Haiku, etc.), color-coded and sorted by spend.
 
----
+**Session panel** — shows active Claude Code agent sessions and their current state:
 
-## 📋 Requirements
+| Status | Meaning |
+|--------|---------|
+| WORKING | Claude is actively processing a turn |
+| ASKING | Claude asked the human a question, waiting for input |
+| READY | Prompt is idle, waiting for the next message |
+| ACTIVE | User is typing in the session |
 
-- **Go 1.21 or higher** 🔧
-- **`~/.claude/projects` directory** (for Claude Code token tracking) 📂
-- **tmux** (optional, for session monitoring features) 🪟
+Session tracking has two modes: tmux pane inspection (automatic) and hook-based tracking (more accurate, install with `ccdash --install-hooks`).
+
+**System panel** — CPU, memory, swap, disk, network I/O, and load average via [gopsutil](https://github.com/shirou/gopsutil).
 
 ---
 
-## 🚀 Installation
+## Installation
 
-### Pre-built Binary (Recommended)
+### Pre-built binary
 
-Download the latest release from the [releases page](https://github.com/jedarden/ccdash/releases):
+Download the latest release from the [releases page](https://github.com/jedarden/ccdash/releases), make it executable, and move it to your PATH.
 
-```bash
-# Download the latest release (Linux example)
-curl -LO https://github.com/jedarden/ccdash/releases/download/v0.1.4/ccdash-linux-amd64
-curl -LO https://github.com/jedarden/ccdash/releases/download/v0.1.4/ccdash-linux-amd64.sha256
+### Using Go
 
-# Verify the checksum
-sha256sum -c ccdash-linux-amd64.sha256
-
-# Make it executable
-chmod +x ccdash-linux-amd64
-
-# Move to your PATH (optional)
-sudo mv ccdash-linux-amd64 /usr/local/bin/ccdash
-
-# Run it
-ccdash
-```
-
-### Using Go Install
+Requires Go 1.21+.
 
 ```bash
 go install github.com/jedarden/ccdash/cmd/ccdash@latest
 ```
 
-### From Source
+### From source
 
 ```bash
-# Clone the repository
 git clone https://github.com/jedarden/ccdash.git
 cd ccdash
-
-# Build and install
 make install
-```
-
-### Manual Build
-
-```bash
-# Build the binary
-make build
-
-# The binary will be available at ./bin/ccdash
-./bin/ccdash
 ```
 
 ---
 
-## 💻 Usage
-
-Simply run the application:
+## Usage
 
 ```bash
 ccdash
 ```
 
-### ⌨️ Keyboard Controls
+### Keyboard controls
 
 | Key | Action |
 |-----|--------|
-| `q` or `Ctrl+C` | Quit the application |
-| `r` | Refresh metrics immediately |
-| `h` | Cycle through help mode (explains each panel) |
-| `l` | Open lookback time picker for token tracking |
-| `u` | Update to latest version (when available) |
+| `q` / `Ctrl+C` | Quit |
+| `r` | Force refresh |
+| `h` | Cycle help panels (explains each section) |
+| `l` | Open lookback picker (change the token measurement window) |
+| `u` | Self-update to latest release (when available) |
 
-### 🎨 Display Features
+### Lookback window
 
-- **Smart Layout**: Automatically adjusts to terminal size
-  - Ultra-wide (≥240 cols): 3 panels side-by-side
-  - Wide (120-239 cols): 2 panels top, 1 bottom
-  - Narrow (<120 cols): Panels stacked vertically
-- **Tmux Status Indicators**:
-  - 🟢 WORKING - Claude Code actively processing
-  - 🔴 READY - Waiting for user input at prompt
-  - 🟡 ACTIVE - User actively in session
-  - ⚠️ ERROR - Error state detected
-- **Help Mode**: Press `h` to cycle through detailed explanations for each panel
-- **Lookback Picker**: Press `l` to select time window
-  - Presets: Monday 9am, Today, 24h, 7d, 30d, All time
-  - Custom: Set specific date/time with arrow keys
-- **Self-Update**: Status bar shows when updates are available
-  - Press `u` to download and apply update automatically
-- **Per-Model Costs**: Token panel shows breakdown by model
-  - Color-coded: Opus (red), Sonnet (cyan), Haiku (green)
-  - Sorted by cost (highest first)
+Press `l` to change how far back the token panel looks:
+
+- Monday 9am (default — useful for weekly work tracking)
+- Today
+- Last 24h / 7d / 30d / All time
+- Custom date and time (navigate with arrow keys)
+
+### Layout
+
+ccdash automatically adjusts to your terminal width:
+
+- **Narrow** (< 120 cols): panels stacked vertically
+- **Wide** (120–239 cols): two panels on top, one below
+- **Ultra-wide** (≥ 240 cols): three panels side by side
 
 ---
 
-## 🛠️ Development
+## Hook-based session tracking
 
-### Building
+For accurate per-session status (especially the WORKING/ASKING distinction), install Claude Code hooks:
 
 ```bash
-make build
+ccdash --install-hooks
 ```
 
-### Running Tests
+This writes hook scripts that fire on Claude Code lifecycle events, writing session state to `~/.ccdash/sessions/`. The dashboard reads those files alongside the tmux pane inspection — hook data takes precedence when available.
+
+Check whether hooks are installed:
 
 ```bash
-make test
-```
-
-### Installing Dependencies
-
-```bash
-make deps
-```
-
-### Cleaning Build Artifacts
-
-```bash
-make clean
+ccdash --check-hooks
 ```
 
 ---
 
-## 📁 Project Structure
+## Multi-project token tracking
+
+By default, ccdash scans `~/.claude/projects` for all JSONL usage files. To include additional project root directories:
+
+```bash
+# Via flag (comma-separated)
+ccdash --extra-dirs /path/to/projects,/other/path
+
+# Via environment variable (colon-separated)
+CCDASH_EXTRA_DIRS=/path/to/projects:/other/path ccdash
+```
+
+---
+
+## Token cache
+
+Token data is persisted to `~/.ccdash/tokens.db` (SQLite). You can query it directly with `sqlite3` or DuckDB:
+
+```bash
+sqlite3 ~/.ccdash/tokens.db "SELECT model, SUM(total_tokens), SUM(cost) FROM token_events GROUP BY model;"
+```
+
+---
+
+## Project structure
 
 ```
 ccdash/
-├── cmd/ccdash/          # Main application entry point
+├── cmd/ccdash/          # Entry point, CLI flags
 ├── internal/
-│   ├── metrics/         # Metrics collectors (system, tokens, tmux)
-│   └── ui/              # Bubble Tea UI components
-├── Makefile             # Build automation
-└── README.md            # This file
+│   ├── metrics/         # Collectors: system, tokens (JSONL + SQLite), tmux, hooks
+│   └── ui/              # Bubble Tea dashboard model and panels
+└── Makefile
 ```
 
 ---
 
-## 🤝 Contributing
+## Development
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+```bash
+make build    # Build binary to ./bin/ccdash
+make test     # Run tests
+make deps     # Download dependencies
+make clean    # Remove build artifacts
+```
 
 ---
 
-## 📄 License
+## Requirements
 
-MIT License - see LICENSE file for details
+- Go 1.21+
+- `~/.claude/` directory (Claude Code data; created automatically when you use Claude Code)
+- tmux (optional, for session panel)
 
 ---
 
-## 🙏 Acknowledgments
+## License
 
-Built with:
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
-- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
-- [gopsutil](https://github.com/shirou/gopsutil) - System metrics collection
+MIT
