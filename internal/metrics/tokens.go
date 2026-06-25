@@ -77,7 +77,7 @@ func GetMondayNineAM() time.Time {
 
 // buildDefaultProjectsDirs returns the list of root directories to scan.
 // Always includes ~/.claude/projects as the primary directory.
-// Also reads CCDASH_EXTRA_DIRS (colon-separated) for additional roots.
+// Also reads CCDASH_EXTRA_DIRS (colon-separated, supports glob patterns) for additional roots.
 func buildDefaultProjectsDirs(home string) []string {
 	var dirs []string
 	if home != "" {
@@ -90,7 +90,53 @@ func buildDefaultProjectsDirs(home string) []string {
 			}
 		}
 	}
-	return dirs
+	return ExpandGlobPatterns(dirs)
+}
+
+// ExpandGlobPatterns expands glob patterns in the input paths and returns
+// a deduplicated list of existing directories. Handles both literal paths
+// and glob patterns like "/home/*/projects" or "/path/to/project*".
+func ExpandGlobPatterns(paths []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+
+		// Check if path contains glob characters
+		hasGlob := strings.ContainsAny(path, "*?[")
+
+		if hasGlob {
+			// Expand glob pattern
+			matches, err := filepath.Glob(path)
+			if err != nil {
+				// Invalid glob pattern, skip
+				continue
+			}
+
+			// Add all matching directories
+			for _, match := range matches {
+				if stat, err := os.Stat(match); err == nil && stat.IsDir() {
+					if !seen[match] {
+						seen[match] = true
+						result = append(result, match)
+					}
+				}
+			}
+		} else {
+			// Literal path - check if it exists as a directory
+			if stat, err := os.Stat(path); err == nil && stat.IsDir() {
+				if !seen[path] {
+					seen[path] = true
+					result = append(result, path)
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
