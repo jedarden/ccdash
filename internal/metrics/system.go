@@ -71,10 +71,20 @@ type DiskIOMetrics struct {
 	Error            error
 }
 
+// NetInterface holds per-interface network I/O information
+type NetInterface struct {
+	Name            string
+	RecvBytesPerSec float64
+	SentBytesPerSec float64
+	TotalRecvBytes  uint64
+	TotalSentBytes  uint64
+}
+
 // NetIOMetrics holds network I/O rate information
 type NetIOMetrics struct {
 	RecvBytesPerSec float64
 	SentBytesPerSec float64
+	Interfaces      []NetInterface
 	Error           error
 }
 
@@ -83,16 +93,17 @@ type SystemCollector struct {
 	// Previous disk I/O counters for rate calculation
 	prevIOCounters map[string]disk.IOCountersStat
 	prevIOTime     time.Time
-	// Previous network I/O counters for rate calculation
-	prevNetCounters []net.IOCountersStat
+	// Previous network I/O counters for rate calculation (per-interface)
+	prevNetCounters map[string]net.IOCountersStat
 	prevNetTime     time.Time
 }
 
 // NewSystemCollector creates a new SystemCollector instance
 func NewSystemCollector() *SystemCollector {
 	return &SystemCollector{
-		prevIOCounters: make(map[string]disk.IOCountersStat),
-		prevIOTime:     time.Now(),
+		prevIOCounters:  make(map[string]disk.IOCountersStat),
+		prevNetCounters: make(map[string]net.IOCountersStat),
+		prevIOTime:      time.Now(),
 	}
 }
 
@@ -263,8 +274,8 @@ func (sc *SystemCollector) collectDiskIO() DiskIOMetrics {
 func (sc *SystemCollector) collectNetIO() NetIOMetrics {
 	netMetrics := NetIOMetrics{}
 
-	// Get current network I/O counters
-	netCounters, err := net.IOCounters(false) // false = aggregate all interfaces
+	// Get current network I/O counters (per-interface)
+	netCounters, err := net.IOCounters(true) // true = per-interface
 	if err != nil {
 		netMetrics.Error = fmt.Errorf("failed to collect network I/O: %w", err)
 		return netMetrics
@@ -280,19 +291,59 @@ func (sc *SystemCollector) collectNetIO() NetIOMetrics {
 
 	// Calculate rates if we have previous data
 	if len(sc.prevNetCounters) > 0 && duration > 0 {
-		// Use aggregate stats (first element when pernic=false)
-		current := netCounters[0]
-		prev := sc.prevNetCounters[0]
+		var totalRecvBytes, totalSentBytes uint64
+		interfaces := make([]NetInterface, 0, len(netCounters))
 
-		recvBytes := current.BytesRecv - prev.BytesRecv
-		sentBytes := current.BytesSent - prev.BytesSent
+		for _, current := range netCounters {
+			// Skip loopback and down interfaces
+			if current.Name == "lo" || current.BytesRecv == 0 && current.BytesSent == 0 {
+				continue
+			}
 
-		netMetrics.RecvBytesPerSec = float64(recvBytes) / duration
-		netMetrics.SentBytesPerSec = float64(sentBytes) / duration
+			iface := NetInterface{
+				Name:           current.Name,
+				TotalRecvBytes: current.BytesRecv,
+				TotalSentBytes: current.BytesSent,
+			}
+
+			if prev, exists := sc.prevNetCounters[current.Name]; exists {
+				recvBytes := current.BytesRecv - prev.BytesRecv
+				sentBytes := current.BytesSent - prev.BytesSent
+
+				iface.RecvBytesPerSec = float64(recvBytes) / duration
+				iface.SentBytesPerSec = float64(sentBytes) / duration
+
+				totalRecvBytes += recvBytes
+				totalSentBytes += sentBytes
+			}
+
+			interfaces = append(interfaces, iface)
+		}
+
+		netMetrics.Interfaces = interfaces
+		netMetrics.RecvBytesPerSec = float64(totalRecvBytes) / duration
+		netMetrics.SentBytesPerSec = float64(totalSentBytes) / duration
+	} else {
+		// First collection - just store interface totals without rates
+		interfaces := make([]NetInterface, 0, len(netCounters))
+		for _, current := range netCounters {
+			if current.Name == "lo" || current.BytesRecv == 0 && current.BytesSent == 0 {
+				continue
+			}
+			interfaces = append(interfaces, NetInterface{
+				Name:           current.Name,
+				TotalRecvBytes: current.BytesRecv,
+				TotalSentBytes: current.BytesSent,
+			})
+		}
+		netMetrics.Interfaces = interfaces
 	}
 
 	// Store current counters for next collection
-	sc.prevNetCounters = netCounters
+	sc.prevNetCounters = make(map[string]net.IOCountersStat)
+	for _, counter := range netCounters {
+		sc.prevNetCounters[counter.Name] = counter
+	}
 	sc.prevNetTime = now
 
 	return netMetrics
