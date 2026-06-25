@@ -135,7 +135,8 @@ func main() {
 			}
 		}
 		if len(dirs) > 0 {
-			dashboard.AddProjectsDirs(dirs)
+			expandedDirs := metrics.ExpandGlobPatterns(dirs)
+			dashboard.AddProjectsDirs(expandedDirs)
 		}
 	}
 
