@@ -30,7 +30,7 @@ Complete CI/CD setup for ccdash including Forgejo repository creation, webhook c
 
 4. **Forgejo Repository** (https://git.ardenone.com/jedarden/ccdash)
    - **Status**: ✅ Created and code pushed
-   - **Webhook**: ✅ Configured pointing to http://traefik-iad-ci.tail1b1987.ts.net:12000/ccdash
+   - **Webhook**: ✅ Configured pointing to https://webhooks-ci.ardenone.com/ccdash
    - **Git Remote**: ✅ Updated (Forgejo as origin, GitHub as backup)
 
 ### Pipeline Flow
@@ -53,7 +53,7 @@ Tag push (git tag v1.0.0 && git push origin v1.0.0)
 
 2. **Forgejo Webhook Configuration**
    - Created webhook on Forgejo repo
-   - URL: http://traefik-iad-ci.tail1b1987.ts.net:12000/ccdash
+   - URL: https://webhooks-ci.ardenone.com/ccdash (updated 2026-06-25)
    - Events: push
    - Content type: json
 
