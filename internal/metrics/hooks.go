@@ -35,7 +35,7 @@ type HookSession struct {
 	LastActivity    time.Time `json:"last_activity"`
 	LastStop        time.Time `json:"last_stop,omitempty"`
 	PID             int       `json:"pid,omitempty"`
-	Status          string    `json:"status"` // "active", "stopped", "working"
+	Status          string    `json:"status"` // "active", "stopped", "working", "waiting"
 }
 
 // HookSessionCollector reads session data from hook-generated files
@@ -279,8 +279,11 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 	switch hs.Status {
 	case "working":
 		status = StatusWorking
-	case "stopped", "ready", "stale":
-		// Stale sessions (idle > 5min) are just waiting for input, not errors
+	case "stopped", "ready", "stale", "waiting":
+		// Stale sessions (idle > 5min) are just waiting for input, not errors.
+		// "waiting" covers mid-turn human-input-needed states (permission prompt,
+		// AskUserQuestion, ExitPlanMode, idle notification) — READY already means
+		// "ready for human input", so these fold into the same status.
 		status = StatusReady
 	}
 
@@ -462,6 +465,90 @@ fi
 exit 0
 `,
 
+	"post-tool-use.sh": `#!/bin/bash
+# Claude Code PostToolUse hook - marks session as working again
+# Fires after any tool finishes, including ones that were gated on a
+# permission prompt, AskUserQuestion, or ExitPlanMode approval — this is
+# the earliest signal we get that Claude has resumed after human input.
+set -e
+
+CCDASH_DIR="$HOME/.ccdash"
+SESSIONS_DIR="$CCDASH_DIR/sessions"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+
+if [ -f "$SESSION_FILE" ]; then
+    TMP_FILE=$(mktemp)
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.last_activity = $now | .status = "working"' \
+       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
+fi
+
+exit 0
+`,
+
+	"notification.sh": `#!/bin/bash
+# Claude Code Notification hook - marks session as waiting for human input
+# Fires when Claude needs permission or has been idle 60s awaiting a reply.
+set -e
+
+CCDASH_DIR="$HOME/.ccdash"
+SESSIONS_DIR="$CCDASH_DIR/sessions"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+
+if [ -f "$SESSION_FILE" ]; then
+    TMP_FILE=$(mktemp)
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.last_activity = $now | .status = "waiting"' \
+       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
+fi
+
+exit 0
+`,
+
+	"permission-request.sh": `#!/bin/bash
+# Claude Code PermissionRequest hook - marks session as waiting for human input
+# Fires when the user is shown a permission dialog (tool approval, plan
+# approval via ExitPlanMode, AskUserQuestion, etc.).
+set -e
+
+CCDASH_DIR="$HOME/.ccdash"
+SESSIONS_DIR="$CCDASH_DIR/sessions"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+
+if [ -f "$SESSION_FILE" ]; then
+    TMP_FILE=$(mktemp)
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.last_activity = $now | .status = "waiting"' \
+       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
+fi
+
+exit 0
+`,
+
 	"prompt-submit.sh": `#!/bin/bash
 # Claude Code UserPromptSubmit hook - marks session as working
 set -e
@@ -511,10 +598,14 @@ exit 0
 
 // ClaudeHooksConfig represents the hooks section of Claude settings
 type ClaudeHooksConfig struct {
-	SessionStart     []HookEntry `json:"SessionStart,omitempty"`
-	SessionEnd       []HookEntry `json:"SessionEnd,omitempty"`
-	Stop             []HookEntry `json:"Stop,omitempty"`
-	UserPromptSubmit []HookEntry `json:"UserPromptSubmit,omitempty"`
+	SessionStart      []HookEntry `json:"SessionStart,omitempty"`
+	SessionEnd        []HookEntry `json:"SessionEnd,omitempty"`
+	Stop              []HookEntry `json:"Stop,omitempty"`
+	UserPromptSubmit  []HookEntry `json:"UserPromptSubmit,omitempty"`
+	PreToolUse        []HookEntry `json:"PreToolUse,omitempty"`
+	PostToolUse       []HookEntry `json:"PostToolUse,omitempty"`
+	Notification      []HookEntry `json:"Notification,omitempty"`
+	PermissionRequest []HookEntry `json:"PermissionRequest,omitempty"`
 }
 
 // HookEntry represents a single hook configuration
@@ -655,6 +746,36 @@ func (h *HookSessionCollector) updateSingleSettingsFile(settingsPath, hooksDir s
 					{
 						"type":    "command",
 						"command": filepath.Join(hooksDir, "stop.sh"),
+					},
+				},
+			},
+		},
+		"PostToolUse": {
+			{
+				"hooks": []map[string]interface{}{
+					{
+						"type":    "command",
+						"command": filepath.Join(hooksDir, "post-tool-use.sh"),
+					},
+				},
+			},
+		},
+		"Notification": {
+			{
+				"hooks": []map[string]interface{}{
+					{
+						"type":    "command",
+						"command": filepath.Join(hooksDir, "notification.sh"),
+					},
+				},
+			},
+		},
+		"PermissionRequest": {
+			{
+				"hooks": []map[string]interface{}{
+					{
+						"type":    "command",
+						"command": filepath.Join(hooksDir, "permission-request.sh"),
 					},
 				},
 			},

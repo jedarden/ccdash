@@ -5,6 +5,14 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-07-15
+
+### Fixed
+- **Sessions blocked on human input showed `WORKING` instead of `READY`**: Claude Code fires `Notification` (needs permission, or idle 60s awaiting a reply) and `PermissionRequest` (a permission dialog is shown — covers tool approval, `AskUserQuestion`, and `ExitPlanMode` plan approval) hooks whenever it needs a human, but ccdash never installed hooks for either event, so sessions stuck mid-turn on a question or approval kept reporting whatever status `UserPromptSubmit` last set (`working`). `--install-hooks` already claimed to install these (`cmd/ccdash/main.go` help text advertised "Marks session as asking"), but no such hook scripts existed.
+  - Added `~/.ccdash/hooks/notification.sh` and `~/.ccdash/hooks/permission-request.sh`, wired to the `Notification` and `PermissionRequest` events, which set session status to a new `"waiting"` value.
+  - `HookSession.ToTmuxSession()` maps `"waiting"` onto the existing `StatusReady` — `READY` already means "waiting for human input" in ccdash's model, so this reuses it rather than adding a new status/color.
+  - Added `~/.ccdash/hooks/post-tool-use.sh`, wired to `PostToolUse`, which sets status back to `"working"` once a gated tool actually finishes (the earliest available signal that Claude resumed after approval/an answer).
+
 ## [1.0.1] - 2026-05-22
 
 ### Changed
