@@ -397,11 +397,8 @@ func (d *Dashboard) updateLayout() {
 	if d.width < 120 {
 		// Compact stacked layout: tmux top, tokens middle, system bottom
 		d.layoutMode = LayoutCompact
-	} else if d.width < 180 {
-		// Wide layout: 4 panels in 2x2 grid
-		d.layoutMode = LayoutWide
 	} else {
-		// Ultra-wide layout: 4 panels side-by-side
+		// Always use 3-column layout for wide terminals
 		d.layoutMode = LayoutUltraWide
 	}
 }
@@ -636,28 +633,37 @@ func (d *Dashboard) getTmuxColumnCount(panelHeight int) int {
 	return cols
 }
 
-// renderUltraWide renders 4 panels side-by-side
-// System, Network, Token, and TMUX panels
+// renderUltraWide renders 3 panels side-by-side
+// Balances space between Token and TMUX panels based on content needs
 func (d *Dashboard) renderUltraWide() string {
-	// Account for panel padding (0,1) which adds 2 chars per panel = 8 total
-	totalPanelWidth := d.width - 8
+	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
+	totalPanelWidth := d.width - 6
 	panelHeight := d.height - 3 // -2 borders, -1 status line
 
-	// Fixed widths for system and network panels
-	systemWidth := 55
-	networkWidth := 50
+	// Step 1: System panel gets fixed width for CPU bars
+	systemWidth := 60
+	if totalPanelWidth < 180 {
+		systemWidth = 55
+	}
 
-	// Available space for token and tmux panels
-	availableWidth := totalPanelWidth - systemWidth - networkWidth
-
-	// Calculate minimum and ideal widths for token and tmux panels
+	// Step 2: Calculate minimum and ideal widths for both panels
 	minTokenWidth := 46
 	minTmuxWidth := d.calculateTmuxPanelWidth(panelHeight)
 
+	// Ideal token width: side-by-side layout with comfortable model display
+	// Left column (22) + separator (2) + right column for models
+	// Right column needs: model name (up to 15) + cost (8) + tokens (12) = ~35
+	// Total ideal: 22 + 2 + 35 + 4 (borders) = 60
 	idealTokenWidth := 60
+
+	// Ideal tmux width: minimum cell width + some padding for session names
+	// Use 35 chars per cell (28 min + 7 for longer names)
 	idealCellWidth := 35
 	tmuxCols := d.getTmuxColumnCount(panelHeight)
 	idealTmuxWidth := tmuxCols*idealCellWidth + (tmuxCols - 1) + 4
+
+	// Available space after system panel
+	availableWidth := totalPanelWidth - systemWidth
 
 	// Start with minimums
 	tokenWidth := minTokenWidth
@@ -724,7 +730,6 @@ func (d *Dashboard) renderUltraWide() string {
 	}
 
 	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
-	networkPanel := d.renderNetworkPanel(networkWidth, panelHeight)
 	tokenPanel := d.renderTokenPanel(tokenWidth, panelHeight)
 	tmuxPanel := d.renderTmuxPanel(tmuxWidth, panelHeight)
 
@@ -732,95 +737,79 @@ func (d *Dashboard) renderUltraWide() string {
 	// This ensures borders align even if content varies
 	uniformHeight := lipgloss.NewStyle().Height(panelHeight)
 	systemPanel = uniformHeight.Render(systemPanel)
-	networkPanel = uniformHeight.Render(networkPanel)
 	tokenPanel = uniformHeight.Render(tokenPanel)
 	tmuxPanel = uniformHeight.Render(tmuxPanel)
 
 	// Join horizontally with top alignment
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		systemPanel,
-		networkPanel,
 		tokenPanel,
 		tmuxPanel,
 	)
 }
 
-// renderWide renders 4 panels in a 2x2 grid
-// Top row: System and Network panels
-// Bottom row: Token and TMUX panels
+// renderWide renders 2 panels on top, 1 on bottom
 func (d *Dashboard) renderWide() string {
 	panelWidth := (d.width - 3) / 2 // 2 panels with spacing
 	topHeight := (d.height - 4) / 2 // Split height
 	bottomHeight := d.height - topHeight - 4
 
 	systemPanel := d.renderSystemPanel(panelWidth, topHeight)
-	networkPanel := d.renderNetworkPanel(panelWidth, topHeight)
-	tokenPanel := d.renderTokenPanel(panelWidth, bottomHeight)
-	tmuxPanel := d.renderTmuxPanel(panelWidth, bottomHeight)
+	tokenPanel := d.renderTokenPanel(panelWidth, topHeight)
+	tmuxPanel := d.renderTmuxPanel(d.width-2, bottomHeight)
 
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, " ", networkPanel)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, tokenPanel, " ", tmuxPanel)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, " ", tokenPanel)
 
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, bottomRow)
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, tmuxPanel)
 }
 
 // renderNarrow renders panels stacked vertically
 func (d *Dashboard) renderNarrow() string {
 	panelWidth := d.width - 2
-	panelHeight := (d.height - 7) / 4 // 4 panels stacked
+	panelHeight := (d.height - 5) / 3 // 3 panels stacked
 
 	systemPanel := d.renderSystemPanel(panelWidth, panelHeight)
-	networkPanel := d.renderNetworkPanel(panelWidth, panelHeight)
 	tokenPanel := d.renderTokenPanel(panelWidth, panelHeight)
 	tmuxPanel := d.renderTmuxPanel(panelWidth, panelHeight)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		systemPanel,
-		networkPanel,
 		tokenPanel,
 		tmuxPanel,
 	)
 }
 
 // renderCompact renders panels stacked vertically for narrow terminals (e.g. 75x68):
-// tmux sessions on top, token usage, network I/O, then system resources on the bottom.
+// tmux sessions on top, token usage in the middle, system resources on the bottom.
 // Height is distributed with tmux getting extra rows since session lists are tall.
 func (d *Dashboard) renderCompact() string {
 	panelWidth := d.width - 2
-	available := d.height - 10 // 4×2 border rows + 1 status line + 1 repo/updater line
+	available := d.height - 8 // 3×2 border rows + 1 status line + 1 repo/updater line
 
 	// Give tmux a bit more room — sessions need more lines than the other panels
-	tmuxHeight := available / 3
+	tmuxHeight := available / 2
 	remaining := available - tmuxHeight
-
-	// Split remaining space between token, network, and system
-	tokenHeight := remaining / 3
-	networkHeight := tokenHeight
-	systemHeight := remaining - tokenHeight - networkHeight
+	tokenHeight := remaining / 2
+	systemHeight := remaining - tokenHeight
 
 	// Enforce a sensible minimum so panels don't collapse
-	if tmuxHeight < 6 {
-		tmuxHeight = 6
+	if tmuxHeight < 8 {
+		tmuxHeight = 8
 	}
-	if tokenHeight < 6 {
-		tokenHeight = 6
+	if tokenHeight < 8 {
+		tokenHeight = 8
 	}
-	if networkHeight < 6 {
-		networkHeight = 6
-	}
-	if systemHeight < 6 {
-		systemHeight = 6
+	if systemHeight < 8 {
+		systemHeight = 8
 	}
 
 	tmuxPanel := d.renderTmuxPanel(panelWidth, tmuxHeight)
 	tokenPanel := d.renderTokenPanel(panelWidth, tokenHeight)
-	networkPanel := d.renderNetworkPanel(panelWidth, networkHeight)
 	systemPanel := d.renderSystemPanel(panelWidth, systemHeight)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		tmuxPanel,
 		tokenPanel,
-		networkPanel,
 		systemPanel,
 	)
 }
@@ -1009,88 +998,6 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 			metrics.FormatRate(d.systemMetrics.NetIO.SentBytesPerSec)))
 	} else {
 		lines = append(lines, errorStyle.Render("Net I/O  | N/A"))
-	}
-
-	content := strings.Join(lines, "\n")
-	return style.Width(width).Height(height).Render(content)
-}
-
-// renderNetworkPanel renders network I/O metrics with per-interface breakdown
-func (d *Dashboard) renderNetworkPanel(width, height int) string {
-	style := panelStyle
-
-	var lines []string
-
-	// Title
-	lines = append(lines, successStyle.Render("📡 Network I/O"))
-
-	contentWidth := width - 4 // Account for borders and padding
-
-	// Show aggregate rates if available
-	if d.systemMetrics.NetIO.Error == nil {
-		// Calculate width for rate bars - leave room for labels and values
-		// Format: "Recv [||||...] XX.XX KB/s"
-		maxRateWidth := 12 // "XXX.XX KB/s"
-		rateBarWidth := contentWidth - 6 - maxRateWidth // "Recv " + bar + " rate"
-		if rateBarWidth < 8 {
-			rateBarWidth = 8
-		}
-
-		// Normalize rates for bar display (cap at 10 MB/s for full bar)
-		const maxDisplayRate = 10 * 1024 * 1024 // 10 MB/s
-		recvPercent := (d.systemMetrics.NetIO.RecvBytesPerSec / maxDisplayRate) * 100
-		sentPercent := (d.systemMetrics.NetIO.SentBytesPerSec / maxDisplayRate) * 100
-		if recvPercent > 100 {
-			recvPercent = 100
-		}
-		if sentPercent > 100 {
-			sentPercent = 100
-		}
-
-		recvRate := metrics.FormatRate(d.systemMetrics.NetIO.RecvBytesPerSec)
-		sentRate := metrics.FormatRate(d.systemMetrics.NetIO.SentBytesPerSec)
-
-		lines = append(lines, fmt.Sprintf("Recv %s %s",
-			d.renderBar(recvPercent, rateBarWidth), recvRate))
-		lines = append(lines, fmt.Sprintf("Sent %s %s",
-			d.renderBar(sentPercent, rateBarWidth), sentRate))
-	} else {
-		lines = append(lines, errorStyle.Render("Aggregate: N/A"))
-	}
-
-	// Separator
-	lines = append(lines, "")
-
-	// Per-interface breakdown
-	if d.systemMetrics.NetIO.Error == nil && len(d.systemMetrics.NetIO.Interfaces) > 0 {
-		// Calculate column widths for alignment
-		// Format: "eth0: ↓ XX.XX KB/s  ↑ YY.YY KB/s  | Total: ↓ ZZ.ZZ GB  ↑ WW.WW GB"
-		const ifaceNameWidth = 8 // Max interface name width
-		const rateWidth = 10    // "XX.XX KB/s"
-		const totalWidth = 10   // "ZZ.ZZ GB"
-
-		lines = append(lines, dimStyle.Render("Interface              Rate                Total"))
-		lines = append(lines, dimStyle.Render("─────────────────────────────────────────────────────────"))
-
-		for _, iface := range d.systemMetrics.NetIO.Interfaces {
-			recvRate := metrics.FormatRate(iface.RecvBytesPerSec)
-			sentRate := metrics.FormatRate(iface.SentBytesPerSec)
-			totalRecv := metrics.FormatBytes(iface.TotalRecvBytes)
-			totalSent := metrics.FormatBytes(iface.TotalSentBytes)
-
-			// Format: "ifaceName: ↓ rate  ↑ rate  | ↓ total  ↑ total"
-			// Using unicode arrows for direction indicators
-			lines = append(lines, fmt.Sprintf("%-*s ↓ %-*s ↑ %-*s  | ↓ %-*s ↑ %s",
-				ifaceNameWidth, iface.Name,
-				rateWidth, recvRate,
-				rateWidth, sentRate,
-				totalWidth, totalRecv,
-				totalSent))
-		}
-	} else if d.systemMetrics.NetIO.Error == nil {
-		lines = append(lines, dimStyle.Render("No active interfaces"))
-	} else {
-		lines = append(lines, errorStyle.Render("Interfaces: N/A"))
 	}
 
 	content := strings.Join(lines, "\n")

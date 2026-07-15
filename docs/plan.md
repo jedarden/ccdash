@@ -122,11 +122,18 @@ Migrate from GitHub Actions to Argo Workflows:
 
 Potential future features:
 - Multi-directory JSONL support (bf-109)
-- Network I/O panel with bytes sent/received (bf-29e)
 - Additional Claude Code integrations
 - Plugin system for custom metrics
 
 ## Key Design Decisions
+
+### Fixed Three-Panel Layout (locked)
+
+**Decision:** ccdash shows exactly three panels — System Resources, Token Usage, Sessions — in every layout mode (ultra-wide, wide, narrow, compact). Network I/O is a summary line inside System Resources, not its own panel.
+
+**Rationale:**
+- This is the intended design, not an oversight. A standalone Network I/O panel was implemented and merged 2026-06-25 (bead bf-d0c, an autonomous P3 pickup from this file's own "Future Enhancements" list) and reverted 2026-07-15 at the user's explicit request — it duplicated the existing Net I/O summary line and was never a real requirement.
+- **Do not re-add a fourth panel, and do not resurrect the removed `renderNetworkPanel` / per-panel network breakdown, without explicit user sign-off.** If a future bead proposes a new dedicated panel of any kind, treat the three-panel layout as a constraint to raise with the user, not a backlog item to implement autonomously.
 
 ### SQLite for Token Caching (v0.6.0)
 
