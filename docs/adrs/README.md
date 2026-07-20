@@ -25,6 +25,7 @@ Each ADR follows this structure:
 | [0003](./0003-use-single-line-format-for-199x14-display.md) | Use Single-Line Format for 199x14 Display | 2026-02-07 | Accepted |
 | [0004](./0004-use-section-based-grouping-over-alternatives.md) | Use Section-Based Grouping Over Alternatives | 2026-02-07 | Accepted |
 | [0005](./0005-support-concurrent-multi-user-access.md) | Support Concurrent Multi-User Access | 2026-02-07 | Accepted |
+| [0006](./0006-push-notifications-for-sessions-needing-human-input.md) | Push Notifications for Sessions Needing Human Input | 2026-07-20 | Proposed |
 
 ## ADR Summary
 
