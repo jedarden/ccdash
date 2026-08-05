@@ -97,12 +97,17 @@ type TmuxCollector struct {
 	sessionContentCache map[string]string
 	// hookCollector handles hook-based session tracking
 	hookCollector *HookSessionCollector
+	// needleCollector surfaces NEEDLE workers, which have neither a tmux
+	// session nor a hook record (see needle.go)
+	needleCollector *NeedleCollector
 }
 
 // NewTmuxCollector creates a new TmuxCollector instance
 func NewTmuxCollector() *TmuxCollector {
 	hookCollector, _ := NewHookSessionCollector()
+	needleCollector, _ := NewNeedleCollector()
 	return &TmuxCollector{
+		needleCollector:     needleCollector,
 		sessionActivityMap:  make(map[string]time.Time),
 		sessionContentCache: make(map[string]string),
 		hookCollector:       hookCollector,
@@ -160,6 +165,33 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		tmuxSessionMap[session.Name] = session
 	}
 
+	// Collect NEEDLE-supervised workers. Deliberately not gated on tmux: a
+	// systemd-supervised worker (NEEDLE_INNER=1) never has a tmux session, and
+	// its `claude --print` dispatch never fires SessionStart, so the registry is
+	// the only place it appears.
+	//
+	// Workers that DO run under tmux are skipped here, because tmux already
+	// represents them and carries richer status. They cannot be deduplicated by
+	// name later: needle names the tmux session after the full worker id
+	// ("needle-claude-print-opus-alpha") while the registry display name strips
+	// the agent prefix ("alpha"), so the two never collide.
+	needleSessions := make([]TmuxSession, 0)
+	if tc.needleCollector.IsAvailable() {
+		if workers, err := tc.needleCollector.CollectWorkers(); err == nil && len(workers) > 0 {
+			want := make(map[int]bool, len(workers))
+			for i := range workers {
+				want[workers[i].PID] = true
+			}
+			busy := claudeOwners(want)
+			for i := range workers {
+				if hasTmuxSessionFor(workers[i].ID, tmuxSessions) {
+					continue
+				}
+				needleSessions = append(needleSessions, workers[i].ToTmuxSession(busy[workers[i].PID]))
+			}
+		}
+	}
+
 	// Merge sessions: prefer hook data when available (more accurate status),
 	// but include all tmux sessions to catch those started before hooks were installed
 	seenNames := make(map[string]bool)
@@ -208,10 +240,25 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		}
 	}
 
+	// Then, add NEEDLE workers not already represented. Unlike hook sessions
+	// these are never filtered against tmux — absence of a tmux session is the
+	// normal state for a systemd-supervised worker, not evidence it is a phantom.
+	for _, session := range needleSessions {
+		if !seenNames[session.Name] {
+			metrics.Sessions = append(metrics.Sessions, session)
+			seenNames[session.Name] = true
+		}
+	}
+
 	// Determine source label
 	hasHooks := len(hookSessionMap) > 0
 	hasTmux := len(tmuxSessions) > 0
+	hasNeedle := len(needleSessions) > 0
 	switch {
+	case hasNeedle && (hasHooks || hasTmux):
+		metrics.Source = "hybrid"
+	case hasNeedle:
+		metrics.Source = "needle"
 	case hasHooks && hasTmux:
 		metrics.Source = "hybrid"
 	case hasHooks:
@@ -225,7 +272,7 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		return metrics.Sessions[i].Name < metrics.Sessions[j].Name
 	})
 
-	metrics.Available = hasTmux || hasHooks
+	metrics.Available = hasTmux || hasHooks || hasNeedle
 	metrics.Total = len(metrics.Sessions)
 	metrics.RunningProcesses = tc.countRunningClaudeProcesses()
 
