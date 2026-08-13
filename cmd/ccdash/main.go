@@ -23,8 +23,10 @@ func main() {
 	var (
 		showVersion  = flag.Bool("version", false, "Show version information")
 		showHelp     = flag.Bool("help", false, "Show help information")
-		installHooks = flag.Bool("install-hooks", false, "Install Claude Code hooks for session tracking")
-		checkHooks   = flag.Bool("check-hooks", false, "Check if Claude Code hooks are installed")
+		installHooks      = flag.Bool("install-hooks", false, "Install Claude Code hooks for session tracking")
+		installCodexHooks = flag.Bool("install-codex-hooks", false, "Install Codex hooks for session tracking")
+		checkHooks        = flag.Bool("check-hooks", false, "Check Claude Code and Codex hook installation")
+		uninstallHooks    = flag.Bool("uninstall-hooks", false, "Uninstall ccdash hooks from Claude Code and Codex")
 		extraDirs    = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
 	)
 
@@ -33,7 +35,7 @@ func main() {
 	// Handle --version
 	if *showVersion {
 		fmt.Printf("ccdash version %s\n", version)
-		fmt.Println("Claude Code Dashboard - A terminal UI for monitoring system resources, token usage, and tmux sessions")
+		fmt.Println("Claude Code + Codex Dashboard - A terminal UI for monitoring system resources, token usage, and tmux sessions")
 		os.Exit(0)
 	}
 
@@ -76,6 +78,22 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --install-codex-hooks
+	if *installCodexHooks {
+		installer := metrics.NewCodexHookInstaller()
+		fmt.Println("Installing Codex hooks for session tracking...")
+		if err := installer.InstallHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error installing Codex hooks: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ Codex hooks installed successfully!")
+		fmt.Println("  Hook configuration: ~/.codex/hooks.json")
+		fmt.Println("  Session data: ~/.ccdash/sessions/")
+		fmt.Println()
+		fmt.Println("Restart any running Codex sessions for hooks to take effect.")
+		os.Exit(0)
+	}
+
 	// Handle --check-hooks
 	if *checkHooks {
 		collector, err := metrics.NewHookSessionCollector()
@@ -84,10 +102,19 @@ func main() {
 			os.Exit(1)
 		}
 
-		if collector.AreHooksInstalled() {
+		codexInstaller := metrics.NewCodexHookInstaller()
+		claudeInstalled := collector.AreHooksInstalled()
+		codexInstalled := codexInstaller.AreHooksInstalled()
+		if claudeInstalled || codexInstalled {
+			if claudeInstalled {
 			fmt.Println("✓ Claude Code hooks are installed")
 			fmt.Printf("  Hook scripts: %s/hooks/\n", collector.GetBaseDir())
 			fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
+			}
+			if codexInstalled {
+				fmt.Println("✓ Codex hooks are installed")
+				fmt.Println("  Hook configuration: ~/.codex/hooks.json")
+			}
 
 			// Check for active sessions
 			sessions, err := collector.CollectSessions()
@@ -95,11 +122,30 @@ func main() {
 				fmt.Printf("  Active sessions: %d\n", len(sessions))
 			}
 		} else {
-			fmt.Println("✗ Claude Code hooks are NOT installed")
+			fmt.Println("✗ Claude Code and Codex hooks are NOT installed")
 			fmt.Println()
-			fmt.Println("Run 'ccdash --install-hooks' to install them.")
+			fmt.Println("Run 'ccdash --install-hooks' or 'ccdash --install-codex-hooks' to install them.")
 			os.Exit(1)
 		}
+		os.Exit(0)
+	}
+
+	// Handle --uninstall-hooks
+	if *uninstallHooks {
+		collector, err := metrics.NewHookSessionCollector()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := collector.UninstallHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error uninstalling Claude Code hooks: %v\n", err)
+			os.Exit(1)
+		}
+		if err := metrics.NewCodexHookInstaller().UninstallHooks(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error uninstalling Codex hooks: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ ccdash hooks uninstalled from Claude Code and Codex")
 		os.Exit(0)
 	}
 
@@ -194,7 +240,7 @@ func setupHooks() *metrics.HookSessionCollector {
 }
 
 func printHelp() {
-	fmt.Println("ccdash - Claude Code Dashboard")
+	fmt.Println("ccdash - Claude Code + Codex Dashboard")
 	fmt.Println()
 	fmt.Printf("Version: %s\n", version)
 	fmt.Println()
@@ -204,8 +250,10 @@ func printHelp() {
 	fmt.Println("OPTIONS:")
 	fmt.Println("  --version             Show version information")
 	fmt.Println("  --help                Show this help message")
-	fmt.Println("  --install-hooks       Install Claude Code hooks for session tracking")
-	fmt.Println("  --check-hooks         Check if Claude Code hooks are installed")
+		fmt.Println("  --install-hooks       Install Claude Code hooks for session tracking")
+		fmt.Println("  --install-codex-hooks Install Codex hooks for session tracking")
+		fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
+		fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")
 	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
@@ -222,10 +270,10 @@ func printHelp() {
 	fmt.Println("PANELS:")
 	fmt.Println("  System Resources  - CPU, memory, swap, disk I/O, and load averages")
 	fmt.Println("  Token Usage       - Claude Code token consumption and costs")
-	fmt.Println("  Sessions          - Active Claude Code sessions with status indicators")
+	fmt.Println("  Sessions          - Active Claude Code and Codex sessions with status indicators")
 	fmt.Println()
 	fmt.Println("SESSION TRACKING:")
-	fmt.Println("  ccdash supports two methods for tracking Claude Code sessions:")
+	fmt.Println("  ccdash supports tmux fallback and status-only hooks for Claude Code and Codex:")
 	fmt.Println()
 	fmt.Println("  1. Hooks (recommended) - Real-time tracking via Claude Code hooks")
 	fmt.Println("     Run 'ccdash --install-hooks' to enable")
@@ -250,7 +298,7 @@ func printHelp() {
 	fmt.Println("REQUIREMENTS:")
 	fmt.Println("  - Terminal size: minimum 80x24 characters")
 	fmt.Println("  - True color support recommended")
-	fmt.Println("  - Claude Code with ~/.claude/projects (for token usage)")
+	fmt.Println("  - Claude Code with ~/.claude/projects or Codex with ~/.codex/sessions (for token usage)")
 	fmt.Println("  - jq (for hooks, usually pre-installed)")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
