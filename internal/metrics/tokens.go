@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 // ModelUsage tracks token usage and cost for a specific model
 type ModelUsage struct {
 	Model               string  `json:"model"`
+	Source              string  `json:"source,omitempty"`
 	InputTokens         int64   `json:"input_tokens"`
 	OutputTokens        int64   `json:"output_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
@@ -44,9 +44,12 @@ type TokenMetrics struct {
 	LastUpdate          time.Time     `json:"last_update"`
 }
 
-// TokenCollector collects and aggregates token usage from Claude Code sessions
+// TokenCollector collects and aggregates token usage from all configured
+// harness sources.
 type TokenCollector struct {
-	projectsDirs  []string  // Root directories to scan for JSONL files
+	sources       []Source // Harness-specific transcript readers
+	sourceDirs    map[string][]string
+	projectsDirs  []string  // Claude roots retained for extra-dir compatibility
 	lookbackFrom  time.Time // Only include data from this time onwards
 	cache         *TokenCache
 	stopIngestion chan struct{} // Closed to stop the background ingestion goroutine
@@ -142,8 +145,13 @@ func ExpandGlobPatterns(paths []string) []string {
 // NewTokenCollector creates a new TokenCollector with default Monday 9am lookback
 func NewTokenCollector() *TokenCollector {
 	home, _ := os.UserHomeDir()
+	claude := NewClaudeSource()
+	codex := NewCodexSource()
+	claudeDirs := sourceDirs(claude, home)
 	tc := &TokenCollector{
-		projectsDirs: buildDefaultProjectsDirs(home),
+		sources:      []Source{claude, codex},
+		sourceDirs:   map[string][]string{"claude": claudeDirs, "codex": sourceDirs(codex, home)},
+		projectsDirs: claudeDirs,
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
 	}
@@ -154,8 +162,13 @@ func NewTokenCollector() *TokenCollector {
 // NewTokenCollectorWithLookback creates a TokenCollector with a custom lookback time
 func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 	home, _ := os.UserHomeDir()
+	claude := NewClaudeSource()
+	codex := NewCodexSource()
+	claudeDirs := sourceDirs(claude, home)
 	tc := &TokenCollector{
-		projectsDirs: buildDefaultProjectsDirs(home),
+		sources:      []Source{claude, codex},
+		sourceDirs:   map[string][]string{"claude": claudeDirs, "codex": sourceDirs(codex, home)},
+		projectsDirs: claudeDirs,
 		lookbackFrom: lookbackFrom,
 		cache:        NewTokenCache(),
 	}
@@ -165,7 +178,11 @@ func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 
 // NewTokenCollectorWithPath creates a TokenCollector with a custom path (for testing)
 func NewTokenCollectorWithPath(path string) *TokenCollector {
+	claude := NewClaudeSource()
+	codex := NewCodexSource()
 	tc := &TokenCollector{
+		sources:      []Source{claude, codex},
+		sourceDirs:   map[string][]string{"claude": []string{path}, "codex": nil},
 		projectsDirs: []string{path},
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
@@ -208,51 +225,57 @@ func (tc *TokenCollector) StopBackgroundIngestion() {
 // Called by the background goroutine; uses ingestMu so it never blocks fast
 // cache/lease operations.
 func (tc *TokenCollector) runIngestionCycle() {
-	if len(tc.projectsDirs) == 0 {
+	if len(tc.sources) == 0 {
 		return
 	}
-	projectDirs, err := tc.findAllProjectDirs()
-	if err != nil || len(projectDirs) == 0 {
-		return
-	}
-
-	var files []string
-	for _, projectDir := range projectDirs {
-		dirFiles, err := findJSONLFilesRecursive(projectDir)
-		if err != nil {
-			continue
-		}
-		files = append(files, dirFiles...)
-	}
-
 	completeThreshold := GetFileCompleteThreshold()
-	for _, file := range files {
-		fileInfo, err := os.Stat(file)
-		if err != nil {
-			continue
-		}
-
-		if agg, ok := tc.cache.GetFileAggregate(file); ok && agg.IsComplete {
-			if !fileInfo.ModTime().After(agg.CompletedAt) {
+	for _, source := range tc.sources {
+		for _, root := range tc.sourceDirs[source.Name()] {
+			files, err := findJSONLFilesRecursive(root)
+			if err != nil {
 				continue
 			}
-			tc.cache.MarkFileActive(file)
-		}
+			for _, file := range files {
+				fileInfo, err := os.Stat(file)
+				if err != nil {
+					continue
+				}
 
-		if time.Since(fileInfo.ModTime()) > completeThreshold {
-			if err := tc.ingestJSONLFile(file); err == nil {
-				tc.cache.MarkFileComplete(file)
+				if agg, ok := tc.cache.GetFileAggregate(file); ok && agg.IsComplete {
+					if !fileInfo.ModTime().After(agg.CompletedAt) {
+						continue
+					}
+					tc.cache.MarkFileActive(file)
+				}
+
+				if time.Since(fileInfo.ModTime()) > completeThreshold {
+					if err := tc.ingestJSONLFileForSource(file, source); err == nil {
+						tc.cache.MarkFileComplete(file)
+					}
+					continue
+				}
+				tc.ingestJSONLFileForSource(file, source)
 			}
-			continue
 		}
-
-		tc.ingestJSONLFile(file)
 	}
 }
 
 // AddProjectsDir adds an additional root directory to scan for JSONL files.
 func (tc *TokenCollector) AddProjectsDir(path string) {
 	tc.projectsDirs = append(tc.projectsDirs, path)
+	if tc.sourceDirs == nil {
+		tc.sourceDirs = make(map[string][]string)
+	}
+	tc.sourceDirs["claude"] = append(tc.sourceDirs["claude"], path)
+}
+
+func (tc *TokenCollector) sourceByName(name string) Source {
+	for _, source := range tc.sources {
+		if source.Name() == name {
+			return source
+		}
+	}
+	return nil
 }
 
 // SetLookback sets the lookback time filter
@@ -309,8 +332,8 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		Models:       []string{},
 	}
 
-	if len(tc.projectsDirs) == 0 {
-		metrics.Error = "No projects directories configured"
+	if !tc.hasConfiguredSourceDirs() {
+		metrics.Error = "No transcript directories configured"
 		return metrics, nil
 	}
 
@@ -343,7 +366,7 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	for model, mm := range aggregated.ModelMetrics {
 		metrics.Models = append(metrics.Models, model)
 
-		pricing := getPricingForModel(model)
+		pricing := tc.pricingForModel(mm.Source, model)
 		inputCost := float64(mm.InputTokens) * pricing.InputPerMillion / 1_000_000
 		outputCost := float64(mm.OutputTokens) * pricing.OutputPerMillion / 1_000_000
 		cacheReadCost := float64(mm.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
@@ -352,6 +375,7 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 
 		usage := ModelUsage{
 			Model:               model,
+			Source:              mm.Source,
 			InputTokens:         mm.InputTokens,
 			OutputTokens:        mm.OutputTokens,
 			CacheReadTokens:     mm.CacheReadTokens,
@@ -390,9 +414,36 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	return metrics, nil
 }
 
-// ingestJSONLFile reads a JSONL file and inserts new events into SQLite
-// Returns an error if database operations fail (for proper error handling)
+func (tc *TokenCollector) hasConfiguredSourceDirs() bool {
+	for _, dirs := range tc.sourceDirs {
+		if len(dirs) > 0 {
+			return true
+		}
+	}
+	return len(tc.projectsDirs) > 0
+}
+
+func (tc *TokenCollector) pricingForModel(source, model string) ModelPricing {
+	for _, candidate := range tc.sources {
+		if candidate.Name() == source {
+			return candidate.PricingForModel(model)
+		}
+	}
+	return getPricingForModel(model)
+}
+
+// ingestJSONLFile keeps the historical Claude-only helper available to
+// callers and tests. Normal ingestion uses the source-aware variant below.
 func (tc *TokenCollector) ingestJSONLFile(filename string) error {
+	return tc.ingestJSONLFileForSource(filename, tc.sourceByName("claude"))
+}
+
+// ingestJSONLFileForSource reads a JSONL file with the harness parser selected
+// by the caller and inserts the resulting events into SQLite.
+func (tc *TokenCollector) ingestJSONLFileForSource(filename string, source Source) error {
+	if source == nil {
+		return fmt.Errorf("no source configured for %s", filename)
+	}
 	if tc.cache == nil {
 		return nil
 	}
@@ -450,6 +501,9 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) error {
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 10*1024*1024)
+	if resettable, ok := source.(interface{ Reset() }); ok {
+		resettable.Reset()
+	}
 
 	var lineNumber int64
 	var events []TokenEvent
@@ -457,44 +511,20 @@ func (tc *TokenCollector) ingestJSONLFile(filename string) error {
 	for scanner.Scan() {
 		lineNumber++
 
-		// Skip already processed lines
+		event, ok, err := source.ParseUsageLine(scanner.Bytes())
+		if err != nil || !ok || event == nil {
+			continue
+		}
+		// Parse every line so stateful sources (Codex's model is announced in
+		// turn_context) can rebuild context when resuming an existing file, but
+		// only insert events that were not processed previously.
 		if lineNumber <= lastLine {
 			continue
 		}
-
-		var msg claudeMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			continue
-		}
-
-		// Only process assistant messages (count all requests, even with zero tokens)
-		if msg.Type != "assistant" {
-			continue
-		}
-
-		// Parse timestamp
-		timestamp, err := time.Parse(time.RFC3339Nano, msg.Timestamp)
-		if err != nil {
-			continue
-		}
-
-		usage := msg.Message.Usage
-		cacheCreation := usage.CacheCreationInputTokens
-		if cacheCreation == 0 {
-			cacheCreation = usage.CacheCreation.Ephemeral5mInputTokens +
-				usage.CacheCreation.Ephemeral1hInputTokens
-		}
-
-		events = append(events, TokenEvent{
-			Timestamp:           timestamp,
-			Model:               msg.Message.Model,
-			InputTokens:         usage.InputTokens,
-			OutputTokens:        usage.OutputTokens,
-			CacheReadTokens:     usage.CacheReadInputTokens,
-			CacheCreationTokens: cacheCreation,
-			SourceFile:          filename,
-			LineNumber:          lineNumber,
-		})
+		event.Source = source.Name()
+		event.SourceFile = filename
+		event.LineNumber = lineNumber
+		events = append(events, *event)
 
 		// Batch insert every 100 events
 		if len(events) >= 100 {

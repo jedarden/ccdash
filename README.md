@@ -1,6 +1,6 @@
 # ccdash
 
-A lightweight terminal dashboard for Claude Code — shows token usage, cost, agent session status, and system resources in real time.
+A lightweight terminal dashboard for Claude Code and Codex CLI — shows token usage, cost, agent session status, and system resources in real time.
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
@@ -8,9 +8,9 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## What it shows
 
-**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects`. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown (Opus, Sonnet, Haiku, etc.), color-coded and sorted by spend.
+**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects` and Codex rollout logs in `~/.codex/sessions/YYYY/MM/DD`. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown, color-coded and sorted by spend.
 
-**Session panel** — shows active Claude Code agent sessions and their current state:
+**Session panel** — shows active Claude Code and Codex agent sessions and their current state. Hook-tracked sessions carry a Claude 🤖 or Codex 💻 badge:
 
 | Status | Meaning |
 |--------|---------|
@@ -19,7 +19,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 | READY | Prompt is idle, waiting for the next message |
 | ACTIVE | User is typing in the session |
 
-Session tracking has two modes: tmux pane inspection (automatic) and hook-based tracking (more accurate, install with `ccdash --install-hooks`).
+Session tracking has two modes: tmux pane inspection (automatic) and hook-based tracking (more accurate). Install Claude hooks with `ccdash --install-hooks` or Codex hooks with `ccdash --install-codex-hooks`.
 
 **System panel** — CPU, memory, swap, disk, network I/O, and load average via [gopsutil](https://github.com/shirou/gopsutil).
 
@@ -86,13 +86,21 @@ ccdash automatically adjusts to your terminal width:
 
 ## Hook-based session tracking
 
-For accurate per-session status (especially the WORKING/ASKING distinction), install Claude Code hooks:
+For accurate Claude per-session status (especially the WORKING/ASKING distinction), install Claude Code hooks:
 
 ```bash
 ccdash --install-hooks
 ```
 
 This writes hook scripts that fire on Claude Code lifecycle events, writing session state to `~/.ccdash/sessions/`. The dashboard reads those files alongside the tmux pane inspection — hook data takes precedence when available.
+
+For Codex CLI, install its equivalent status-only hooks with:
+
+```bash
+ccdash --install-codex-hooks
+```
+
+This adds `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, and `Stop` entries to `~/.codex/hooks.json`. Token counts are read from rollout JSONL, not hook payloads. Use `ccdash --check-hooks` to inspect either harness and `ccdash --uninstall-hooks` to remove ccdash entries from both.
 
 Check whether hooks are installed:
 
@@ -154,6 +162,7 @@ make clean    # Remove build artifacts
 
 - Go 1.21+
 - `~/.claude/` directory (Claude Code data; created automatically when you use Claude Code)
+- `~/.codex/` directory (Codex CLI data; created automatically when you use Codex)
 - tmux (optional, for session panel)
 
 ---

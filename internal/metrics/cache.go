@@ -15,10 +15,10 @@ import (
 
 const (
 	// Database configuration for concurrent access
-	maxOpenConns    = 1  // SQLite only supports one writer at a time
-	maxIdleConns    = 1  // Keep one connection ready
-	connMaxLifetime = 0  // Don't expire connections
-	connMaxIdleTime = 0  // Don't expire idle connections
+	maxOpenConns    = 1 // SQLite only supports one writer at a time
+	maxIdleConns    = 1 // Keep one connection ready
+	connMaxLifetime = 0 // Don't expire connections
+	connMaxIdleTime = 0 // Don't expire idle connections
 
 	// Retry configuration for database locks
 	// Keep retries minimal to avoid blocking the UI
@@ -43,7 +43,7 @@ type TokenCache struct {
 const (
 	cacheDirName  = ".ccdash"
 	cacheDBName   = "tokens.db"
-	schemaVersion = 3
+	schemaVersion = 4
 
 	// Threshold for marking a file as complete (no longer being written to)
 	fileCompleteThreshold = 30 * time.Minute
@@ -220,6 +220,7 @@ func (tc *TokenCache) initDB() error {
 		timestamp TEXT NOT NULL,
 		timestamp_unix INTEGER NOT NULL,
 		model TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT 'claude',
 		input_tokens INTEGER DEFAULT 0,
 		output_tokens INTEGER DEFAULT 0,
 		cache_read_tokens INTEGER DEFAULT 0,
@@ -258,6 +259,7 @@ func (tc *TokenCache) initDB() error {
 	-- Allows skipping file I/O and individual event queries for old sessions
 	CREATE TABLE IF NOT EXISTS file_aggregates (
 		source_file TEXT PRIMARY KEY,
+		source TEXT NOT NULL DEFAULT 'claude',
 		is_complete BOOLEAN DEFAULT 0,
 		completed_at INTEGER DEFAULT 0,
 		total_input_tokens INTEGER DEFAULT 0,
@@ -278,14 +280,60 @@ func (tc *TokenCache) initDB() error {
 		return err
 	}
 
+	// Migrate databases created before multi-source ingestion. SQLite's
+	// CREATE TABLE IF NOT EXISTS does not alter an existing table, so add the
+	// columns explicitly and retain Claude as the default for old rows.
+	if err := tc.migrateSourceColumns(); err != nil {
+		return err
+	}
+	if _, err := tc.db.Exec("CREATE INDEX IF NOT EXISTS idx_source ON token_events(source)"); err != nil {
+		return err
+	}
+
 	// Check/set schema version
 	var version int
 	err = tc.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
 	if err == sql.ErrNoRows {
 		_, err = tc.db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
+	} else if err == nil && version < schemaVersion {
+		_, err = tc.db.Exec("UPDATE schema_version SET version = ?", schemaVersion)
 	}
 
 	return err
+}
+
+func (tc *TokenCache) migrateSourceColumns() error {
+	for _, table := range []string{"token_events", "file_aggregates"} {
+		rows, err := tc.db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			return err
+		}
+		found := false
+		for rows.Next() {
+			var cid int
+			var name, columnType string
+			var notNull, primaryKey int
+			var defaultValue sql.NullString
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == "source" {
+				found = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if !found {
+			if _, err := tc.db.Exec("ALTER TABLE " + table + " ADD COLUMN source TEXT NOT NULL DEFAULT 'claude'"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Close closes the database connection
@@ -316,11 +364,18 @@ func (tc *TokenCache) InsertTokenEvent(timestamp time.Time, model string, inputT
 
 // InsertTokenEventContext inserts a single token event with context support
 func (tc *TokenCache) InsertTokenEventContext(ctx context.Context, timestamp time.Time, model string, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int64, sourceFile string, lineNumber int64) error {
+	return tc.insertTokenEventContextWithSource(ctx, timestamp, model, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, sourceFile, lineNumber, "claude")
+}
+
+func (tc *TokenCache) insertTokenEventContextWithSource(ctx context.Context, timestamp time.Time, model string, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int64, sourceFile string, lineNumber int64, source string) error {
 	tc.ingestMu.Lock()
 	defer tc.ingestMu.Unlock()
 
 	if tc.db == nil {
 		return nil
+	}
+	if source == "" {
+		source = "claude"
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
@@ -328,10 +383,10 @@ func (tc *TokenCache) InsertTokenEventContext(ctx context.Context, timestamp tim
 
 	return withRetryNoResult(ctx, func() error {
 		_, err := tc.db.ExecContext(ctx, `
-			INSERT OR IGNORE INTO token_events
-			(timestamp, timestamp_unix, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_file, line_number)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, timestamp.Format(time.RFC3339Nano), timestamp.Unix(), model, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, sourceFile, lineNumber)
+				INSERT OR IGNORE INTO token_events
+				(timestamp, timestamp_unix, model, source, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_file, line_number)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, timestamp.Format(time.RFC3339Nano), timestamp.Unix(), model, source, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, sourceFile, lineNumber)
 		return err
 	})
 }
@@ -361,17 +416,21 @@ func (tc *TokenCache) InsertTokenEventBatchContext(ctx context.Context, events [
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `
-			INSERT OR IGNORE INTO token_events
-			(timestamp, timestamp_unix, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_file, line_number)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`)
+				INSERT OR IGNORE INTO token_events
+				(timestamp, timestamp_unix, model, source, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_file, line_number)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`)
 		if err != nil {
 			return err
 		}
 		defer stmt.Close()
 
 		for _, e := range events {
-			_, err = stmt.ExecContext(ctx, e.Timestamp.Format(time.RFC3339Nano), e.Timestamp.Unix(), e.Model, e.InputTokens, e.OutputTokens, e.CacheReadTokens, e.CacheCreationTokens, e.SourceFile, e.LineNumber)
+			source := e.Source
+			if source == "" {
+				source = "claude"
+			}
+			_, err = stmt.ExecContext(ctx, e.Timestamp.Format(time.RFC3339Nano), e.Timestamp.Unix(), e.Model, source, e.InputTokens, e.OutputTokens, e.CacheReadTokens, e.CacheCreationTokens, e.SourceFile, e.LineNumber)
 			if err != nil {
 				return err
 			}
@@ -385,6 +444,7 @@ func (tc *TokenCache) InsertTokenEventBatchContext(ctx context.Context, events [
 type TokenEvent struct {
 	Timestamp           time.Time
 	Model               string
+	Source              string
 	InputTokens         int64
 	OutputTokens        int64
 	CacheReadTokens     int64
@@ -457,15 +517,16 @@ func (tc *TokenCache) QueryTokensSinceContext(ctx context.Context, since time.Ti
 
 		// Aggregate by model
 		modelQuery := `
-			SELECT
-				model,
+				SELECT
+					source,
+					model,
 				SUM(input_tokens) as input,
 				SUM(output_tokens) as output,
 				SUM(cache_read_tokens) as cache_read,
 				SUM(cache_creation_tokens) as cache_create
 			FROM token_events
 			WHERE timestamp_unix >= ?
-			GROUP BY model
+				GROUP BY source, model
 		`
 
 		rows, err := tc.db.QueryContext(ctx, modelQuery, sinceUnix)
@@ -476,17 +537,28 @@ func (tc *TokenCache) QueryTokensSinceContext(ctx context.Context, since time.Ti
 
 		result.ModelMetrics = make(map[string]*ModelAggregation)
 		for rows.Next() {
-			var model string
+			var source, model string
 			var input, output, cacheRead, cacheCreate int64
-			if err := rows.Scan(&model, &input, &output, &cacheRead, &cacheCreate); err != nil {
+			if err := rows.Scan(&source, &model, &input, &output, &cacheRead, &cacheCreate); err != nil {
 				continue
 			}
-			result.ModelTokens[model] = input + output + cacheRead + cacheCreate
-			result.ModelMetrics[model] = &ModelAggregation{
-				InputTokens:         input,
-				OutputTokens:        output,
-				CacheReadTokens:     cacheRead,
-				CacheCreationTokens: cacheCreate,
+			result.ModelTokens[model] += input + output + cacheRead + cacheCreate
+			if existing, ok := result.ModelMetrics[model]; ok {
+				existing.InputTokens += input
+				existing.OutputTokens += output
+				existing.CacheReadTokens += cacheRead
+				existing.CacheCreationTokens += cacheCreate
+				if existing.Source != source {
+					existing.Source = ""
+				}
+			} else {
+				result.ModelMetrics[model] = &ModelAggregation{
+					Source:              source,
+					InputTokens:         input,
+					OutputTokens:        output,
+					CacheReadTokens:     cacheRead,
+					CacheCreationTokens: cacheCreate,
+				}
 			}
 		}
 
@@ -509,6 +581,7 @@ type AggregatedTokens struct {
 
 // ModelAggregation contains per-model token breakdown
 type ModelAggregation struct {
+	Source              string
 	InputTokens         int64
 	OutputTokens        int64
 	CacheReadTokens     int64
@@ -517,17 +590,18 @@ type ModelAggregation struct {
 
 // FileAggregate contains pre-computed totals for a complete file
 type FileAggregate struct {
-	SourceFile          string
-	IsComplete          bool
-	CompletedAt         time.Time
-	TotalInputTokens    int64
-	TotalOutputTokens   int64
-	TotalCacheRead      int64
-	TotalCacheCreation  int64
-	EventCount          int64
-	EarliestTimestamp   time.Time
-	LatestTimestamp     time.Time
-	ModelBreakdown      map[string]*ModelAggregation
+	SourceFile         string
+	Source             string
+	IsComplete         bool
+	CompletedAt        time.Time
+	TotalInputTokens   int64
+	TotalOutputTokens  int64
+	TotalCacheRead     int64
+	TotalCacheCreation int64
+	EventCount         int64
+	EarliestTimestamp  time.Time
+	LatestTimestamp    time.Time
+	ModelBreakdown     map[string]*ModelAggregation
 }
 
 // GetFileAggregate returns the pre-computed aggregate for a file if it exists
@@ -545,16 +619,16 @@ func (tc *TokenCache) GetFileAggregate(sourceFile string) (*FileAggregate, bool)
 	result, err := withRetry(ctx, func() (*FileAggregate, error) {
 		var agg FileAggregate
 		var completedAt, earliest, latest int64
-		var modelJSON string
+		var modelJSON, source string
 		var isComplete int
 
 		err := tc.db.QueryRowContext(ctx, `
-			SELECT source_file, is_complete, completed_at, total_input_tokens, total_output_tokens,
+				SELECT source_file, source, is_complete, completed_at, total_input_tokens, total_output_tokens,
 			       total_cache_read_tokens, total_cache_creation_tokens, event_count,
 			       earliest_timestamp, latest_timestamp, model_breakdown
 			FROM file_aggregates WHERE source_file = ?
 		`, sourceFile).Scan(
-			&agg.SourceFile, &isComplete, &completedAt,
+			&agg.SourceFile, &source, &isComplete, &completedAt,
 			&agg.TotalInputTokens, &agg.TotalOutputTokens,
 			&agg.TotalCacheRead, &agg.TotalCacheCreation, &agg.EventCount,
 			&earliest, &latest, &modelJSON,
@@ -564,6 +638,7 @@ func (tc *TokenCache) GetFileAggregate(sourceFile string) (*FileAggregate, bool)
 		}
 
 		agg.IsComplete = isComplete == 1
+		agg.Source = source
 		agg.CompletedAt = time.Unix(completedAt, 0)
 		agg.EarliestTimestamp = time.Unix(earliest, 0)
 		agg.LatestTimestamp = time.Unix(latest, 0)
@@ -572,6 +647,11 @@ func (tc *TokenCache) GetFileAggregate(sourceFile string) (*FileAggregate, bool)
 		agg.ModelBreakdown = make(map[string]*ModelAggregation)
 		if modelJSON != "" && modelJSON != "{}" {
 			json.Unmarshal([]byte(modelJSON), &agg.ModelBreakdown)
+		}
+		for _, model := range agg.ModelBreakdown {
+			if model.Source == "" {
+				model.Source = agg.Source
+			}
 		}
 
 		return &agg, nil
@@ -607,14 +687,15 @@ func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
 		var totalInput, totalOutput, totalCacheRead, totalCacheCreate int64
 		var eventCount int64
 		var minTS, maxTS sql.NullInt64
+		var source string
 
 		err := tc.db.QueryRowContext(ctx, `
-			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-			       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0),
-			       COUNT(*), MIN(timestamp_unix), MAX(timestamp_unix)
-			FROM token_events WHERE source_file = ?
-		`, sourceFile).Scan(&totalInput, &totalOutput, &totalCacheRead, &totalCacheCreate,
-			&eventCount, &minTS, &maxTS)
+				SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+				       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0),
+				       COUNT(*), MIN(timestamp_unix), MAX(timestamp_unix), COALESCE(MAX(source), 'claude')
+				FROM token_events WHERE source_file = ?
+			`, sourceFile).Scan(&totalInput, &totalOutput, &totalCacheRead, &totalCacheCreate,
+			&eventCount, &minTS, &maxTS, &source)
 		if err != nil {
 			return err
 		}
@@ -659,11 +740,11 @@ func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
 		// Insert or update the aggregate
 		_, err = tc.db.ExecContext(ctx, `
 			INSERT OR REPLACE INTO file_aggregates
-			(source_file, is_complete, completed_at, total_input_tokens, total_output_tokens,
-			 total_cache_read_tokens, total_cache_creation_tokens, event_count,
-			 earliest_timestamp, latest_timestamp, model_breakdown)
-			VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, sourceFile, time.Now().Unix(), totalInput, totalOutput, totalCacheRead, totalCacheCreate,
+				(source_file, source, is_complete, completed_at, total_input_tokens, total_output_tokens,
+				 total_cache_read_tokens, total_cache_creation_tokens, event_count,
+				 earliest_timestamp, latest_timestamp, model_breakdown)
+				VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, sourceFile, source, time.Now().Unix(), totalInput, totalOutput, totalCacheRead, totalCacheCreate,
 			eventCount, earliest, latest, string(modelJSON))
 		if err != nil {
 			return err
@@ -751,7 +832,7 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 
 		// Get model breakdown from complete files
 		aggModelQuery := `
-			SELECT model_breakdown FROM file_aggregates
+				SELECT source, model_breakdown FROM file_aggregates
 			WHERE is_complete = 1 AND latest_timestamp >= ?
 		`
 		aggModelRows, err := tc.db.QueryContext(ctx, aggModelQuery, sinceUnix)
@@ -761,20 +842,27 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 		if aggModelRows != nil {
 			defer aggModelRows.Close()
 			for aggModelRows.Next() {
-				var modelJSON string
-				if err := aggModelRows.Scan(&modelJSON); err != nil {
+				var source, modelJSON string
+				if err := aggModelRows.Scan(&source, &modelJSON); err != nil {
 					continue
 				}
 				var breakdown map[string]*ModelAggregation
 				if json.Unmarshal([]byte(modelJSON), &breakdown) == nil {
 					for model, ma := range breakdown {
+						if ma.Source == "" {
+							ma.Source = source
+						}
 						if existing, ok := result.ModelMetrics[model]; ok {
 							existing.InputTokens += ma.InputTokens
 							existing.OutputTokens += ma.OutputTokens
 							existing.CacheReadTokens += ma.CacheReadTokens
 							existing.CacheCreationTokens += ma.CacheCreationTokens
+							if existing.Source != ma.Source {
+								existing.Source = ""
+							}
 						} else {
 							result.ModelMetrics[model] = &ModelAggregation{
+								Source:              ma.Source,
 								InputTokens:         ma.InputTokens,
 								OutputTokens:        ma.OutputTokens,
 								CacheReadTokens:     ma.CacheReadTokens,
@@ -810,10 +898,10 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 
 		// Get model breakdown from active events
 		evtModelQuery := `
-			SELECT model, SUM(input_tokens), SUM(output_tokens),
-			       SUM(cache_read_tokens), SUM(cache_creation_tokens)
-			FROM token_events WHERE timestamp_unix >= ?
-			GROUP BY model
+				SELECT source, model, SUM(input_tokens), SUM(output_tokens),
+				       SUM(cache_read_tokens), SUM(cache_creation_tokens)
+				FROM token_events WHERE timestamp_unix >= ?
+				GROUP BY source, model
 		`
 		evtModelRows, err := tc.db.QueryContext(ctx, evtModelQuery, sinceUnix)
 		if err != nil && err != sql.ErrNoRows {
@@ -822,9 +910,9 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 		if evtModelRows != nil {
 			defer evtModelRows.Close()
 			for evtModelRows.Next() {
-				var model string
+				var source, model string
 				var input, output, cacheRead, cacheCreate int64
-				if err := evtModelRows.Scan(&model, &input, &output, &cacheRead, &cacheCreate); err != nil {
+				if err := evtModelRows.Scan(&source, &model, &input, &output, &cacheRead, &cacheCreate); err != nil {
 					continue
 				}
 				if existing, ok := result.ModelMetrics[model]; ok {
@@ -832,8 +920,12 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 					existing.OutputTokens += output
 					existing.CacheReadTokens += cacheRead
 					existing.CacheCreationTokens += cacheCreate
+					if existing.Source != source {
+						existing.Source = ""
+					}
 				} else {
 					result.ModelMetrics[model] = &ModelAggregation{
+						Source:              source,
 						InputTokens:         input,
 						OutputTokens:        output,
 						CacheReadTokens:     cacheRead,

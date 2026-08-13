@@ -73,7 +73,8 @@ type TmuxSession struct {
 	LastContentChange time.Time     `json:"last_content_change"`
 	IdleDuration      time.Duration `json:"idle_duration"` // How long content unchanged
 	LastLines         []string      `json:"last_lines,omitempty"`
-	Source            string        `json:"source,omitempty"` // "tmux" or "hooks"
+	Source            string        `json:"source,omitempty"`  // "tmux" or "hooks"
+	Harness           string        `json:"harness,omitempty"` // "claude" or "codex" when hook-tracked
 }
 
 // TmuxMetrics holds information about all tmux sessions
@@ -141,7 +142,6 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		if err == nil {
 			for _, hs := range hookSessions {
 				session := hs.ToTmuxSession()
-				session.Source = "hooks"
 				hookSessionMap[session.Name] = session
 			}
 		}

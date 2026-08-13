@@ -1472,9 +1472,15 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	}
 
 	// Calculate available width for session name
-	// Fixed parts: emoji(2) + space(1) + space(1) + status(7) + space(1) + windows(~3) + space(1) + idle(3) + space(1) + attached
-	// Fixed overhead = ~20 chars + attachedWidth
-	fixedOverhead := 20 + attachedWidth
+	harnessBadge := ""
+	if session.Harness == "claude" {
+		harnessBadge = "🤖 "
+	} else if session.Harness == "codex" {
+		harnessBadge = "💻 "
+	}
+
+	// Fixed parts: status emoji, harness badge, status, windows, idle, attached.
+	fixedOverhead := 20 + lipgloss.Width(harnessBadge) + attachedWidth
 	maxNameLen := width - fixedOverhead
 	if maxNameLen < 6 {
 		maxNameLen = 6 // Minimum readable name length
@@ -1487,8 +1493,9 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	// Build the line with dynamic name width
 	nameFormat := fmt.Sprintf("%%-%ds", maxNameLen)
-	line := fmt.Sprintf("%s "+nameFormat+" %s %dw %-3s %s",
+	line := fmt.Sprintf("%s %s"+nameFormat+" %s %dw %-3s %s",
 		emoji,
+		harnessBadge,
 		name,
 		statusStyle.Render(fmt.Sprintf("%-7s", statusText)),
 		session.Windows,

@@ -29,6 +29,7 @@ const (
 // HookSession represents a Claude Code session tracked via hooks
 type HookSession struct {
 	SessionID       string    `json:"session_id"`
+	Source          string    `json:"source,omitempty"` // "claude" or "codex"
 	ProjectDir      string    `json:"project_dir"`
 	TmuxSessionName string    `json:"tmux_session_name,omitempty"` // Name of the tmux session
 	StartedAt       time.Time `json:"started_at"`
@@ -153,6 +154,10 @@ func (h *HookSessionCollector) readSessionFile(path string) (*HookSession, error
 	var session HookSession
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, err
+	}
+	if session.Source == "" {
+		// Session files written before multi-harness support are Claude records.
+		session.Source = "claude"
 	}
 
 	return &session, nil
@@ -293,7 +298,11 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 		name = filepath.Base(hs.ProjectDir)
 	}
 	if name == "" || name == "." {
-		name = hs.SessionID[:8] // Use truncated session ID
+		name = truncateSessionID(hs.SessionID)
+	}
+	source := hs.Source
+	if source == "" {
+		source = "claude"
 	}
 
 	return TmuxSession{
@@ -303,9 +312,17 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 		Created:      hs.StartedAt,
 		Status:       status,
 		IdleDuration: time.Since(hs.LastActivity),
-		LastLines:    []string{fmt.Sprintf("Session: %s", hs.SessionID[:8])},
+		LastLines:    []string{fmt.Sprintf("Session: %s", truncateSessionID(hs.SessionID))},
 		Source:       "hooks", // Mark as hook-sourced
+		Harness:      source,
 	}
+}
+
+func truncateSessionID(sessionID string) string {
+	if len(sessionID) <= 8 {
+		return sessionID
+	}
+	return sessionID[:8]
 }
 
 // HookScripts contains the shell scripts to be installed as Claude Code hooks
@@ -373,6 +390,7 @@ fi
 cat > "$SESSIONS_DIR/${SESSION_ID}.json" << EOF
 {
   "session_id": "$SESSION_ID",
+  "source": "claude",
   "project_dir": "$CWD",
   "tmux_session_name": "$TMUX_SESSION",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
