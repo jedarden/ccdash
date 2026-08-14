@@ -10,7 +10,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jedarden/ccdash/internal/config"
 	"github.com/jedarden/ccdash/internal/metrics"
+	"github.com/jedarden/ccdash/internal/notify"
 	"github.com/jedarden/ccdash/internal/updater"
 )
 
@@ -18,10 +20,10 @@ import (
 type LayoutMode int
 
 const (
-	LayoutNarrow     LayoutMode = iota // <120 cols
-	LayoutWide                          // 120-239 cols, >=30 lines
-	LayoutUltraWide                     // >=240 cols
-	LayoutCompact                       // <120 cols: tmux top, tokens middle, system bottom
+	LayoutNarrow    LayoutMode = iota // <120 cols
+	LayoutWide                        // 120-239 cols, >=30 lines
+	LayoutUltraWide                   // >=240 cols
+	LayoutCompact                     // <120 cols: tmux top, tokens middle, system bottom
 )
 
 // tickMsg is sent every 2 seconds to trigger refresh
@@ -36,11 +38,11 @@ type LookbackPreset struct {
 
 // Dashboard is the main Bubble Tea model
 type Dashboard struct {
-	width         int
-	height        int
-	layoutMode    LayoutMode
-	version       string
-	instanceID    string // Unique ID for leader election
+	width      int
+	height     int
+	layoutMode LayoutMode
+	version    string
+	instanceID string // Unique ID for leader election
 
 	// Metrics collectors
 	systemCollector *metrics.SystemCollector
@@ -53,12 +55,12 @@ type Dashboard struct {
 	tmuxMetrics   *metrics.TmuxMetrics
 
 	// UI state
-	lastUpdate    time.Time
-	err           error
-	helpMode      int // 0=none, 1=system, 2=tokens, 3=tmux
+	lastUpdate time.Time
+	err        error
+	helpMode   int // 0=none, 1=system, 2=tokens, 3=tmux
 
 	// Lookback picker state
-	lookbackMode          bool   // true when lookback picker is open
+	lookbackMode          bool // true when lookback picker is open
 	lookbackPresets       []LookbackPreset
 	lookbackSelectedIndex int
 	lookbackCustomMode    bool      // true when editing custom date/time
@@ -70,6 +72,12 @@ type Dashboard struct {
 	updateInfo   *updater.UpdateInfo
 	updating     bool
 	updateStatus string
+
+	// Notification system
+	notifyConfig      *config.Config
+	notifyClient      *notify.Client
+	prevSessionStatus map[string]string    // session_id -> previous status
+	waitingSince      map[string]time.Time // session_id -> when entered waiting/asking
 }
 
 // generateInstanceID creates a unique identifier for this dashboard instance
@@ -135,6 +143,13 @@ func NewDashboard(version string) *Dashboard {
 		},
 	}
 
+	// Load notification config (fails gracefully if config missing)
+	cfg, _ := config.Load()
+	var notifyClient *notify.Client
+	if cfg != nil {
+		notifyClient = notify.NewClient(cfg.Notify.WebhookURL, cfg.Notify.Enabled)
+	}
+
 	return &Dashboard{
 		version:            version,
 		instanceID:         generateInstanceID(),
@@ -145,6 +160,10 @@ func NewDashboard(version string) *Dashboard {
 		lastUpdate:         time.Now(),
 		lookbackPresets:    presets,
 		lookbackCustomDate: time.Now().AddDate(0, 0, -1), // Default custom to yesterday
+		notifyConfig:       cfg,
+		notifyClient:       notifyClient,
+		prevSessionStatus:  make(map[string]string),
+		waitingSince:       make(map[string]time.Time),
 	}
 }
 
@@ -412,9 +431,10 @@ func (d *Dashboard) tick() tea.Cmd {
 
 // metricsMsg carries collected metrics
 type metricsMsg struct {
-	system metrics.SystemMetrics
-	tokens *metrics.TokenMetrics
-	tmux   *metrics.TmuxMetrics
+	system   metrics.SystemMetrics
+	tokens   *metrics.TokenMetrics
+	tmux     *metrics.TmuxMetrics
+	isLeader bool
 }
 
 // errMsg carries errors
@@ -1180,20 +1200,20 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 func shortenModelName(name string) string {
 	// Common patterns to shorten
 	replacements := map[string]string{
-		"claude-opus-4-5-20251101":    "Opus 4.5",
-		"claude-sonnet-4-5-20250929":  "Sonnet 4.5",
-		"claude-haiku-4-5-20250929":   "Haiku 4.5",
-		"claude-3-5-sonnet-20241022":  "Sonnet 3.5",
-		"claude-3-5-haiku-20241022":   "Haiku 3.5",
-		"claude-3-opus-20240229":      "Opus 3",
-		"claude-3-sonnet-20240229":    "Sonnet 3",
-		"claude-3-haiku-20240307":     "Haiku 3",
+		"claude-opus-4-5-20251101":   "Opus 4.5",
+		"claude-sonnet-4-5-20250929": "Sonnet 4.5",
+		"claude-haiku-4-5-20250929":  "Haiku 4.5",
+		"claude-3-5-sonnet-20241022": "Sonnet 3.5",
+		"claude-3-5-haiku-20241022":  "Haiku 3.5",
+		"claude-3-opus-20240229":     "Opus 3",
+		"claude-3-sonnet-20240229":   "Sonnet 3",
+		"claude-3-haiku-20240307":    "Haiku 3",
 		// GLM models (Zhipu AI)
-		"glm-4-alltools":                "GLM 4",
-		"glm-4-9b-chat":                "GLM 4",
-		"glm-4-air":                     "GLM 4",
-		"glm-4-flash":                   "GLM 4",
-		"glm-4-plus":                    "GLM 4+",
+		"glm-4-alltools": "GLM 4",
+		"glm-4-9b-chat":  "GLM 4",
+		"glm-4-air":      "GLM 4",
+		"glm-4-flash":    "GLM 4",
+		"glm-4-plus":     "GLM 4+",
 	}
 
 	if short, ok := replacements[name]; ok {
@@ -1340,8 +1360,8 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	contentWidth = width - 4 // -4 for borders (2) and padding (2)
 
 	// Calculate columns needed to show ALL sessions (priority: show everything)
-	minCellWidth := 28  // Minimum readable session cell
-	maxCellWidth := 55  // Maximum cell width to avoid excessive whitespace
+	minCellWidth := 28 // Minimum readable session cell
+	maxCellWidth := 55 // Maximum cell width to avoid excessive whitespace
 	cols := 1
 	if sessionCount > availableLines {
 		// Calculate columns needed to fit all sessions
@@ -1651,7 +1671,7 @@ func (d *Dashboard) renderLookbackPicker() string {
 
 func (d *Dashboard) renderHelpView() string {
 	panelHeight := d.height - 3
-	totalPanelWidth := d.width - 2 // Match normal view width calculation
+	totalPanelWidth := d.width - 2             // Match normal view width calculation
 	panelWidth := (totalPanelWidth * 40) / 100 // 40% for panel
 
 	var panel string
@@ -1929,7 +1949,7 @@ func (d *Dashboard) renderBar(percent float64, width int) string {
 	percentText := fmt.Sprintf("%.1f%%", percent)
 
 	// Calculate fill width (accounting for percentage text)
-	barWidth := width - 2 // Account for brackets
+	barWidth := width - 2                             // Account for brackets
 	availableWidth := barWidth - len(percentText) - 1 // -1 for space before %
 	fillWidth := int(percent / 100.0 * float64(availableWidth))
 	if fillWidth > availableWidth {
@@ -2007,39 +2027,39 @@ func (d *Dashboard) renderMiniBar(percent float64, barWidth int) string {
 // Styles (unified-dashboard palette)
 var (
 	panelStyle = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00aaff")).
-		Padding(0, 1) // Minimal padding for compact display
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#00aaff")).
+			Padding(0, 1) // Minimal padding for compact display
 
 	titleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#00ffff")).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(lipgloss.Color("#00ffff")).
+			MarginBottom(1)
 
 	boldStyle = lipgloss.NewStyle().
-		Bold(true)
+			Bold(true)
 
 	successStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00ff00"))
+			Foreground(lipgloss.Color("#00ff00"))
 
 	costStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ffaa00")).
-		Bold(true)
+			Foreground(lipgloss.Color("#ffaa00")).
+			Bold(true)
 
 	warningStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ffaa00"))
+			Foreground(lipgloss.Color("#ffaa00"))
 
 	errorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ff0000")).
-		Bold(true)
+			Foreground(lipgloss.Color("#ff0000")).
+			Bold(true)
 
 	dimStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888"))
+			Foreground(lipgloss.Color("#888888"))
 
 	statusBarStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00ffff")).
-		Background(lipgloss.Color("#1a1a1a")).
-		Padding(0, 1)
+			Foreground(lipgloss.Color("#00ffff")).
+			Background(lipgloss.Color("#1a1a1a")).
+			Padding(0, 1)
 )
 
 // Utility functions

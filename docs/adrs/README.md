@@ -26,6 +26,7 @@ Each ADR follows this structure:
 | [0004](./0004-use-section-based-grouping-over-alternatives.md) | Use Section-Based Grouping Over Alternatives | 2026-02-07 | Accepted |
 | [0005](./0005-support-concurrent-multi-user-access.md) | Support Concurrent Multi-User Access | 2026-02-07 | Accepted |
 | [0006](./0006-push-notifications-for-sessions-needing-human-input.md) | Push Notifications for Sessions Needing Human Input | 2026-07-20 | Proposed |
+| [0007](./0007-support-codex-cli-alongside-claude-code.md) | Support Codex CLI Alongside Claude Code | 2026-08-12 | Proposed |
 
 ## ADR Summary
 
