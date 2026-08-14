@@ -1,0 +1,132 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ccdash-ci
+  namespace: argo-workflows
+  labels:
+    app: ccdash-ci
+    argocd.argoproj.io/instance: argo-workflows-ns-iad-ci
+spec:
+  entrypoint: release
+  serviceAccountName: argo-workflow
+
+  templates:
+  - name: release
+    activeDeadlineSeconds: 1800
+    container:
+      image: golang:1.24-bookworm
+      command: [bash, -c]
+      args:
+      - |
+        set -ex
+
+        # Install dependencies
+        apt-get update && apt-get install -y git curl jq
+
+        # Install gh CLI
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        apt-get update && apt-get install -y gh
+
+        # Clone from TRUSTED hardcoded source (ignore webhook payload)
+        REPO_URL="https://github.com/jedarden/ccdash.git"
+        BRANCH="main"
+
+        # Extract tag from webhook context or use main branch
+        if [ -n "{{workflow.parameters.tag}}" ]; then
+          TAG="{{workflow.parameters.tag}}"
+          git clone --depth 1 --branch "$TAG" "$REPO_URL" /workspace
+        else
+          git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /workspace
+        fi
+        cd /workspace
+
+        # Extract version from VERSION file or git tag
+        VERSION=$(cat VERSION 2>/dev/null || echo "dev")
+        if [ -n "$TAG" ]; then
+          VERSION="$TAG"
+        fi
+        echo "Building ccdash ${VERSION}"
+        COMMIT=$(git rev-parse HEAD)
+        echo "Building commit: ${COMMIT}"
+
+        # Run tests
+        go test -v ./...
+
+        # Build release binaries for all platforms
+        mkdir -p bin
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/ccdash-linux-amd64 ./cmd/ccdash
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/ccdash-linux-arm64 ./cmd/ccdash
+        CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/ccdash-darwin-amd64 ./cmd/ccdash
+        CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/ccdash-darwin-arm64 ./cmd/ccdash
+
+        # Generate SHA256 checksums
+        cd bin
+        for f in ccdash-linux-amd64 ccdash-linux-arm64 ccdash-darwin-amd64 ccdash-darwin-arm64; do
+          sha256sum "$f" > "$f.sha256" 2>/dev/null || shasum -a 256 "$f" > "$f.sha256"
+        done
+        cd ..
+
+        ls -la bin/
+
+        # Check if release already exists
+        if gh release view "${VERSION}" --repo jedarden/ccdash >/dev/null 2>&1; then
+          echo "Release ${VERSION} already exists, skipping..."
+          exit 0
+        fi
+
+        # Create GitHub release
+        gh release create "${VERSION}" \
+          --repo jedarden/ccdash \
+          --title "ccdash ${VERSION}" \
+          --notes "ccdash ${VERSION}
+
+        Built from commit: ${COMMIT}
+
+        ## Binaries
+
+        - **ccdash-linux-amd64**: Linux x86_64
+        - **ccdash-linux-arm64**: Linux ARM64 (aarch64)
+        - **ccdash-darwin-amd64**: macOS x86_64 (Intel)
+        - **ccdash-darwin-arm64**: macOS ARM64 (Apple Silicon)
+
+        ## Checksums
+
+        Each binary has an accompanying \`.sha256\` file containing the SHA256 checksum.
+
+        ## Installation
+
+        Download the appropriate binary for your platform, make it executable, and run:
+
+        \`\`\`bash
+        chmod +x ccdash-<platform>
+        ./ccdash-<platform>
+        \`\`\`
+        " \
+          --target main \
+          bin/ccdash-linux-amd64 \
+          bin/ccdash-linux-amd64.sha256 \
+          bin/ccdash-linux-arm64 \
+          bin/ccdash-linux-arm64.sha256 \
+          bin/ccdash-darwin-amd64 \
+          bin/ccdash-darwin-amd64.sha256 \
+          bin/ccdash-darwin-arm64 \
+          bin/ccdash-darwin-arm64.sha256
+
+        echo "Release ${VERSION} created successfully!"
+      env:
+      - name: GH_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: github-webhook-secret
+            key: token
+      resources:
+        requests:
+          cpu: 1000m
+          memory: 2Gi
+        limits:
+          cpu: 4000m
+          memory: 8Gi
+    retryStrategy:
+      limit: 1
+      retryPolicy: OnError
