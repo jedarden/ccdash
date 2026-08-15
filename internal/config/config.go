@@ -11,12 +11,18 @@ import (
 // Config represents the ccdash configuration file
 type Config struct {
 	Notify NotifyConfig `yaml:"notify"`
+	Alerts AlertsConfig `yaml:"alerts"`
 }
 
 // NotifyConfig contains notification settings
 type NotifyConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	WebhookURL string `yaml:"webhook_url"`
+}
+
+// AlertsConfig contains alert threshold settings
+type AlertsConfig struct {
+	CostThresholdUSD float64 `yaml:"cost_threshold_usd"`
 }
 
 // Load reads the configuration from ~/.ccdash/config.yaml
@@ -34,6 +40,9 @@ func Load() (*Config, error) {
 		Notify: NotifyConfig{
 			Enabled:   false,
 			WebhookURL: "",
+		},
+		Alerts: AlertsConfig{
+			CostThresholdUSD: 0, // 0 means disabled (no threshold)
 		},
 	}
 

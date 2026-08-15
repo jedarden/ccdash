@@ -1110,9 +1110,18 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	}
 	leftLines = append(leftLines, fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens))))
 	leftLines = append(leftLines, fmt.Sprintf("Reqs:  %d", d.tokenMetrics.Prompts))
-	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costStyle.Render(metrics.FormatCost(d.tokenMetrics.TotalCost))))
+
+	// Check cost threshold and apply warning color if exceeded
+	costValue := metrics.FormatCost(d.tokenMetrics.TotalCost)
+	costDisplay := costStyle.Render(costValue)
+	if d.notifyConfig != nil && d.notifyConfig.Alerts.CostThresholdUSD > 0 && d.tokenMetrics.TotalCost >= d.notifyConfig.Alerts.CostThresholdUSD {
+		costDisplay = warningStyle.Render(costValue)
+	}
+	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costDisplay))
 	if hasRate {
-		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
+		rateText := metrics.FormatTokenRateCompact(d.tokenMetrics.Rate)
+		sparkline := d.renderSparkline(d.tokenMetrics.RateHistory)
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s %s", dimStyle.Render(rateText), successStyle.Render(sparkline)))
 	}
 	if hasAvg {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
@@ -1466,6 +1475,14 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 
+	// Flag stale sessions: READY sessions idle > 5min get bold + clock emoji
+	staleIndicator := ""
+	isStale := session.Status == metrics.StatusReady && session.IdleDuration > 5*time.Minute
+	if isStale {
+		staleIndicator = "⏰" // Clock emoji indicates long wait
+		statusStyle = statusStyle.Bold(true) // Make stale sessions stand out
+	}
+
 	attached := ""
 	attachedWidth := 0
 	if session.Attached {
@@ -1499,8 +1516,8 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 		harnessBadge = "💻 "
 	}
 
-	// Fixed parts: status emoji, harness badge, status, windows, idle, attached.
-	fixedOverhead := 20 + lipgloss.Width(harnessBadge) + attachedWidth
+	// Fixed parts: status emoji, stale indicator, harness badge, status, windows, idle, attached.
+	fixedOverhead := 20 + lipgloss.Width(harnessBadge) + lipgloss.Width(staleIndicator) + attachedWidth
 	maxNameLen := width - fixedOverhead
 	if maxNameLen < 6 {
 		maxNameLen = 6 // Minimum readable name length
@@ -1513,8 +1530,9 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	// Build the line with dynamic name width
 	nameFormat := fmt.Sprintf("%%-%ds", maxNameLen)
-	line := fmt.Sprintf("%s %s"+nameFormat+" %s %dw %-3s %s",
+	line := fmt.Sprintf("%s %s%s "+nameFormat+" %s %dw %-3s %s",
 		emoji,
+		staleIndicator,
 		harnessBadge,
 		name,
 		statusStyle.Render(fmt.Sprintf("%-7s", statusText)),
@@ -2022,6 +2040,54 @@ func (d *Dashboard) renderMiniBar(percent float64, barWidth int) string {
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 
 	return barStyle.Render(filled) + dimStyle.Render(empty) + " " + percentText
+}
+
+// renderSparkline creates a compact sparkline using unicode block characters
+// Takes a slice of token values and renders them as a vertical sparkline
+// Uses 8 levels: ▁ ▂ ▃ ▄ ▅ ▆ ▇ █
+func (d *Dashboard) renderSparkline(values []int64) string {
+	if len(values) == 0 {
+		return "░"
+	}
+
+	// Find min and max for scaling
+	minVal := int64(0)
+	maxVal := int64(0)
+	for _, v := range values {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+
+	// If all values are the same, return a flat line
+	if maxVal == minVal {
+		if maxVal == 0 {
+			return "░" // Empty-ish
+		}
+		return strings.Repeat("▄", len(values)) // Mid-level flat
+	}
+
+	// Scale values to 0-7 range and map to unicode block chars
+	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+	var result strings.Builder
+
+	for _, v := range values {
+		// Scale to 0-7 range
+		normalized := float64(v-minVal) / float64(maxVal-minVal)
+		index := int(normalized * 7.99) // 0-7 inclusive
+		if index < 0 {
+			index = 0
+		}
+		if index > 7 {
+			index = 7
+		}
+		result.WriteRune(blocks[index])
+	}
+
+	return result.String()
 }
 
 // Styles (unified-dashboard palette)
