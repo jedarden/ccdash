@@ -267,9 +267,24 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		metrics.Source = "tmux"
 	}
 
-	// Sort sessions alphabetically by name for consistent display
+	// Sort sessions: stale READY sessions first (idle > 5min), then alphabetically by name
+	// This helps users spot sessions that have been waiting the longest
+	staleThreshold := 5 * time.Minute
 	sort.Slice(metrics.Sessions, func(i, j int) bool {
-		return metrics.Sessions[i].Name < metrics.Sessions[j].Name
+		iSession := metrics.Sessions[i]
+		jSession := metrics.Sessions[j]
+
+		// Both READY: stale one first
+		if iSession.Status == StatusReady && jSession.Status == StatusReady {
+			iStale := iSession.IdleDuration > staleThreshold
+			jStale := jSession.IdleDuration > staleThreshold
+			if iStale != jStale {
+				return iStale // stale (true) sorts before non-stale (false)
+			}
+		}
+
+		// Same staleness or different status: sort alphabetically
+		return iSession.Name < jSession.Name
 	})
 
 	metrics.Available = hasTmux || hasHooks || hasNeedle
