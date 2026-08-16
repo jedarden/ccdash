@@ -68,10 +68,11 @@ type Dashboard struct {
 	lookbackEditField     int       // 0=year, 1=month, 2=day, 3=hour, 4=minute
 
 	// Update checking
-	updater      *updater.Updater
-	updateInfo   *updater.UpdateInfo
-	updating     bool
-	updateStatus string
+	updater         *updater.Updater
+	updateInfo      *updater.UpdateInfo
+	updating        bool
+	updateStatus    string
+	updateDismissed bool
 
 	// Notification system
 	notifyConfig      *config.Config
@@ -180,6 +181,7 @@ func (d *Dashboard) Init() tea.Cmd {
 	return tea.Batch(
 		d.tick(),
 		d.collectMetrics(),
+		// Run the network check asynchronously so it cannot delay the initial dashboard render.
 		d.checkForUpdates(),
 	)
 }
@@ -231,6 +233,12 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.lookbackMode = true
 			d.helpMode = 0 // Close help if open
 			return d, nil
+		case "esc":
+			// Dismiss the update notice without affecting the opt-in update action.
+			if d.updateNoticeVisible() && !d.updating {
+				d.updateDismissed = true
+			}
+			return d, nil
 		case "u", "U":
 			// Perform update if available
 			if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
@@ -242,7 +250,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		return d, tea.Batch(d.tick(), d.collectMetrics(), d.checkForUpdates())
+		return d, tea.Batch(d.tick(), d.collectMetrics())
 
 	case metricsMsg:
 		d.systemMetrics = msg.system
@@ -280,6 +288,11 @@ func (d *Dashboard) performUpdate() tea.Cmd {
 		err := d.updater.PerformUpdateWithRestart(d.updateInfo)
 		return updateCompleteMsg{err: err}
 	}
+}
+
+// updateNoticeVisible reports whether the update notice should be shown.
+func (d *Dashboard) updateNoticeVisible() bool {
+	return d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updateDismissed
 }
 
 // handleLookbackKey handles keyboard input when lookback picker is open
@@ -1779,7 +1792,7 @@ Idle: Time since content changed (s/m/h)
 
 Layout: Auto-columns based on count/width
 
-Self-Update: Press 'u' when update available
+Self-Update: Press 'u' to install an available update, or 'esc' to dismiss its notice
   Status bar shows "⬆ vX.X.X available!"`
 	}
 
@@ -1885,8 +1898,8 @@ func (d *Dashboard) renderStatusBar() string {
 	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 
 	shortcuts := "l:lookback h:help q:quit r:refresh"
-	if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
-		shortcuts = "u:update l:lookback h:help q:quit r:refresh"
+	if d.updateNoticeVisible() && !d.updating {
+		shortcuts = "u:update esc:dismiss l:lookback h:help q:quit r:refresh"
 	}
 	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
@@ -1896,8 +1909,8 @@ func (d *Dashboard) renderStatusBar() string {
 		middle = warningStyle.Render(d.updateStatus)
 	} else if d.updateStatus != "" {
 		middle = errorStyle.Render(d.updateStatus)
-	} else if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-		middle = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update", d.updateInfo.LatestVersion))
+	} else if d.updateNoticeVisible() {
+		middle = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update, esc to dismiss", d.updateInfo.LatestVersion))
 	} else {
 		middle = dimStyle.Render("https://github.com/jedarden/ccdash")
 	}
@@ -1909,8 +1922,8 @@ func (d *Dashboard) renderStatusBar() string {
 		if availableSpace < 4 {
 			// Not enough room — drop the middle
 			compactShortcuts := "l h q r"
-			if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-				compactShortcuts = "u l h q r"
+			if d.updateNoticeVisible() {
+				compactShortcuts = "u esc l h q r"
 			}
 			return statusBarStyle.Render(fmt.Sprintf("%s %s %dx%d %s",
 				d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))
@@ -1930,8 +1943,8 @@ func (d *Dashboard) renderStatusBar() string {
 	var statusLine string
 	if availableSpace < 2 {
 		compactShortcuts := "h q r"
-		if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-			compactShortcuts = "u h q r"
+		if d.updateNoticeVisible() {
+			compactShortcuts = "u esc h q r"
 		}
 		statusLine = fmt.Sprintf("%s %s %dx%d %s",
 			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts)
