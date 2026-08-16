@@ -27,6 +27,7 @@ func main() {
 		installCodexHooks = flag.Bool("install-codex-hooks", false, "Install Codex hooks for session tracking")
 		checkHooks        = flag.Bool("check-hooks", false, "Check Claude Code and Codex hook installation")
 		uninstallHooks    = flag.Bool("uninstall-hooks", false, "Uninstall ccdash hooks from Claude Code and Codex")
+		testNotify        = flag.Bool("test-notify", false, "Test notification webhook configuration")
 		extraDirs    = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
 	)
 
@@ -149,6 +150,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --test-notify
+	if *testNotify {
+		os.Exit(runTestNotify())
+	}
+
 	// Check if running in a terminal
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		fmt.Fprintln(os.Stderr, "Error: ccdash must be run in a terminal")
@@ -254,6 +260,7 @@ func printHelp() {
 		fmt.Println("  --install-codex-hooks Install Codex hooks for session tracking")
 		fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
 		fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
+	fmt.Println("  --test-notify         Test notification webhook configuration")
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")
 	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
