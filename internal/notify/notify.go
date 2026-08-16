@@ -130,3 +130,68 @@ func (c *Client) ShouldNotify(transition *SessionTransition) bool {
 
 	return true
 }
+
+// TestResult contains the result of a test notification
+type TestResult struct {
+	Success    bool
+	StatusCode int
+	Error      string
+}
+
+// SendTest sends a test notification and returns detailed error information
+// Unlike Send(), this method returns errors and status codes for debugging
+func (c *Client) SendTest(payload *Payload) TestResult {
+	// If notifications are disabled, return error
+	if !c.enabled || c.webhookURL == "" {
+		return TestResult{
+			Success:    false,
+			StatusCode: 0,
+			Error:      "notifications are disabled or webhook_url is not configured",
+		}
+	}
+
+	// Marshal the payload to JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return TestResult{
+			Success:    false,
+			StatusCode: 0,
+			Error:      fmt.Sprintf("failed to marshal payload: %v", err),
+		}
+	}
+
+	// Create the HTTP request
+	req, err := http.NewRequest("POST", c.webhookURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return TestResult{
+			Success:    false,
+			StatusCode: 0,
+			Error:      fmt.Sprintf("failed to create request: %v", err),
+		}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return TestResult{
+			Success:    false,
+			StatusCode: 0,
+			Error:      fmt.Sprintf("HTTP request failed: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	// Return the result
+	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+	var resultError string
+	if !success {
+		resultError = fmt.Sprintf("webhook returned HTTP status %d", resp.StatusCode)
+	}
+	return TestResult{
+		Success:    success,
+		StatusCode: resp.StatusCode,
+		Error:      resultError,
+	}
+}
