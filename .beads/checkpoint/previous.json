@@ -1,27 +1,40 @@
 {
   "active_root": {
-    "path": "objects/gen-bdd6666e5dc68fb786fe1d264b50fa2b.jsonl",
-    "sha256": "8fbaef871129ebb57b9375cc1cfdf3a717d3d46126b466b4e3e4608963daf55d"
+    "path": "objects/gen-cda82a7ab1a12bda53ffed4356ca5d3d.jsonl",
+    "sha256": "3db1cbfa143887dbd3955271f74d4ee574d5a4ac829f4b011a3e4a54b7041041"
   },
   "added_paths": [
-    "objects/gen-bdd6666e5dc68fb786fe1d264b50fa2b.jsonl",
-    "previous.json"
+    "objects/gen-cda82a7ab1a12bda53ffed4356ca5d3d.jsonl"
   ],
-  "created_at": "2026-08-14T14:57:01.306681581Z",
+  "created_at": "2026-08-16T16:06:44.373096452Z",
   "deleted_paths": [
     "current.json",
-    "objects/gen-2687494a3555b91cfd9c67798b95a27e.jsonl"
+    "objects/gen-04c8414964e07ccead93330b40087f2f.jsonl",
+    "objects/gen-051516812372ac497ca829ac00a32e55.jsonl",
+    "objects/gen-2687494a3555b91cfd9c67798b95a27e.jsonl",
+    "objects/gen-3ecb74df061b37f30190ae85d26f7bb1.jsonl",
+    "objects/gen-4efff12de2de2f4839155f7844398daf.jsonl",
+    "objects/gen-5a5c6ca295d943feff22cb6b29fd6327.jsonl",
+    "objects/gen-5b19afbcd7a8249be021a8eda22ff0c4.jsonl",
+    "objects/gen-5f941decc0611ae462380fa90248f347.jsonl",
+    "objects/gen-6ee8b142d14b7827bfa4816fa2bd698f.jsonl",
+    "objects/gen-76fed9fcb23f4d8e0b534127bfc9181e.jsonl",
+    "objects/gen-8e96fbc64f25de29896c0d094461fb9f.jsonl",
+    "objects/gen-9d2af4677793464445744012eb151b99.jsonl",
+    "objects/gen-a295c86bc8ab868f630938147fc9aa42.jsonl",
+    "objects/gen-bdd6666e5dc68fb786fe1d264b50fa2b.jsonl"
   ],
-  "event_count": 15,
-  "generation_id": "gen-bdd6666e5dc68fb786fe1d264b50fa2b",
+  "event_count": 38,
+  "generation_id": "gen-cda82a7ab1a12bda53ffed4356ca5d3d",
   "issue_count": 20,
   "mode": "monolithic",
   "receipt_count": 0,
   "replaced_paths": [
-    "forensic.jsonl"
+    "forensic.jsonl",
+    "previous.json"
   ],
   "schema_version": 1,
-  "snapshot_sequence": 15,
+  "snapshot_sequence": 38,
   "store_uuid": "db50a832-c634-ff30-4be3-8f8248b93795",
-  "total_record_count": 35
+  "total_record_count": 58
 }
