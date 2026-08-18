@@ -1132,9 +1132,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	}
 	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costDisplay))
 	if hasRate {
-		rateText := metrics.FormatTokenRateCompact(d.tokenMetrics.Rate)
-		sparkline := d.renderSparkline(d.tokenMetrics.RateHistory)
-		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s %s", dimStyle.Render(rateText), successStyle.Render(sparkline)))
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
 	}
 	if hasAvg {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
