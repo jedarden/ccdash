@@ -5,6 +5,31 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-17
+
+### Added
+- **Codex CLI token accounting**: ccdash now scans Codex rollout logs under
+  `~/.codex/sessions/YYYY/MM/DD`, combines their input, output, cached-input,
+  and cache-write tokens with Claude Code usage, and shows a provider-aware
+  per-model cost breakdown. Existing SQLite caches migrate automatically and
+  retain historical Claude rows.
+- **Codex session hooks**: `ccdash --install-codex-hooks` installs status-only
+  Codex lifecycle hooks; token data continues to come from local rollout logs.
+- **NEEDLE worker visibility**: workers without tmux sessions or Claude hook
+  records now appear in the sessions panel from the NEEDLE worker registry.
+- **Configurable token-cost alerting**: the token panel can highlight spend
+  after a configured threshold is crossed.
+- **Notification diagnostics**: `ccdash --test-notify` tests the configured
+  notification webhook without waiting for a session transition.
+- **Startup update notice**: available releases are shown in a dismissible
+  startup notice.
+
+### Changed
+- **Stale READY sessions**: long-idle READY sessions are flagged and sorted so
+  sessions needing attention are easier to identify.
+- **Multi-provider cache schema**: token events and completed-file aggregates
+  now carry their source (`claude` or `codex`) for correct parsing and pricing.
+
 ## [1.0.3] - 2026-07-15
 
 ### Removed
