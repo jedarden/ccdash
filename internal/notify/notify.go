@@ -1,105 +1,43 @@
+// Package notify sends optional notifications when a hook-tracked session
+// needs human input.
 package notify
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"os"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/jedarden/ccdash/internal/metrics"
 )
 
-// Payload represents the notification payload sent to the webhook
-// Contains only session metadata, never token/cost data
+const (
+	// DebounceWindow is how long a waiting/asking state must persist before a
+	// notification is emitted.
+	DebounceWindow = 15 * time.Second
+	webhookTimeout = 5 * time.Second
+)
+
+// Payload is the complete webhook payload. Keep this deliberately small: it
+// contains no transcript, token, or cost information.
 type Payload struct {
-	SessionName    string        `json:"session_name"`
-	ProjectDir     string        `json:"project_dir"`
-	IdleDuration   time.Duration `json:"idle_duration"`
-	Timestamp      time.Time     `json:"timestamp"`
+	SessionName  string        `json:"session_name"`
+	ProjectDir   string        `json:"project_dir"`
+	IdleDuration time.Duration `json:"idle_duration"`
+	// Timestamp is retained for source compatibility with the initial CLI
+	// diagnostic payload, but is intentionally omitted from webhook JSON.
+	Timestamp time.Time `json:"-"`
 }
 
-// Client handles sending notifications to the configured webhook
-type Client struct {
-	webhookURL string
-	httpClient *http.Client
-	enabled    bool
-}
-
-// NewClient creates a new notification client
-func NewClient(webhookURL string, enabled bool) *Client {
-	return &Client{
-		webhookURL: webhookURL,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		enabled: enabled,
-	}
-}
-
-// Send sends a notification payload to the webhook
-// Silent-fail on errors: logs a warning but never returns an error
-func (c *Client) Send(payload *Payload) {
-	// If notifications are disabled, do nothing
-	if !c.enabled || c.webhookURL == "" {
-		return
-	}
-
-	// Marshal the payload to JSON
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		c.logWarning("Failed to marshal notification payload: %v", err)
-		return
-	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", c.webhookURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		c.logWarning("Failed to create request: %v", err)
-		return
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send the request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		c.logWarning("Failed to send notification: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Check for non-2xx status codes
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		c.logWarning("Notification webhook returned status %d", resp.StatusCode)
-	}
-}
-
-// logWarning logs a warning message to ccdash's log
-// This is a one-line log as specified in the requirements
-func (c *Client) logWarning(format string, args ...interface{}) {
-	msg := fmt.Sprintf("[notify] "+format, args...)
-	log.Println(msg)
-
-	// Also log to a dedicated file for debugging
-	// Use the same directory as the config
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	logFile := filepath.Join(homeDir, ".ccdash", "notify.log")
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	f.WriteString(fmt.Sprintf("[%s] %s\n", time.Now().Format(time.RFC3339), msg))
-}
-
-// SessionTransition represents a session status change that may trigger a notification
+// SessionTransition describes a status change for callers that want to make
+// the transition decision without using Tracker.
 type SessionTransition struct {
 	SessionName  string
 	ProjectDir   string
@@ -108,90 +46,248 @@ type SessionTransition struct {
 	IdleDuration time.Duration
 }
 
-// ShouldNotify determines if a transition should trigger a notification
-// Only notify on transitions INTO waiting/asking states that persist
-func (c *Client) ShouldNotify(transition *SessionTransition) bool {
-	if !c.enabled {
-		return false
-	}
-
-	// Only notify on transitions into waiting/asking
-	if transition.NewStatus != "waiting" && transition.NewStatus != "asking" {
-		return false
-	}
-
-	// Don't notify if already in waiting/asking (no transition)
-	if transition.OldStatus == "waiting" || transition.OldStatus == "asking" {
-		return false
-	}
-
-	// Don't notify on transitions from working (already handled by debounce)
-	// The caller should handle debouncing before calling this
-
-	return true
+// Client posts notification payloads to a configured webhook.
+type Client struct {
+	webhookURL string
+	httpClient *http.Client
+	enabled    bool
 }
 
-// TestResult contains the result of a test notification
+// NewClient creates a notification client. A disabled client never makes an
+// HTTP request, even when a webhook URL is present.
+func NewClient(webhookURL string, enabled bool) *Client {
+	return &Client{
+		webhookURL: webhookURL,
+		httpClient: &http.Client{Timeout: webhookTimeout},
+		enabled:    enabled,
+	}
+}
+
+// Send posts a notification and logs one warning on failure. It intentionally
+// does not return an error: notification delivery must never affect the
+// dashboard. Callers that must not block their refresh loop should invoke it
+// in a goroutine.
+func (c *Client) Send(payload *Payload) {
+	if c == nil || !c.enabled {
+		return
+	}
+
+	status, err := c.post(payload)
+	if err != nil {
+		if status != 0 {
+			c.logWarning("webhook returned HTTP status %d", status)
+			return
+		}
+		c.logWarning("webhook request failed")
+	}
+}
+
+// TestResult contains the result of a test notification.
 type TestResult struct {
 	Success    bool
 	StatusCode int
 	Error      string
 }
 
-// SendTest sends a test notification and returns detailed error information
-// Unlike Send(), this method returns errors and status codes for debugging
+// SendTest posts a notification and returns details for the explicit CLI
+// diagnostic command. Unlike Send, this method is allowed to return errors.
 func (c *Client) SendTest(payload *Payload) TestResult {
-	// If notifications are disabled, return error
-	if !c.enabled || c.webhookURL == "" {
-		return TestResult{
-			Success:    false,
-			StatusCode: 0,
-			Error:      "notifications are disabled or webhook_url is not configured",
-		}
+	if c == nil || !c.enabled {
+		return TestResult{Error: "notifications are disabled or webhook_url is not configured"}
 	}
 
-	// Marshal the payload to JSON
-	jsonData, err := json.Marshal(payload)
+	status, err := c.post(payload)
 	if err != nil {
 		return TestResult{
-			Success:    false,
-			StatusCode: 0,
-			Error:      fmt.Sprintf("failed to marshal payload: %v", err),
+			StatusCode: status,
+			Error:      err.Error(),
 		}
 	}
 
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", c.webhookURL, bytes.NewBuffer(jsonData))
+	return TestResult{Success: true, StatusCode: status}
+}
+
+// ShouldNotify reports whether a transition enters a waiting/asking state.
+// Tracker is preferred because it also handles persistence and deduplication;
+// this method remains useful to small integrations and preserves the client
+// API used by earlier releases.
+func (c *Client) ShouldNotify(transition *SessionTransition) bool {
+	if c == nil || !c.enabled || transition == nil {
+		return false
+	}
+	return isWaitingStatus(strings.ToLower(strings.TrimSpace(transition.NewStatus))) &&
+		!isWaitingStatus(strings.ToLower(strings.TrimSpace(transition.OldStatus)))
+}
+
+var errInvalidWebhook = errors.New("invalid webhook configuration")
+
+func (c *Client) post(payload *Payload) (int, error) {
+	if strings.TrimSpace(c.webhookURL) == "" {
+		return 0, errInvalidWebhook
+	}
+	if !validWebhookURL(c.webhookURL) {
+		return 0, errInvalidWebhook
+	}
+	if payload == nil {
+		return 0, errors.New("notification payload is nil")
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return TestResult{
-			Success:    false,
-			StatusCode: 0,
-			Error:      fmt.Sprintf("failed to create request: %v", err),
-		}
+		return 0, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send the request
-	resp, err := c.httpClient.Do(req)
+	request, err := http.NewRequest(http.MethodPost, c.webhookURL, bytes.NewReader(body))
 	if err != nil {
-		return TestResult{
-			Success:    false,
-			StatusCode: 0,
-			Error:      fmt.Sprintf("HTTP request failed: %v", err),
+		return 0, errInvalidWebhook
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		// Do not include the URL in the returned error: webhook URLs commonly
+		// contain bearer tokens or other credentials.
+		return 0, errors.New("webhook request failed")
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return response.StatusCode, fmt.Errorf("webhook returned HTTP status %d", response.StatusCode)
+	}
+
+	return response.StatusCode, nil
+}
+
+func validWebhookURL(raw string) bool {
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "http" || parsed.Scheme == "https"
+}
+
+func (c *Client) logWarning(format string, args ...interface{}) {
+	log.Printf("[notify] warning: "+format, args...)
+}
+
+// Tracker turns raw hook-session snapshots into one-shot notification
+// payloads. It tracks session IDs rather than display names so two sessions
+// using the same project directory cannot collide.
+type Tracker struct {
+	previous     map[string]string
+	waitingSince map[string]time.Time
+	notified     map[string]bool
+	debounce     time.Duration
+	now          func() time.Time
+}
+
+// NewTracker creates a debouncer using the supplied duration. Non-positive
+// durations use the ADR's default window.
+func NewTracker(debounce time.Duration) *Tracker {
+	if debounce <= 0 {
+		debounce = DebounceWindow
+	}
+	return &Tracker{
+		previous:     make(map[string]string),
+		waitingSince: make(map[string]time.Time),
+		notified:     make(map[string]bool),
+		debounce:     debounce,
+		now:          time.Now,
+	}
+}
+
+// Update consumes the current raw HookSession snapshot and returns any
+// notifications whose waiting/asking state has persisted through the debounce
+// window. The first snapshot of an already-waiting session is treated as the
+// beginning of observation unless LastActivity provides an earlier, usable
+// status timestamp.
+func (t *Tracker) Update(sessions []metrics.HookSession) []Payload {
+	if t == nil {
+		return nil
+	}
+
+	now := t.now()
+	seen := make(map[string]struct{}, len(sessions))
+	var payloads []Payload
+
+	for _, session := range sessions {
+		key := sessionKey(session)
+		if key == "" {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		status := strings.ToLower(strings.TrimSpace(session.Status))
+		previous, hadPrevious := t.previous[key]
+		waiting := isWaitingStatus(status)
+
+		if waiting {
+			if !hadPrevious || !isWaitingStatus(previous) {
+				t.waitingSince[key] = now
+				t.notified[key] = false
+				if !hadPrevious && !session.LastActivity.IsZero() && session.LastActivity.Before(now) {
+					t.waitingSince[key] = session.LastActivity
+				}
+			} else if _, ok := t.waitingSince[key]; !ok {
+				t.waitingSince[key] = now
+			}
+
+			if !t.notified[key] && !t.waitingSince[key].Add(t.debounce).After(now) {
+				idleDuration := now.Sub(session.LastActivity)
+				if session.LastActivity.IsZero() {
+					idleDuration = now.Sub(t.waitingSince[key])
+				}
+				if idleDuration < 0 {
+					idleDuration = 0
+				}
+
+				payloads = append(payloads, Payload{
+					SessionName:  sessionName(session),
+					ProjectDir:   session.ProjectDir,
+					IdleDuration: idleDuration,
+				})
+				t.notified[key] = true
+			}
+		} else {
+			delete(t.waitingSince, key)
+			delete(t.notified, key)
+		}
+
+		t.previous[key] = status
+	}
+
+	for key := range t.previous {
+		if _, ok := seen[key]; !ok {
+			delete(t.previous, key)
+			delete(t.waitingSince, key)
+			delete(t.notified, key)
 		}
 	}
-	defer resp.Body.Close()
 
-	// Return the result
-	success := resp.StatusCode >= 200 && resp.StatusCode < 300
-	var resultError string
-	if !success {
-		resultError = fmt.Sprintf("webhook returned HTTP status %d", resp.StatusCode)
+	return payloads
+}
+
+func isWaitingStatus(status string) bool {
+	return status == "waiting" || status == "asking"
+}
+
+func sessionKey(session metrics.HookSession) string {
+	if session.SessionID != "" {
+		return session.SessionID
 	}
-	return TestResult{
-		Success:    success,
-		StatusCode: resp.StatusCode,
-		Error:      resultError,
+	return sessionName(session)
+}
+
+func sessionName(session metrics.HookSession) string {
+	if session.TmuxSessionName != "" {
+		return session.TmuxSessionName
 	}
+	if session.ProjectDir != "" {
+		name := filepath.Base(session.ProjectDir)
+		if name != "." && name != string(filepath.Separator) {
+			return name
+		}
+	}
+	return session.SessionID
 }
