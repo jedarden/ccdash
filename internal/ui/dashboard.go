@@ -75,10 +75,9 @@ type Dashboard struct {
 	updateDismissed bool
 
 	// Notification system
-	notifyConfig      *config.Config
-	notifyClient      *notify.Client
-	prevSessionStatus map[string]string    // session_id -> previous status
-	waitingSince      map[string]time.Time // session_id -> when entered waiting/asking
+	notifyConfig        *config.Config
+	notifyClient        *notify.Client
+	notificationTracker *notify.Tracker
 }
 
 // generateInstanceID creates a unique identifier for this dashboard instance
@@ -144,27 +143,30 @@ func NewDashboard(version string) *Dashboard {
 		},
 	}
 
-	// Load notification config (fails gracefully if config missing)
+	// Load notification config (fails gracefully if config missing). Keep the
+	// client and tracker nil unless explicitly enabled so the default path is
+	// fully inert.
 	cfg, _ := config.Load()
 	var notifyClient *notify.Client
-	if cfg != nil {
-		notifyClient = notify.NewClient(cfg.Notify.WebhookURL, cfg.Notify.Enabled)
+	var notificationTracker *notify.Tracker
+	if cfg != nil && cfg.Notify.Enabled {
+		notifyClient = notify.NewClient(cfg.Notify.WebhookURL, true)
+		notificationTracker = notify.NewTracker(notify.DebounceWindow)
 	}
 
 	return &Dashboard{
-		version:            version,
-		instanceID:         generateInstanceID(),
-		systemCollector:    metrics.NewSystemCollector(),
-		tokenCollector:     metrics.NewTokenCollector(),
-		tmuxCollector:      metrics.NewTmuxCollector(),
-		updater:            updater.NewUpdater(version),
-		lastUpdate:         time.Now(),
-		lookbackPresets:    presets,
-		lookbackCustomDate: time.Now().AddDate(0, 0, -1), // Default custom to yesterday
-		notifyConfig:       cfg,
-		notifyClient:       notifyClient,
-		prevSessionStatus:  make(map[string]string),
-		waitingSince:       make(map[string]time.Time),
+		version:             version,
+		instanceID:          generateInstanceID(),
+		systemCollector:     metrics.NewSystemCollector(),
+		tokenCollector:      metrics.NewTokenCollector(),
+		tmuxCollector:       metrics.NewTmuxCollector(),
+		updater:             updater.NewUpdater(version),
+		lastUpdate:          time.Now(),
+		lookbackPresets:     presets,
+		lookbackCustomDate:  time.Now().AddDate(0, 0, -1), // Default custom to yesterday
+		notifyConfig:        cfg,
+		notifyClient:        notifyClient,
+		notificationTracker: notificationTracker,
 	}
 }
 
@@ -257,6 +259,16 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.tokenMetrics = msg.tokens
 		d.tmuxMetrics = msg.tmux
 		d.lastUpdate = time.Now()
+
+		// Only the lease holder receives raw hook snapshots. This keeps
+		// notification diffing leader-only even when other dashboards render
+		// cached tmux metrics.
+		if msg.isLeader && msg.hookSessionsCollected && d.notificationTracker != nil {
+			for _, payload := range d.notificationTracker.Update(msg.hookSessions) {
+				payload := payload
+				go d.notifyClient.Send(&payload)
+			}
+		}
 		return d, nil
 
 	case updateCheckMsg:
@@ -444,10 +456,12 @@ func (d *Dashboard) tick() tea.Cmd {
 
 // metricsMsg carries collected metrics
 type metricsMsg struct {
-	system   metrics.SystemMetrics
-	tokens   *metrics.TokenMetrics
-	tmux     *metrics.TmuxMetrics
-	isLeader bool
+	system                metrics.SystemMetrics
+	tokens                *metrics.TokenMetrics
+	tmux                  *metrics.TmuxMetrics
+	isLeader              bool
+	hookSessions          []metrics.HookSession
+	hookSessionsCollected bool
 }
 
 // errMsg carries errors
@@ -471,6 +485,8 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 		var system metrics.SystemMetrics
 		var tokens *metrics.TokenMetrics
 		var tmux *metrics.TmuxMetrics
+		var hookSessions []metrics.HookSession
+		var hookSessionsCollected bool
 
 		// Use channels to collect results with timeout
 		type systemResult struct {
@@ -480,7 +496,9 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 			metrics *metrics.TokenMetrics
 		}
 		type tmuxResult struct {
-			metrics *metrics.TmuxMetrics
+			metrics               *metrics.TmuxMetrics
+			hookSessions          []metrics.HookSession
+			hookSessionsCollected bool
 		}
 
 		systemChan := make(chan systemResult, 1)
@@ -527,12 +545,26 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 			}
 			// Leader or cache miss: collect fresh
 			m := d.tmuxCollector.Collect()
+			var hookSessions []metrics.HookSession
+			hookSessionsCollected := false
+			if isLeader && d.notificationTracker != nil {
+				hookSessionsCollected = true
+				if hookCollector := d.tmuxCollector.GetHookCollector(); hookCollector != nil {
+					var err error
+					hookSessions, err = hookCollector.CollectSessions()
+					hookSessionsCollected = err == nil
+				}
+			}
 			if isLeader {
 				if data, err := json.Marshal(m); err == nil {
 					cache.SetCachedMetrics(metricTypeTmux, data)
 				}
 			}
-			tmuxChan <- tmuxResult{metrics: m}
+			tmuxChan <- tmuxResult{
+				metrics:               m,
+				hookSessions:          hookSessions,
+				hookSessionsCollected: hookSessionsCollected,
+			}
 		}()
 
 		// Wait for results with 3 second timeout
@@ -547,20 +579,28 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 				tokens = r.metrics
 			case r := <-tmuxChan:
 				tmux = r.metrics
+				hookSessions = r.hookSessions
+				hookSessionsCollected = r.hookSessionsCollected
 			case <-timeout:
 				// Return whatever we have so far
 				return metricsMsg{
-					system: system,
-					tokens: tokens,
-					tmux:   tmux,
+					system:                system,
+					tokens:                tokens,
+					tmux:                  tmux,
+					isLeader:              isLeader,
+					hookSessions:          hookSessions,
+					hookSessionsCollected: hookSessionsCollected,
 				}
 			}
 		}
 
 		return metricsMsg{
-			system: system,
-			tokens: tokens,
-			tmux:   tmux,
+			system:                system,
+			tokens:                tokens,
+			tmux:                  tmux,
+			isLeader:              isLeader,
+			hookSessions:          hookSessions,
+			hookSessionsCollected: hookSessionsCollected,
 		}
 	}
 }
