@@ -39,7 +39,7 @@ type TokenMetrics struct {
 	LookbackFrom        time.Time     `json:"lookback_from"` // Start of measurement period
 	Models              []string      `json:"models"`
 	ModelUsages         []ModelUsage  `json:"model_usages"` // Per-model breakdown
-	RateHistory        []int64       `json:"rate_history"` // Bucketed token usage for sparkline (last 30 min, 1-min buckets)
+	RateHistory         []int64       `json:"rate_history"` // Bucketed token usage for sparkline (last 30 min, 1-min buckets)
 	Available           bool          `json:"available"`
 	Error               string        `json:"error,omitempty"`
 	LastUpdate          time.Time     `json:"last_update"`

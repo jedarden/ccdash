@@ -16,7 +16,7 @@ type Config struct {
 
 // NotifyConfig contains notification settings
 type NotifyConfig struct {
-	Enabled   bool   `yaml:"enabled"`
+	Enabled    bool   `yaml:"enabled"`
 	WebhookURL string `yaml:"webhook_url"`
 }
 
@@ -38,7 +38,7 @@ func Load() (*Config, error) {
 	// Default configuration if file doesn't exist
 	defaults := &Config{
 		Notify: NotifyConfig{
-			Enabled:   false,
+			Enabled:    false,
 			WebhookURL: "",
 		},
 		Alerts: AlertsConfig{

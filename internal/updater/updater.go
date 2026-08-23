@@ -37,13 +37,13 @@ type Asset struct {
 
 // UpdateInfo contains information about available updates
 type UpdateInfo struct {
-	CurrentVersion   string
-	LatestVersion    string
-	UpdateAvailable  bool
-	DownloadURL      string
-	ReleaseNotes     string
-	LastChecked      time.Time
-	Error            string
+	CurrentVersion  string
+	LatestVersion   string
+	UpdateAvailable bool
+	DownloadURL     string
+	ReleaseNotes    string
+	LastChecked     time.Time
+	Error           string
 }
 
 // Updater handles checking for and applying updates

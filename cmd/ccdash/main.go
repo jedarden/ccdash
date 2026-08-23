@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jedarden/ccdash/internal/metrics"
@@ -23,14 +24,14 @@ var version = "dev"
 func main() {
 	// Parse command-line flags
 	var (
-		showVersion  = flag.Bool("version", false, "Show version information")
-		showHelp     = flag.Bool("help", false, "Show help information")
+		showVersion       = flag.Bool("version", false, "Show version information")
+		showHelp          = flag.Bool("help", false, "Show help information")
 		installHooks      = flag.Bool("install-hooks", false, "Install Claude Code hooks for session tracking")
 		installCodexHooks = flag.Bool("install-codex-hooks", false, "Install Codex hooks for session tracking")
 		checkHooks        = flag.Bool("check-hooks", false, "Check Claude Code and Codex hook installation")
 		uninstallHooks    = flag.Bool("uninstall-hooks", false, "Uninstall ccdash hooks from Claude Code and Codex")
 		testNotify        = flag.Bool("test-notify", false, "Test notification webhook configuration")
-		extraDirs    = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
+		extraDirs         = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
 		exportFormat      = flag.String("export", "", "Export token cache to stdout (csv|json)")
 	)
 
@@ -111,9 +112,9 @@ func main() {
 		codexInstalled := codexInstaller.AreHooksInstalled()
 		if claudeInstalled || codexInstalled {
 			if claudeInstalled {
-			fmt.Println("✓ Claude Code hooks are installed")
-			fmt.Printf("  Hook scripts: %s/hooks/\n", collector.GetBaseDir())
-			fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
+				fmt.Println("✓ Claude Code hooks are installed")
+				fmt.Printf("  Hook scripts: %s/hooks/\n", collector.GetBaseDir())
+				fmt.Printf("  Session data: %s/sessions/\n", collector.GetBaseDir())
 			}
 			if codexInstalled {
 				fmt.Println("✓ Codex hooks are installed")
@@ -274,6 +275,117 @@ func setupHooks() *metrics.HookSessionCollector {
 	return collector
 }
 
+// exportCSV exports aggregated token data to CSV format
+func exportCSV(cache *metrics.TokenCache) error {
+	// Query aggregated data for the last 90 days
+	since := time.Now().AddDate(0, 0, -90)
+	agg, err := cache.QueryTokensSince(since)
+	if err != nil {
+		return fmt.Errorf("failed to get token data: %w", err)
+	}
+
+	// Create CSV writer
+	writer := csv.NewWriter(os.Stdout)
+	defer writer.Flush()
+
+	// Write CSV header
+	if err := writer.Write([]string{
+		"Metric", "Value",
+	}); err != nil {
+		return fmt.Errorf("failed to write CSV header: %w", err)
+	}
+
+	// Write summary data
+	rows := [][]string{
+		{"Total Input Tokens", fmt.Sprintf("%d", agg.InputTokens)},
+		{"Total Output Tokens", fmt.Sprintf("%d", agg.OutputTokens)},
+		{"Total Cache Read Tokens", fmt.Sprintf("%d", agg.CacheReadTokens)},
+		{"Total Cache Creation Tokens", fmt.Sprintf("%d", agg.CacheCreationTokens)},
+		{"Earliest Timestamp", agg.EarliestTimestamp.Format(time.RFC3339)},
+		{"Latest Timestamp", agg.LatestTimestamp.Format(time.RFC3339)},
+		{"Event Count", fmt.Sprintf("%d", agg.EventCount)},
+	}
+
+	for _, row := range rows {
+		if err := writer.Write(row); err != nil {
+			return fmt.Errorf("failed to write CSV row: %w", err)
+		}
+	}
+
+	// Write per-model breakdown
+	for model, metrics := range agg.ModelMetrics {
+		modelRows := [][]string{
+			{fmt.Sprintf("Model: %s (Source)", model), metrics.Source},
+			{fmt.Sprintf("Model: %s (Input)", model), fmt.Sprintf("%d", metrics.InputTokens)},
+			{fmt.Sprintf("Model: %s (Output)", model), fmt.Sprintf("%d", metrics.OutputTokens)},
+		}
+		for _, row := range modelRows {
+			if err := writer.Write(row); err != nil {
+				return fmt.Errorf("failed to write model CSV row: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// exportJSON exports aggregated token data to JSON format
+func exportJSON(cache *metrics.TokenCache) error {
+	// Query aggregated data for the last 90 days
+	since := time.Now().AddDate(0, 0, -90)
+	agg, err := cache.QueryTokensSince(since)
+	if err != nil {
+		return fmt.Errorf("failed to get token data: %w", err)
+	}
+
+	// Create export structure
+	type ModelBreakdownItem struct {
+		Source       string `json:"source"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
+	}
+
+	type ExportData struct {
+		InputTokens         int64                         `json:"input_tokens"`
+		OutputTokens        int64                         `json:"output_tokens"`
+		CacheReadTokens     int64                         `json:"cache_read_tokens"`
+		CacheCreationTokens int64                         `json:"cache_creation_tokens"`
+		EarliestTimestamp   string                        `json:"earliest_timestamp"`
+		LatestTimestamp     string                        `json:"latest_timestamp"`
+		EventCount          int64                         `json:"event_count"`
+		ModelBreakdown      map[string]ModelBreakdownItem `json:"model_breakdown"`
+	}
+
+	modelBreakdown := make(map[string]ModelBreakdownItem)
+	for model, metrics := range agg.ModelMetrics {
+		modelBreakdown[model] = ModelBreakdownItem{
+			Source:       metrics.Source,
+			InputTokens:  metrics.InputTokens,
+			OutputTokens: metrics.OutputTokens,
+		}
+	}
+
+	export := ExportData{
+		InputTokens:         agg.InputTokens,
+		OutputTokens:        agg.OutputTokens,
+		CacheReadTokens:     agg.CacheReadTokens,
+		CacheCreationTokens: agg.CacheCreationTokens,
+		EarliestTimestamp:   agg.EarliestTimestamp.Format(time.RFC3339),
+		LatestTimestamp:     agg.LatestTimestamp.Format(time.RFC3339),
+		EventCount:          agg.EventCount,
+		ModelBreakdown:      modelBreakdown,
+	}
+
+	// Write JSON output
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(export); err != nil {
+		return fmt.Errorf("failed to write JSON: %w", err)
+	}
+
+	return nil
+}
+
 func printHelp() {
 	fmt.Println("ccdash - Claude Code + Codex Dashboard")
 	fmt.Println()
@@ -285,10 +397,10 @@ func printHelp() {
 	fmt.Println("OPTIONS:")
 	fmt.Println("  --version             Show version information")
 	fmt.Println("  --help                Show this help message")
-		fmt.Println("  --install-hooks       Install Claude Code hooks for session tracking")
-		fmt.Println("  --install-codex-hooks Install Codex hooks for session tracking")
-		fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
-		fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
+	fmt.Println("  --install-hooks       Install Claude Code hooks for session tracking")
+	fmt.Println("  --install-codex-hooks Install Codex hooks for session tracking")
+	fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
+	fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
 	fmt.Println("  --test-notify         Test notification webhook configuration")
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")

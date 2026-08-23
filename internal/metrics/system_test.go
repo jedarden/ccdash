@@ -157,9 +157,9 @@ func TestFormatBytes(t *testing.T) {
 
 func TestFormatRate(t *testing.T) {
 	tests := []struct {
-		name         string
-		bytesPerSec  float64
-		expected     string
+		name        string
+		bytesPerSec float64
+		expected    string
 	}{
 		{"Zero rate", 0, "0.00 B/s"},
 		{"Bytes per second", 512.5, "512.50 B/s"},
@@ -206,7 +206,7 @@ func TestCollectCPU(t *testing.T) {
 		sum += pct
 	}
 	expectedAvg := sum / float64(len(cpuMetrics.PerCore))
-	
+
 	// Allow small floating point difference
 	diff := cpuMetrics.TotalPercent - expectedAvg
 	if diff < -0.01 || diff > 0.01 {

@@ -5,6 +5,15 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-08-23
+
+### Fixed
+- **NEEDLE worker session double-counting**: Fixed bug where NEEDLE workers with dotted adapter names (e.g., `claude-code-glm-4.7-g47-agentscribe`) were counted as multiple separate sessions. Session identifiers are now normalized across hook, tmux, and NEEDLE registry sources by removing the `needle-` prefix and converting dots to underscores (e.g., `glm-4.7` → `glm-4_7`), ensuring consistent deduplication during session merge.
+- **Token rate sparkline removed**: Removed incomplete token rate sparkline from the dashboard UI.
+
+### Added
+- **Leader-only session escalation notifications**: Added leader election to notification system, ensuring only one ccdash instance sends notifications when multiple instances are monitoring the same fleet. Prevents duplicate alerts for sessions needing human input.
+
 ## [1.1.0] - 2026-08-17
 
 ### Added

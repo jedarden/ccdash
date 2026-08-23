@@ -12,18 +12,18 @@ import (
 
 // ClaudeUsageEntry represents a single line from Claude Code's JSONL files
 type ClaudeUsageEntry struct {
-	Type      string    `json:"type"`
-	Message   *Message  `json:"message,omitempty"`
-	Timestamp string    `json:"timestamp"`
-	SessionID string    `json:"sessionId"`
-	UUID      string    `json:"uuid"`
+	Type      string   `json:"type"`
+	Message   *Message `json:"message,omitempty"`
+	Timestamp string   `json:"timestamp"`
+	SessionID string   `json:"sessionId"`
+	UUID      string   `json:"uuid"`
 }
 
 // Message contains the API response with usage data
 type Message struct {
-	Model string       `json:"model"`
-	Role  string       `json:"role"`
-	Usage *UsageData   `json:"usage,omitempty"`
+	Model string     `json:"model"`
+	Role  string     `json:"role"`
+	Usage *UsageData `json:"usage,omitempty"`
 }
 
 // UsageData contains token usage information
@@ -38,8 +38,8 @@ type UsageData struct {
 
 // CacheDetails contains cache-specific token counts
 type CacheDetails struct {
-	Ephemeral5mInputTokens  int64 `json:"ephemeral_5m_input_tokens"`
-	Ephemeral1hInputTokens  int64 `json:"ephemeral_1h_input_tokens"`
+	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
 }
 
 // ClaudeUsageCollector collects usage directly from Claude Code's JSONL files

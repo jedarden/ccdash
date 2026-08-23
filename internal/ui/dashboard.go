@@ -1530,7 +1530,7 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	staleIndicator := ""
 	isStale := session.Status == metrics.StatusReady && session.IdleDuration > 5*time.Minute
 	if isStale {
-		staleIndicator = "⏰" // Clock emoji indicates long wait
+		staleIndicator = "⏰"                 // Clock emoji indicates long wait
 		statusStyle = statusStyle.Bold(true) // Make stale sessions stand out
 	}
 
