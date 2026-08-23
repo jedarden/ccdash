@@ -121,15 +121,37 @@ func (w *NeedleWorker) ToTmuxSession(busy bool) TmuxSession {
 	}
 }
 
+// normalizeForTmux converts a worker ID to the tmux session naming convention
+// used by NEEDLE, which replaces dots with underscores (e.g., "glm-4.7" becomes
+// "glm-4_7"). This ensures identifiers match when comparing against tmux session
+// names.
+func normalizeForTmux(workerID string) string {
+	return strings.ReplaceAll(workerID, ".", "_")
+}
+
+// normalizeForNeedle removes the "needle-" prefix and normalizes dots to underscores
+// to create a consistent identifier for deduplication. This handles both full tmux
+// session names (e.g., "needle-claude-code-glm-4_7-alpha" → "claude-code-glm-4_7-alpha")
+// and worker IDs with dots (e.g., "claude-code-glm-4.7-alpha" → "claude-code-glm-4_7-alpha").
+func normalizeForNeedle(name string) string {
+	// Remove the "needle-" prefix if present
+	normalized := strings.TrimPrefix(name, "needle-")
+	// Replace dots with underscores for consistency
+	normalized = strings.ReplaceAll(normalized, ".", "_")
+	return normalized
+}
+
 // hasTmuxSessionFor reports whether any tmux session already represents the
 // given NEEDLE worker id. needle names its tmux sessions after the worker id
-// with a prefix, so containment is the reliable test.
+// with a prefix and sanitizes the name by replacing dots with underscores, so
+// normalization is required before comparison.
 func hasTmuxSessionFor(workerID string, sessions []TmuxSession) bool {
 	if workerID == "" {
 		return false
 	}
+	normalizedID := normalizeForTmux(workerID)
 	for _, s := range sessions {
-		if strings.Contains(s.Name, workerID) {
+		if strings.Contains(s.Name, normalizedID) {
 			return true
 		}
 	}

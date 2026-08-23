@@ -39,6 +39,7 @@ type TokenMetrics struct {
 	LookbackFrom        time.Time     `json:"lookback_from"` // Start of measurement period
 	Models              []string      `json:"models"`
 	ModelUsages         []ModelUsage  `json:"model_usages"` // Per-model breakdown
+	RateHistory        []int64       `json:"rate_history"` // Bucketed token usage for sparkline (last 30 min, 1-min buckets)
 	Available           bool          `json:"available"`
 	Error               string        `json:"error,omitempty"`
 	LastUpdate          time.Time     `json:"last_update"`
@@ -408,6 +409,16 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	recentEvents, err := tc.cache.QueryRecentEvents(60)
 	if err == nil && len(recentEvents) > 0 {
 		metrics.Rate = tc.calculate60sRate(recentEvents)
+	}
+
+	// Query bucketed token usage for sparkline (last 30 minutes, 1-minute buckets)
+	// This provides a visual history of token usage over time
+	buckets, err := tc.cache.QueryBuckets(30*60, 60) // 30 min window, 60s intervals
+	if err == nil && len(buckets) > 0 {
+		metrics.RateHistory = make([]int64, len(buckets))
+		for i, bucket := range buckets {
+			metrics.RateHistory[i] = bucket.Tokens
+		}
 	}
 
 	metrics.Available = true

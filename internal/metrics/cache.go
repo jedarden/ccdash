@@ -1027,6 +1027,75 @@ type TimestampedTokens struct {
 	Tokens    int64
 }
 
+// BucketedTokens represents token usage in a time bucket
+type BucketedTokens struct {
+	Timestamp int64 // Unix timestamp for the bucket start
+	Tokens    int64 // Total tokens in this bucket
+}
+
+// QueryBuckets returns token usage bucketed by interval over the last N seconds
+func (tc *TokenCache) QueryBuckets(seconds int64, intervalSeconds int64) ([]BucketedTokens, error) {
+	return tc.QueryBucketsContext(context.Background(), seconds, intervalSeconds)
+}
+
+// QueryBucketsContext returns bucketed token usage with context support
+func (tc *TokenCache) QueryBucketsContext(ctx context.Context, seconds int64, intervalSeconds int64) ([]BucketedTokens, error) {
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
+
+	if tc.db == nil {
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, dbOperationTimeout)
+	defer cancel()
+
+	return withRetry(ctx, func() ([]BucketedTokens, error) {
+		cutoff := time.Now().Unix() - seconds
+		bucketCount := int(seconds/intervalSeconds) + 1
+
+		// Query token events and bucket them
+		query := `
+			SELECT timestamp_unix,
+				   input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens as total_tokens
+			FROM token_events
+			WHERE timestamp_unix >= ?
+			ORDER BY timestamp_unix ASC
+		`
+
+		rows, err := tc.db.QueryContext(ctx, query, cutoff)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		// Initialize buckets
+		buckets := make([]BucketedTokens, bucketCount)
+		now := time.Now().Unix()
+		for i := range buckets {
+			buckets[i].Timestamp = now - int64(bucketCount-1-i)*intervalSeconds
+			buckets[i].Tokens = 0
+		}
+
+		// Fill buckets from events
+		for rows.Next() {
+			var ts int64
+			var tokens int64
+			if err := rows.Scan(&ts, &tokens); err != nil {
+				continue
+			}
+
+			// Calculate which bucket this event belongs to
+			bucketIndex := int((ts - cutoff) / intervalSeconds)
+			if bucketIndex >= 0 && bucketIndex < bucketCount {
+				buckets[bucketIndex].Tokens += tokens
+			}
+		}
+
+		return buckets, nil
+	})
+}
+
 // GetFileState returns the last processed line and modification time for a file
 func (tc *TokenCache) GetFileState(sourceFile string) (lastLine int64, lastModified time.Time, exists bool) {
 	return tc.GetFileStateContext(context.Background(), sourceFile)
@@ -1323,5 +1392,200 @@ func (tc *TokenCache) ReleaseLease(instanceID string) {
 			DELETE FROM collector_lease WHERE id = 1 AND instance_id = ?
 		`, instanceID)
 		return err
+	})
+}
+
+// TokenEventExport represents a single token event for export
+type TokenEventExport struct {
+	ID                  int64     `json:"id"`
+	Timestamp           time.Time `json:"timestamp"`
+	TimestampUnix       int64     `json:"timestamp_unix"`
+	Model               string    `json:"model"`
+	Source              string    `json:"source"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CacheReadTokens     int64     `json:"cache_read_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	SourceFile          string    `json:"source_file"`
+	LineNumber          int64     `json:"line_number"`
+}
+
+// ExportAllTokenEvents retrieves all token events from the database
+func (tc *TokenCache) ExportAllTokenEvents() ([]TokenEventExport, error) {
+	return tc.ExportTokenEventsSince(time.Time{})
+}
+
+// ExportTokenEventsSince retrieves token events since a given timestamp
+func (tc *TokenCache) ExportTokenEventsSince(since time.Time) ([]TokenEventExport, error) {
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
+
+	if tc.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	return withRetry(ctx, func() ([]TokenEventExport, error) {
+		var events []TokenEventExport
+
+		query := `
+			SELECT id, timestamp, timestamp_unix, model, source,
+			       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+			       source_file, line_number
+			FROM token_events
+		`
+		args := []interface{}{}
+
+		if !since.IsZero() {
+			query += " WHERE timestamp_unix >= ?"
+			args = append(args, since.Unix())
+		}
+
+		query += " ORDER BY timestamp_unix ASC"
+
+		rows, err := tc.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var event TokenEventExport
+			var timestamp string
+
+			err := rows.Scan(
+				&event.ID,
+				&timestamp,
+				&event.TimestampUnix,
+				&event.Model,
+				&event.Source,
+				&event.InputTokens,
+				&event.OutputTokens,
+				&event.CacheReadTokens,
+				&event.CacheCreationTokens,
+				&event.SourceFile,
+				&event.LineNumber,
+			)
+			if err != nil {
+				continue
+			}
+
+			// Parse timestamp
+			event.Timestamp, err = time.Parse(time.RFC3339Nano, timestamp)
+			if err != nil {
+				// Fallback to unix timestamp if parsing fails
+				event.Timestamp = time.Unix(event.TimestampUnix, 0)
+			}
+
+			events = append(events, event)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+
+		return events, nil
+	})
+}
+
+// FileAggregateExport represents a file aggregate for export
+type FileAggregateExport struct {
+	SourceFile         string                       `json:"source_file"`
+	Source             string                       `json:"source"`
+	IsComplete         bool                         `json:"is_complete"`
+	CompletedAt        time.Time                    `json:"completed_at"`
+	TotalInputTokens   int64                        `json:"total_input_tokens"`
+	TotalOutputTokens  int64                        `json:"total_output_tokens"`
+	TotalCacheRead     int64                        `json:"total_cache_read_tokens"`
+	TotalCacheCreation int64                        `json:"total_cache_creation_tokens"`
+	EventCount         int64                        `json:"event_count"`
+	EarliestTimestamp  time.Time                    `json:"earliest_timestamp"`
+	LatestTimestamp    time.Time                    `json:"latest_timestamp"`
+	ModelBreakdown     map[string]*ModelAggregation `json:"model_breakdown"`
+}
+
+// ExportAllFileAggregates retrieves all file aggregates from the database
+func (tc *TokenCache) ExportAllFileAggregates() ([]FileAggregateExport, error) {
+	tc.ingestMu.RLock()
+	defer tc.ingestMu.RUnlock()
+
+	if tc.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbOperationTimeout)
+	defer cancel()
+
+	return withRetry(ctx, func() ([]FileAggregateExport, error) {
+		var aggregates []FileAggregateExport
+
+		query := `
+			SELECT source_file, source, is_complete, completed_at,
+			       total_input_tokens, total_output_tokens,
+			       total_cache_read_tokens, total_cache_creation_tokens,
+			       event_count, earliest_timestamp, latest_timestamp,
+			       model_breakdown
+			FROM file_aggregates
+			ORDER BY latest_timestamp ASC
+		`
+
+		rows, err := tc.db.QueryContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var agg FileAggregateExport
+			var completedAt, earliest, latest int64
+			var modelJSON string
+			var isComplete int
+
+			err := rows.Scan(
+				&agg.SourceFile,
+				&agg.Source,
+				&isComplete,
+				&completedAt,
+				&agg.TotalInputTokens,
+				&agg.TotalOutputTokens,
+				&agg.TotalCacheRead,
+				&agg.TotalCacheCreation,
+				&agg.EventCount,
+				&earliest,
+				&latest,
+				&modelJSON,
+			)
+			if err != nil {
+				continue
+			}
+
+			agg.IsComplete = isComplete == 1
+			agg.CompletedAt = time.Unix(completedAt, 0)
+			agg.EarliestTimestamp = time.Unix(earliest, 0)
+			agg.LatestTimestamp = time.Unix(latest, 0)
+
+			// Parse model breakdown JSON
+			agg.ModelBreakdown = make(map[string]*ModelAggregation)
+			if modelJSON != "" && modelJSON != "{}" {
+				if err := json.Unmarshal([]byte(modelJSON), &agg.ModelBreakdown); err == nil {
+					// Set source for models that don't have it
+					for _, model := range agg.ModelBreakdown {
+						if model.Source == "" {
+							model.Source = agg.Source
+						}
+					}
+				}
+			}
+
+			aggregates = append(aggregates, agg)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+
+		return aggregates, nil
 	})
 }

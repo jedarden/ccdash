@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -29,6 +31,7 @@ func main() {
 		uninstallHooks    = flag.Bool("uninstall-hooks", false, "Uninstall ccdash hooks from Claude Code and Codex")
 		testNotify        = flag.Bool("test-notify", false, "Test notification webhook configuration")
 		extraDirs    = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
+		exportFormat      = flag.String("export", "", "Export token cache to stdout (csv|json)")
 	)
 
 	flag.Parse()
@@ -153,6 +156,32 @@ func main() {
 	// Handle --test-notify
 	if *testNotify {
 		os.Exit(runTestNotify())
+	}
+
+	// Handle --export
+	if *exportFormat != "" {
+		cache := metrics.NewTokenCache()
+		if cache == nil || cache.GetDB() == nil {
+			fmt.Fprintf(os.Stderr, "Error: token cache not available\n")
+			os.Exit(1)
+		}
+
+		switch strings.ToLower(*exportFormat) {
+		case "csv":
+			if err := exportCSV(cache); err != nil {
+				fmt.Fprintf(os.Stderr, "Error exporting CSV: %v\n", err)
+				os.Exit(1)
+			}
+		case "json":
+			if err := exportJSON(cache); err != nil {
+				fmt.Fprintf(os.Stderr, "Error exporting JSON: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Error: export format must be 'csv' or 'json', got '%s'\n", *exportFormat)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	// Check if running in a terminal

@@ -207,6 +207,9 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 			continue
 		}
 
+		// Use normalized name for deduplication to handle dotted adapter names
+		normalizedKey := normalizeForNeedle(session.Name)
+
 		// Use actual tmux attached status (hooks don't track this)
 		session.Attached = tmuxSession.Attached
 
@@ -229,14 +232,15 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		// The Stop hook fires when Claude finishes and is the authoritative signal.
 
 		metrics.Sessions = append(metrics.Sessions, session)
-		seenNames[session.Name] = true
+		seenNames[normalizedKey] = true
 	}
 
 	// Then, add tmux sessions that aren't already tracked by hooks
 	for _, session := range tmuxSessions {
-		if !seenNames[session.Name] {
+		normalizedKey := normalizeForNeedle(session.Name)
+		if !seenNames[normalizedKey] {
 			metrics.Sessions = append(metrics.Sessions, session)
-			seenNames[session.Name] = true
+			seenNames[normalizedKey] = true
 		}
 	}
 
@@ -244,9 +248,10 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	// these are never filtered against tmux — absence of a tmux session is the
 	// normal state for a systemd-supervised worker, not evidence it is a phantom.
 	for _, session := range needleSessions {
-		if !seenNames[session.Name] {
+		normalizedKey := normalizeForNeedle(session.Name)
+		if !seenNames[normalizedKey] {
 			metrics.Sessions = append(metrics.Sessions, session)
-			seenNames[session.Name] = true
+			seenNames[normalizedKey] = true
 		}
 	}
 
