@@ -170,3 +170,9 @@ make clean    # Remove build artifacts
 ## License
 
 MIT
+
+---
+
+Part of [jedarden.com](https://jedarden.com) · Read the write-up: [jedarden.com/projects/ccdash/](https://jedarden.com/projects/ccdash/)
+
+*This GitHub repo is a read-only mirror of git.ardenone.com/jedarden/ccdash — issues and PRs are welcome here either way.*
