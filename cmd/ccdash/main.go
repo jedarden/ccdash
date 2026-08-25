@@ -180,8 +180,13 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error exporting JSON: %v\n", err)
 				os.Exit(1)
 			}
+		case "json-aggregated":
+			if err := exportJSONAggregated(cache); err != nil {
+				fmt.Fprintf(os.Stderr, "Error exporting aggregated JSON: %v\n", err)
+				os.Exit(1)
+			}
 		default:
-			fmt.Fprintf(os.Stderr, "Error: export format must be 'csv' or 'json', got '%s'\n", *exportFormat)
+			fmt.Fprintf(os.Stderr, "Error: export format must be 'csv', 'json', or 'json-aggregated', got '%s'\n", *exportFormat)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -430,53 +435,102 @@ func setupHooks() *metrics.HookSessionCollector {
 	return collector
 }
 
-// exportCSV exports aggregated token data to CSV format
+// exportCSV exports raw token event history to CSV format
 func exportCSV(cache *metrics.TokenCache) error {
-	// Query aggregated data for the last 90 days
-	since := time.Now().AddDate(0, 0, -90)
-	agg, err := cache.QueryTokensSince(since)
+	// Export all token events from the database
+	events, err := cache.ExportAllTokenEvents()
 	if err != nil {
-		return fmt.Errorf("failed to get token data: %w", err)
+		return fmt.Errorf("failed to export token events: %w", err)
+	}
+
+	// Also export file aggregates for complete files
+	aggregates, err := cache.ExportAllFileAggregates()
+	if err != nil {
+		return fmt.Errorf("failed to export file aggregates: %w", err)
 	}
 
 	// Create CSV writer
 	writer := csv.NewWriter(os.Stdout)
 	defer writer.Flush()
 
-	// Write CSV header
-	if err := writer.Write([]string{
-		"Metric", "Value",
-	}); err != nil {
+	// Write CSV header for raw events
+	header := []string{
+		"type", // "event" or "aggregate"
+		"timestamp",
+		"timestamp_unix",
+		"model",
+		"source",
+		"input_tokens",
+		"output_tokens",
+		"cache_read_tokens",
+		"cache_creation_tokens",
+		"source_file",
+		"line_number",
+	}
+	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
-	// Write summary data
-	rows := [][]string{
-		{"Total Input Tokens", fmt.Sprintf("%d", agg.InputTokens)},
-		{"Total Output Tokens", fmt.Sprintf("%d", agg.OutputTokens)},
-		{"Total Cache Read Tokens", fmt.Sprintf("%d", agg.CacheReadTokens)},
-		{"Total Cache Creation Tokens", fmt.Sprintf("%d", agg.CacheCreationTokens)},
-		{"Earliest Timestamp", agg.EarliestTimestamp.Format(time.RFC3339)},
-		{"Latest Timestamp", agg.LatestTimestamp.Format(time.RFC3339)},
-		{"Event Count", fmt.Sprintf("%d", agg.EventCount)},
-	}
-
-	for _, row := range rows {
+	// Write raw token events
+	for _, event := range events {
+		row := []string{
+			"event",
+			event.Timestamp.Format(time.RFC3339Nano),
+			fmt.Sprintf("%d", event.TimestampUnix),
+			event.Model,
+			event.Source,
+			fmt.Sprintf("%d", event.InputTokens),
+			fmt.Sprintf("%d", event.OutputTokens),
+			fmt.Sprintf("%d", event.CacheReadTokens),
+			fmt.Sprintf("%d", event.CacheCreationTokens),
+			event.SourceFile,
+			fmt.Sprintf("%d", event.LineNumber),
+		}
 		if err := writer.Write(row); err != nil {
-			return fmt.Errorf("failed to write CSV row: %w", err)
+			return fmt.Errorf("failed to write event CSV row: %w", err)
 		}
 	}
 
-	// Write per-model breakdown
-	for model, metrics := range agg.ModelMetrics {
-		modelRows := [][]string{
-			{fmt.Sprintf("Model: %s (Source)", model), metrics.Source},
-			{fmt.Sprintf("Model: %s (Input)", model), fmt.Sprintf("%d", metrics.InputTokens)},
-			{fmt.Sprintf("Model: %s (Output)", model), fmt.Sprintf("%d", metrics.OutputTokens)},
-		}
-		for _, row := range modelRows {
+	// Write file aggregates (lightly-aggregated data for complete files)
+	for _, agg := range aggregates {
+		// Write one row per model in the breakdown
+		if len(agg.ModelBreakdown) == 0 {
+			// No model breakdown, write aggregate as a single row
+			row := []string{
+				"aggregate",
+				agg.EarliestTimestamp.Format(time.RFC3339Nano),
+				fmt.Sprintf("%d", agg.EarliestTimestamp.Unix()),
+				"*", // wildcard for all models
+				agg.Source,
+				fmt.Sprintf("%d", agg.TotalInputTokens),
+				fmt.Sprintf("%d", agg.TotalOutputTokens),
+				fmt.Sprintf("%d", agg.TotalCacheRead),
+				fmt.Sprintf("%d", agg.TotalCacheCreation),
+				agg.SourceFile,
+				fmt.Sprintf("%d", agg.EventCount),
+			}
 			if err := writer.Write(row); err != nil {
-				return fmt.Errorf("failed to write model CSV row: %w", err)
+				return fmt.Errorf("failed to write aggregate CSV row: %w", err)
+			}
+		} else {
+			// Write one row per model in the breakdown
+			for model, modelData := range agg.ModelBreakdown {
+				row := []string{
+					"aggregate",
+					agg.LatestTimestamp.Format(time.RFC3339Nano),
+					fmt.Sprintf("%d", agg.LatestTimestamp.Unix()),
+					model,
+					agg.Source,
+					fmt.Sprintf("%d", modelData.InputTokens),
+					fmt.Sprintf("%d", modelData.OutputTokens),
+					fmt.Sprintf("%d", modelData.CacheReadTokens),
+					fmt.Sprintf("%d", modelData.CacheCreationTokens),
+					agg.SourceFile,
+					fmt.Sprintf("%d", agg.EventCount),
+				}
+				if err := writer.Write(row); err != nil {
+					return fmt.Errorf("failed to write model aggregate CSV row: %w", err)
+				}
 			}
 		}
 	}
@@ -484,8 +538,49 @@ func exportCSV(cache *metrics.TokenCache) error {
 	return nil
 }
 
-// exportJSON exports aggregated token data to JSON format
+// exportJSON exports raw token event history to JSON format
 func exportJSON(cache *metrics.TokenCache) error {
+	// Export all token events from the database
+	events, err := cache.ExportAllTokenEvents()
+	if err != nil {
+		return fmt.Errorf("failed to export token events: %w", err)
+	}
+
+	// Also export file aggregates for complete files
+	aggregates, err := cache.ExportAllFileAggregates()
+	if err != nil {
+		return fmt.Errorf("failed to export file aggregates: %w", err)
+	}
+
+	// Create export structure
+	type ExportData struct {
+		Events      []metrics.TokenEventExport       `json:"events"`
+		Aggregates  []metrics.FileAggregateExport     `json:"aggregates"`
+		ExportedAt  time.Time                         `json:"exported_at"`
+		Version     string                            `json:"version"`
+		TotalEvents int                               `json:"total_events"`
+	}
+
+	export := ExportData{
+		Events:      events,
+		Aggregates:  aggregates,
+		ExportedAt:  time.Now(),
+		Version:     version,
+		TotalEvents: len(events),
+	}
+
+	// Write JSON output
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(export); err != nil {
+		return fmt.Errorf("failed to write JSON: %w", err)
+	}
+
+	return nil
+}
+
+// exportJSONAggregated exports aggregated token data to JSON format (legacy format)
+func exportJSONAggregated(cache *metrics.TokenCache) error {
 	// Query aggregated data for the last 90 days
 	since := time.Now().AddDate(0, 0, -90)
 	agg, err := cache.QueryTokensSince(since)
@@ -495,9 +590,11 @@ func exportJSON(cache *metrics.TokenCache) error {
 
 	// Create export structure
 	type ModelBreakdownItem struct {
-		Source       string `json:"source"`
-		InputTokens  int64  `json:"input_tokens"`
-		OutputTokens int64  `json:"output_tokens"`
+		Source              string `json:"source"`
+		InputTokens         int64  `json:"input_tokens"`
+		OutputTokens        int64  `json:"output_tokens"`
+		CacheReadTokens     int64  `json:"cache_read_tokens"`
+		CacheCreationTokens int64  `json:"cache_creation_tokens"`
 	}
 
 	type ExportData struct {
@@ -509,14 +606,18 @@ func exportJSON(cache *metrics.TokenCache) error {
 		LatestTimestamp     string                        `json:"latest_timestamp"`
 		EventCount          int64                         `json:"event_count"`
 		ModelBreakdown      map[string]ModelBreakdownItem `json:"model_breakdown"`
+		ExportedAt          time.Time                     `json:"exported_at"`
+		Version             string                        `json:"version"`
 	}
 
 	modelBreakdown := make(map[string]ModelBreakdownItem)
 	for model, metrics := range agg.ModelMetrics {
 		modelBreakdown[model] = ModelBreakdownItem{
-			Source:       metrics.Source,
-			InputTokens:  metrics.InputTokens,
-			OutputTokens: metrics.OutputTokens,
+			Source:              metrics.Source,
+			InputTokens:         metrics.InputTokens,
+			OutputTokens:        metrics.OutputTokens,
+			CacheReadTokens:     metrics.CacheReadTokens,
+			CacheCreationTokens: metrics.CacheCreationTokens,
 		}
 	}
 
@@ -529,6 +630,8 @@ func exportJSON(cache *metrics.TokenCache) error {
 		LatestTimestamp:     agg.LatestTimestamp.Format(time.RFC3339),
 		EventCount:          agg.EventCount,
 		ModelBreakdown:      modelBreakdown,
+		ExportedAt:          time.Now(),
+		Version:             version,
 	}
 
 	// Write JSON output
@@ -562,7 +665,10 @@ func printHelp() {
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")
 	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
-	fmt.Println("  --export=<format>      Export token cache to stdout (csv|json)")
+	fmt.Println("  --export=<format>      Export token cache to stdout (csv|json|json-aggregated)")
+	fmt.Println("                        csv: Raw event history + file aggregates")
+	fmt.Println("                        json: Raw event history + file aggregates")
+	fmt.Println("                        json-aggregated: Summary statistics (legacy)")
 	fmt.Println()
 	fmt.Println("KEYBOARD SHORTCUTS:")
 	fmt.Println("  q, Ctrl+C    Quit the dashboard")
@@ -618,6 +724,9 @@ func printHelp() {
 	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
 	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
 	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")
+	fmt.Println("  ccdash --export=csv                     Export raw token events as CSV")
+	fmt.Println("  ccdash --export=json                    Export raw token events as JSON")
+	fmt.Println("  ccdash --export=json-aggregated          Export aggregated summary as JSON")
 	fmt.Println()
 	fmt.Println("For more information, visit: https://github.com/jedarden/ccdash")
 }
