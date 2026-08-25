@@ -33,6 +33,8 @@ func main() {
 		testNotify        = flag.Bool("test-notify", false, "Test notification webhook configuration")
 		extraDirs         = flag.String("extra-dirs", "", "Additional Claude project root directories to scan (comma-separated). Also set via CCDASH_EXTRA_DIRS env var (colon-separated)")
 		exportFormat      = flag.String("export", "", "Export token cache to stdout (csv|json)")
+		runOnce           = flag.Bool("once", false, "Run a single collection cycle and exit")
+		jsonOutput        = flag.Bool("json", false, "Output metrics as JSON (use with --once)")
 	)
 
 	flag.Parse()
@@ -185,6 +187,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --once (single collection cycle, no TUI)
+	if *runOnce {
+		os.Exit(runOnceMode(*jsonOutput, *extraDirs))
+	}
+
 	// Check if running in a terminal
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		fmt.Fprintln(os.Stderr, "Error: ccdash must be run in a terminal")
@@ -233,6 +240,154 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running dashboard: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// Snapshot represents a single-point-in-time collection of all metrics
+type Snapshot struct {
+	Timestamp   time.Time               `json:"timestamp"`
+	Version     string                  `json:"version"`
+	System      metrics.SystemMetrics   `json:"system"`
+	Tokens      *metrics.TokenMetrics   `json:"tokens"`
+	Sessions    *metrics.TmuxMetrics    `json:"sessions"`
+}
+
+// runOnceMode runs a single collection cycle and outputs the result
+func runOnceMode(asJSON bool, extraDirs string) int {
+	// Create collectors
+	systemCollector := metrics.NewSystemCollector()
+	tokenCollector := metrics.NewTokenCollector()
+	tmuxCollector := metrics.NewTmuxCollector()
+
+	// Add extra directories if specified
+	if extraDirs != "" {
+		var dirs []string
+		for _, d := range strings.Split(extraDirs, ",") {
+			if d = strings.TrimSpace(d); d != "" {
+				dirs = append(dirs, d)
+			}
+		}
+		if len(dirs) > 0 {
+			expandedDirs := metrics.ExpandGlobPatterns(dirs)
+			for _, dir := range expandedDirs {
+				tokenCollector.AddProjectsDir(dir)
+			}
+		}
+	}
+
+	// Collect metrics
+	snapshot := Snapshot{
+		Timestamp: time.Now(),
+		Version:   version,
+		System:    systemCollector.Collect(),
+	}
+
+	// Collect token metrics (may be nil if no data available)
+	tokenMetrics, err := tokenCollector.Collect()
+	if err != nil {
+		snapshot.Tokens = nil
+	} else {
+		snapshot.Tokens = tokenMetrics
+	}
+
+	// Collect session metrics
+	snapshot.Sessions = tmuxCollector.Collect()
+
+	// Stop background ingestion for token collector
+	tokenCollector.StopBackgroundIngestion()
+
+	// Output based on format
+	if asJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(snapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+			return 1
+		}
+	} else {
+		// Human-readable output
+		fmt.Printf("ccdash snapshot - %s\n", snapshot.Timestamp.Format(time.RFC3339))
+		fmt.Printf("Version: %s\n\n", version)
+
+		// System metrics
+		fmt.Println("=== System Resources ===")
+		fmt.Printf("CPU: %.1f%% (%d cores)\n", snapshot.System.CPU.TotalPercent, len(snapshot.System.CPU.PerCore))
+		fmt.Printf("Load: %.2f %.2f %.2f\n", snapshot.System.Load.Load1, snapshot.System.Load.Load5, snapshot.System.Load.Load15)
+		fmt.Printf("Memory: %s / %s (%.1f%%)\n",
+			metrics.FormatBytes(snapshot.System.Memory.Used),
+			metrics.FormatBytes(snapshot.System.Memory.Total),
+			snapshot.System.Memory.Percentage)
+		if snapshot.System.Swap.Total > 0 {
+			fmt.Printf("Swap: %s / %s (%.1f%%)\n",
+				metrics.FormatBytes(snapshot.System.Swap.Used),
+				metrics.FormatBytes(snapshot.System.Swap.Total),
+				snapshot.System.Swap.Percentage)
+		}
+		fmt.Printf("Disk (/): %s / %s (%.1f%%)\n",
+			metrics.FormatBytes(snapshot.System.DiskUsage.Used),
+			metrics.FormatBytes(snapshot.System.DiskUsage.Total),
+			snapshot.System.DiskUsage.Percentage)
+		fmt.Printf("Disk I/O: %s read, %s write\n",
+			metrics.FormatRate(snapshot.System.DiskIO.ReadBytesPerSec),
+			metrics.FormatRate(snapshot.System.DiskIO.WriteBytesPerSec))
+		fmt.Printf("Network: %s recv, %s sent\n",
+			metrics.FormatRate(snapshot.System.NetIO.RecvBytesPerSec),
+			metrics.FormatRate(snapshot.System.NetIO.SentBytesPerSec))
+
+		// Token metrics
+		fmt.Println("\n=== Token Usage ===")
+		if snapshot.Tokens != nil && snapshot.Tokens.Available {
+			fmt.Printf("Total Tokens: %s\n", metrics.FormatTokens(snapshot.Tokens.TotalTokens))
+			fmt.Printf("  Input:  %s\n", metrics.FormatTokens(snapshot.Tokens.InputTokens))
+			fmt.Printf("  Output: %s\n", metrics.FormatTokens(snapshot.Tokens.OutputTokens))
+			fmt.Printf("  Cache Read: %s\n", metrics.FormatTokens(snapshot.Tokens.CacheReadTokens))
+			fmt.Printf("  Cache Create: %s\n", metrics.FormatTokens(snapshot.Tokens.CacheCreationTokens))
+			fmt.Printf("Total Cost: %s\n", metrics.FormatCost(snapshot.Tokens.TotalCost))
+			fmt.Printf("Prompts: %d\n", snapshot.Tokens.Prompts)
+			fmt.Printf("Rate: %s\n", metrics.FormatTokenRate(snapshot.Tokens.Rate))
+			fmt.Printf("Session Avg: %s\n", metrics.FormatTokenRate(snapshot.Tokens.SessionAvgRate))
+			fmt.Printf("Time Span: %s\n", metrics.FormatDuration(snapshot.Tokens.TimeSpan))
+			if len(snapshot.Tokens.Models) > 0 {
+				fmt.Println("Models:")
+				for _, model := range snapshot.Tokens.Models {
+					fmt.Printf("  - %s\n", model)
+				}
+			}
+		} else {
+			fmt.Println("No token data available")
+			if snapshot.Tokens != nil && snapshot.Tokens.Error != "" {
+				fmt.Printf("Error: %s\n", snapshot.Tokens.Error)
+			}
+		}
+
+		// Session metrics
+		fmt.Println("\n=== Sessions ===")
+		if snapshot.Sessions.Available {
+			fmt.Printf("Total Sessions: %d\n", snapshot.Sessions.Total)
+			fmt.Printf("Source: %s\n", snapshot.Sessions.Source)
+			fmt.Printf("Hooks Installed: %v\n", snapshot.Sessions.HooksInstalled)
+			if snapshot.Sessions.RunningProcesses > 0 {
+				fmt.Printf("Running Processes: %d\n", snapshot.Sessions.RunningProcesses)
+			}
+			if len(snapshot.Sessions.Sessions) > 0 {
+				fmt.Println("Active Sessions:")
+				for _, session := range snapshot.Sessions.Sessions {
+					fmt.Printf("  - %s (%s) [%s]\n", session.Name, session.Harness, session.Status)
+					if session.Source == "hooks" {
+						fmt.Printf("    Project: %s\n", session.Name)
+					}
+					fmt.Printf("    Windows: %d, Attached: %v\n", session.Windows, session.Attached)
+					fmt.Printf("    Idle: %s\n", metrics.FormatDuration(session.IdleDuration))
+				}
+			}
+		} else {
+			fmt.Println("No session data available")
+			if snapshot.Sessions.Error != "" {
+				fmt.Printf("Error: %s\n", snapshot.Sessions.Error)
+			}
+		}
+	}
+
+	return 0
 }
 
 // setupHooks installs hooks, registers this instance, and returns the collector for cleanup
@@ -402,9 +557,12 @@ func printHelp() {
 	fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
 	fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
 	fmt.Println("  --test-notify         Test notification webhook configuration")
+	fmt.Println("  --once                Run a single collection cycle and exit (no TUI)")
+	fmt.Println("  --json                Output metrics as JSON (use with --once)")
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")
 	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
+	fmt.Println("  --export=<format>      Export token cache to stdout (csv|json)")
 	fmt.Println()
 	fmt.Println("KEYBOARD SHORTCUTS:")
 	fmt.Println("  q, Ctrl+C    Quit the dashboard")
@@ -455,6 +613,8 @@ func printHelp() {
 	fmt.Println("  ccdash --check-hooks                      Verify hooks installation")
 	fmt.Println("  ccdash --version                          Show version")
 	fmt.Println("  ccdash --help                             Show this help")
+	fmt.Println("  ccdash --once                            Single collection cycle (human-readable)")
+	fmt.Println("  ccdash --once --json                      Single collection cycle (JSON output)")
 	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
 	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
 	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")
