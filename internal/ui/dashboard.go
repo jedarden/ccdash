@@ -1172,7 +1172,18 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	}
 	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costDisplay))
 	if hasRate {
-		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
+		// Query bucketed token data for sparkline (last 30 min in 1-min buckets)
+		cache := d.tokenCollector.GetCache()
+		sparkline := ""
+		if cache != nil {
+			buckets, _ := cache.QueryBuckets(30*60, 60) // 30 min, 1-min buckets
+			bucketValues := make([]int64, len(buckets))
+			for i, b := range buckets {
+				bucketValues[i] = b.Tokens
+			}
+			sparkline = d.renderSparkline(bucketValues)
+		}
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate)), dimStyle.Render(sparkline)))
 	}
 	if hasAvg {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
