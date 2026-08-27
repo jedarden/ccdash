@@ -207,7 +207,7 @@ func (h *CodexHookInstaller) entryBelongsToCcdash(raw interface{}) bool {
 	return false
 }
 
-const codexHookCommon = `#!/bin/bash
+const codexHookCommon = `#!/usr/bin/env bash
 set -e
 
 CCDASH_DIR="$HOME/.ccdash"

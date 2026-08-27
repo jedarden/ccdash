@@ -5,6 +5,11 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-08-27
+
+### Fixed
+- **Hook scripts failing on NixOS (and any distro without `/bin/bash`)**: All 9 generated hook script templates (`session-start.sh`, `session-end.sh`, `stop.sh`, `pre-tool-use.sh`, `post-tool-use.sh`, `notification.sh`, `permission-request.sh`, `prompt-submit.sh`, and the shared Codex hook template) were shebanged `#!/bin/bash`, a path that does not exist on NixOS (which provides only `/bin/sh`). Claude Code reported this as a confusing "No such file or directory" against the hook script itself rather than the missing interpreter. Shebangs now use the portable `#!/usr/bin/env bash`, which resolves correctly on both NixOS and traditional FHS distros (Debian, Ubuntu, etc.) where `/bin/bash` does exist.
+
 ## [1.1.1] - 2026-08-23
 
 ### Fixed

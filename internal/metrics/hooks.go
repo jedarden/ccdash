@@ -327,7 +327,7 @@ func truncateSessionID(sessionID string) string {
 
 // HookScripts contains the shell scripts to be installed as Claude Code hooks
 var HookScripts = map[string]string{
-	"session-start.sh": `#!/bin/bash
+	"session-start.sh": `#!/usr/bin/env bash
 # Claude Code SessionStart hook - registers session with ccdash
 set -e
 
@@ -403,7 +403,7 @@ EOF
 exit 0
 `,
 
-	"session-end.sh": `#!/bin/bash
+	"session-end.sh": `#!/usr/bin/env bash
 # Claude Code SessionEnd hook - unregisters session from ccdash
 set -e
 
@@ -426,7 +426,7 @@ rm -f "$SESSIONS_DIR/${SESSION_ID}.json"
 exit 0
 `,
 
-	"stop.sh": `#!/bin/bash
+	"stop.sh": `#!/usr/bin/env bash
 # Claude Code Stop hook - marks session as stopped (waiting for input)
 set -e
 
@@ -456,7 +456,7 @@ fi
 exit 0
 `,
 
-	"pre-tool-use.sh": `#!/bin/bash
+	"pre-tool-use.sh": `#!/usr/bin/env bash
 # Claude Code PreToolUse hook - refreshes last_activity during tool execution
 # Prevents long-running tasks from being marked stale mid-execution
 set -e
@@ -483,7 +483,7 @@ fi
 exit 0
 `,
 
-	"post-tool-use.sh": `#!/bin/bash
+	"post-tool-use.sh": `#!/usr/bin/env bash
 # Claude Code PostToolUse hook - marks session as working again
 # Fires after any tool finishes, including ones that were gated on a
 # permission prompt, AskUserQuestion, or ExitPlanMode approval — this is
@@ -512,7 +512,7 @@ fi
 exit 0
 `,
 
-	"notification.sh": `#!/bin/bash
+	"notification.sh": `#!/usr/bin/env bash
 # Claude Code Notification hook - marks session as waiting for human input
 # Fires when Claude needs permission or has been idle 60s awaiting a reply.
 set -e
@@ -539,7 +539,7 @@ fi
 exit 0
 `,
 
-	"permission-request.sh": `#!/bin/bash
+	"permission-request.sh": `#!/usr/bin/env bash
 # Claude Code PermissionRequest hook - marks session as waiting for human input
 # Fires when the user is shown a permission dialog (tool approval, plan
 # approval via ExitPlanMode, AskUserQuestion, etc.).
@@ -567,7 +567,7 @@ fi
 exit 0
 `,
 
-	"prompt-submit.sh": `#!/bin/bash
+	"prompt-submit.sh": `#!/usr/bin/env bash
 # Claude Code UserPromptSubmit hook - marks session as working
 set -e
 
