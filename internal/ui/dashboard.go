@@ -605,35 +605,6 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 	}
 }
 
-// calculateTokenPanelWidth determines the optimal width for the token panel
-// based on actual content needs, returning the minimum width that displays well
-func (d *Dashboard) calculateTokenPanelWidth() int {
-	// Base minimum for the panel structure (stacked layout)
-	minWidth := 46
-
-	// If no token metrics or not available, use minimum
-	if d.tokenMetrics == nil || !d.tokenMetrics.Available {
-		return minWidth
-	}
-
-	modelCount := len(d.tokenMetrics.ModelUsages)
-
-	// Side-by-side layout needs:
-	// - Left column: 22 chars (stats)
-	// - Separator: 2 chars
-	// - Right column: ~24 chars (model name + cost)
-	// - Borders/padding: 4 chars
-	// Total: ~52 chars minimum for side-by-side
-	if modelCount > 0 {
-		// With models, use side-by-side layout
-		// More models = need slightly more height but same width
-		return 54
-	}
-
-	// Just basic token counts, no models - use narrow layout
-	return minWidth
-}
-
 // calculateTmuxPanelWidth determines the width needed for the TMUX panel
 // based on session count and available height (to calculate columns needed)
 func (d *Dashboard) calculateTmuxPanelWidth(panelHeight int) int {
@@ -713,21 +684,23 @@ func (d *Dashboard) renderUltraWide() string {
 	totalPanelWidth := d.width - 6
 	panelHeight := d.height - 3 // -2 borders, -1 status line
 
-	// Step 1: System panel gets fixed width for CPU bars
-	systemWidth := 60
-	if totalPanelWidth < 180 {
-		systemWidth = 55
-	}
+	// Step 1: System panel width. Its floor is set by its fixed-format Disk
+	// I/O / Net I/O lines ("Disk I/O | Read: 1024.00 KB/s | Write: 1024.00
+	// KB/s" = 51 cols worst case, verified against FormatRate's output
+	// range) — nothing in the panel benefits from more than that, so it
+	// never holds width the Token/Tmux panels could use for longer model
+	// names or more sessions.
+	const systemPanelMinContentWidth = 52 // 51-char worst case + 1 margin
+	systemWidth := systemPanelMinContentWidth + tokenPanelBorderPadding
 
 	// Step 2: Calculate minimum and ideal widths for both panels
 	minTokenWidth := 46
 	minTmuxWidth := d.calculateTmuxPanelWidth(panelHeight)
 
-	// Ideal token width: side-by-side layout with comfortable model display
-	// Left column (22) + separator (2) + right column for models
-	// Right column needs: model name (up to 15) + cost (8) + tokens (12) = ~35
-	// Total ideal: 22 + 2 + 35 + 4 (borders) = 60
-	idealTokenWidth := 60
+	// Ideal token width: side-by-side layout with comfortable model display,
+	// sized from the actual longest model name currently in use so it grows
+	// automatically instead of needing a hand-bumped constant.
+	idealTokenWidth := d.calculateRequiredTokenWidth()
 
 	// Ideal tmux width: minimum cell width + some padding for session names
 	// Use 35 chars per cell (28 min + 7 for longer names)
@@ -1077,6 +1050,18 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 	return style.Width(width).Height(height).Render(content)
 }
 
+// Token panel column layout constants, shared between renderTokenPanel
+// (which lays the columns out) and calculateRequiredTokenWidth /
+// renderUltraWide (which decide how much width the panel gets). Kept in one
+// place so the panel's sizing can't drift out of sync with what it renders,
+// which is what let model names silently start truncating.
+const (
+	tokenPanelBorderPadding = 4  // panelStyle border(2) + padding(2)
+	tokenLeftColWidth       = 22 // fixed stats column ("Total:", "Cost:", ...)
+	tokenColSeparatorWidth  = 2  // "│ " between columns
+	tokenRightColReserve    = 22 // worst-case " $XXX.XX (XXX.XB)" cost+token suffix per model line
+)
+
 // renderTokenPanel renders the token usage panel with side-by-side layout
 // Left side: Total token stats, Right side: Per-model costs
 func (d *Dashboard) renderTokenPanel(width, height int) string {
@@ -1197,11 +1182,9 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	useSideBySide := contentWidth >= 48 && modelCount > 0
 
 	// Calculate available width for model names based on layout
-	// In side-by-side: rightWidth = contentWidth - leftWidth(22) - separator(2)
-	// Model line format: "Name $XX.XX (XX,XXXtok)" - cost ~8 chars, tokens ~12 chars = ~20 chars for cost+tokens
-	leftWidth := 22
-	rightWidth := contentWidth - leftWidth - 2
-	maxModelNameWidth := rightWidth - 22 // Reserve space for cost and token count
+	leftWidth := tokenLeftColWidth
+	rightWidth := contentWidth - leftWidth - tokenColSeparatorWidth
+	maxModelNameWidth := rightWidth - tokenRightColReserve
 	if maxModelNameWidth < 10 {
 		maxModelNameWidth = 10 // Minimum display width
 	}
@@ -1281,80 +1264,123 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	return style.Width(width).Height(height).Render(content)
 }
 
-// shortenModelName shortens common model names for display
-func shortenModelName(name string) string {
-	// Common patterns to shorten
-	replacements := map[string]string{
-		"claude-opus-4-5-20251101":   "Opus 4.5",
-		"claude-sonnet-4-5-20250929": "Sonnet 4.5",
-		"claude-haiku-4-5-20250929":  "Haiku 4.5",
-		"claude-3-5-sonnet-20241022": "Sonnet 3.5",
-		"claude-3-5-haiku-20241022":  "Haiku 3.5",
-		"claude-3-opus-20240229":     "Opus 3",
-		"claude-3-sonnet-20240229":   "Sonnet 3",
-		"claude-3-haiku-20240307":    "Haiku 3",
-		// GLM models (Zhipu AI)
-		"glm-4-alltools": "GLM 4",
-		"glm-4-9b-chat":  "GLM 4",
-		"glm-4-air":      "GLM 4",
-		"glm-4-flash":    "GLM 4",
-		"glm-4-plus":     "GLM 4+",
-	}
+// legacyModelNames overrides shortenModelName's generic parse for model IDs
+// that don't carry a plain "<family>-<version>" number: GLM's qualitative
+// variant names, and Claude 3.x's "<version>-<family>" token ordering.
+var legacyModelNames = map[string]string{
+	"claude-3-5-sonnet-20241022": "Sonnet 3.5",
+	"claude-3-5-haiku-20241022":  "Haiku 3.5",
+	"claude-3-opus-20240229":     "Opus 3",
+	"claude-3-sonnet-20240229":   "Sonnet 3",
+	"claude-3-haiku-20240307":    "Haiku 3",
+	"glm-4-alltools":             "GLM 4 AllTools",
+	"glm-4-9b-chat":              "GLM 4 9B",
+	"glm-4-air":                  "GLM 4 Air",
+	"glm-4-flash":                "GLM 4 Flash",
+	"glm-4-plus":                 "GLM 4+",
+}
 
-	if short, ok := replacements[name]; ok {
+// shortenModelName produces a compact display label for a model ID by
+// pairing its family (Opus/Sonnet/Haiku/Fable/GLM) with the version number
+// found next to it — "claude-sonnet-4-6" -> "Sonnet 4.6",
+// "claude-opus-4-5-20251101" -> "Opus 4.5" (the trailing snapshot date is
+// dropped rather than read as a version part). This is a generic parse
+// rather than a table of known IDs so a new version number displays
+// correctly without a code change; see legacyModelNames for the IDs that
+// don't fit the pattern.
+func shortenModelName(name string) string {
+	if short, ok := legacyModelNames[name]; ok {
 		return short
 	}
 
-	// Try GLM partial matches
-	if strings.Contains(name, "glm-4") {
-		return "GLM 4"
-	}
-	if strings.Contains(name, "glm-3") {
-		return "GLM 3"
-	}
-
-	// Try Claude partial matches
-	if strings.Contains(name, "opus-4-5") || strings.Contains(name, "opus-4.5") {
-		return "Opus 4.5"
-	}
-	if strings.Contains(name, "sonnet-4-5") || strings.Contains(name, "sonnet-4.5") {
-		return "Sonnet 4.5"
-	}
-	if strings.Contains(name, "haiku-4-5") || strings.Contains(name, "haiku-4.5") {
-		return "Haiku 4.5"
-	}
-	if strings.Contains(name, "opus") {
-		return "Opus"
-	}
-	if strings.Contains(name, "sonnet") {
-		return "Sonnet"
-	}
-	if strings.Contains(name, "haiku") {
-		return "Haiku"
+	tokens := strings.Split(name, "-")
+	families := map[string]string{
+		"opus":   "Opus",
+		"sonnet": "Sonnet",
+		"haiku":  "Haiku",
+		"fable":  "Fable",
+		"glm":    "GLM",
 	}
 
-	return name
+	familyIdx, label := -1, ""
+	for i, tok := range tokens {
+		if l, ok := families[tok]; ok {
+			familyIdx, label = i, l
+			break
+		}
+	}
+	if familyIdx < 0 {
+		return name
+	}
+
+	if version := modelVersionNear(tokens, familyIdx); version != "" {
+		return label + " " + version
+	}
+	return label
 }
 
-// calculateRequiredTokenWidth calculates the minimum width needed for the token panel
-// based on the longest model name in the current data
+// modelVersionNear collects the version number adjacent to a model family
+// token, e.g. ["claude","sonnet","4","6"] at index 1 -> "4.6". It looks
+// forward first (current Claude/GLM naming: "sonnet-4-6", "glm-5.1"), then
+// backward (legacy Claude 3.x naming: "3-5-sonnet"). A token that is purely
+// 8 digits is treated as a YYYYMMDD release date and ends the scan without
+// being included.
+func modelVersionNear(tokens []string, familyIdx int) string {
+	isVersionPart := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		for _, r := range s {
+			if (r < '0' || r > '9') && r != '.' {
+				return false
+			}
+		}
+		return true
+	}
+	isReleaseDate := func(s string) bool {
+		return len(s) == 8 && !strings.Contains(s, ".") && isVersionPart(s)
+	}
+
+	var forward []string
+	for i := familyIdx + 1; i < len(tokens); i++ {
+		if isReleaseDate(tokens[i]) || !isVersionPart(tokens[i]) {
+			break
+		}
+		forward = append(forward, tokens[i])
+	}
+	if len(forward) > 0 {
+		return strings.Join(forward, ".")
+	}
+
+	var backward []string
+	for i := familyIdx - 1; i >= 0 && isVersionPart(tokens[i]); i-- {
+		backward = append(backward, tokens[i])
+	}
+	for l, r := 0, len(backward)-1; l < r; l, r = l+1, r-1 {
+		backward[l], backward[r] = backward[r], backward[l]
+	}
+	return strings.Join(backward, ".")
+}
+
+// calculateRequiredTokenWidth returns the token panel width needed to show
+// the longest current model name in the Models column without truncation.
+// It mirrors the column math in renderTokenPanel exactly (via the shared
+// tokenLeftColWidth/tokenColSeparatorWidth/tokenRightColReserve constants)
+// so the two can't drift apart the way the old hand-maintained "60" ideal
+// width did once model IDs grew past what it assumed.
 func (d *Dashboard) calculateRequiredTokenWidth() int {
-	// Base width needed for: "  Name: $XXX.XX (X,XXX,XXX tok)"
-	// 2 (indent) + name + 2 (": ") + 8 (cost) + 2 (" (") + 11 (tokens) + 5 (" tok)") + 6 (borders/padding)
-	const baseWidth = 36 // Everything except model name
+	maxNameLen := 10 // default floor, matches renderTokenPanel's minimum
 
-	maxNameLen := 10 // Default minimum for "Sonnet 4.5"
-
-	if d.tokenMetrics != nil && len(d.tokenMetrics.ModelUsages) > 0 {
+	if d.tokenMetrics != nil {
 		for _, usage := range d.tokenMetrics.ModelUsages {
-			displayName := shortenModelName(usage.Model)
-			if len(displayName) > maxNameLen {
-				maxNameLen = len(displayName)
+			if n := len(shortenModelName(usage.Model)); n > maxNameLen {
+				maxNameLen = n
 			}
 		}
 	}
 
-	return baseWidth + maxNameLen
+	rightWidth := maxNameLen + tokenRightColReserve
+	return tokenLeftColWidth + tokenColSeparatorWidth + rightWidth + tokenPanelBorderPadding
 }
 
 // renderTmuxPanel renders the tmux sessions panel
