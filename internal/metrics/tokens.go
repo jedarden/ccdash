@@ -752,20 +752,21 @@ var modelPricing = map[string]ModelPricing{
 		CacheReadPerMillion:   0.015,
 		CacheCreatePerMillion: 0.00,
 	},
-	// GLM-5-Turbo: NOT listed on docs.z.ai as of 2026-08-28 (confirmed absent
-	// from the full pricing table) despite appearing in live usage data —
-	// likely a reseller/proxy-specific tier rather than a first-party Z.ai
-	// rate. Sourced from third-party aggregators (OpenRouter, ModelPriceWatch)
-	// rather than an authoritative price list; confirm against whatever
-	// endpoint is actually billing this if precision matters.
+	// GLM-5-Turbo: absent from docs.z.ai's own pricing page as of 2026-08-28
+	// despite appearing in live usage data — likely a reseller/proxy-specific
+	// tier rather than a rate Z.ai publishes directly on that page. Confirmed
+	// via OpenRouter's provider-comparison table, whose "Z.ai" row (i.e.
+	// Z.ai's own listed rate on that marketplace, not an averaged reseller
+	// markup) matches these figures exactly (verified 2026-08-28).
 	"glm-5-turbo": {
 		InputPerMillion:       1.2,
 		OutputPerMillion:      4.0,
 		CacheReadPerMillion:   0.24,
 		CacheCreatePerMillion: 0.00,
 	},
-	// GLM-5-Code: same caveat as glm-5-turbo — not on the current docs.z.ai
-	// pricing page either. Left at its prior figures; unverified.
+	// GLM-5-Code: also absent from docs.z.ai's pricing page, and unlike
+	// glm-5-turbo not yet corroborated elsewhere. Left at its prior figures;
+	// still unverified.
 	"glm-5-code": {
 		InputPerMillion:       1.2,
 		OutputPerMillion:      5.0,
