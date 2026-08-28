@@ -1938,11 +1938,13 @@ Self-Update: Press 'u' to install an available update, or 'esc' to dismiss its n
 // renderStatusBar renders the status bar at the bottom of the view.
 //
 // Wide/ultrawide (≥120 cols): single line —
-//   time+version  |  repo link or update notice  |  dimensions+shortcuts
+//
+//	time+version  |  repo link or update notice  |  dimensions+shortcuts
 //
 // Compact (<120 cols): two lines —
-//   Line 1: repo link (always) or update notice
-//   Line 2: time+version on the left, dimensions+shortcuts on the right
+//
+//	Line 1: repo link (always) or update notice
+//	Line 2: time+version on the left, dimensions+shortcuts on the right
 func (d *Dashboard) renderStatusBar() string {
 	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 

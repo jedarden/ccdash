@@ -5,6 +5,12 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-08-28
+
+### Fixed
+- **Compiled release binaries removed from git history**: `releases/*`, a stray `ccdash-test` binary, `.ccdash/tokens.db`, and `.beads/traces/*` were tracked in git, ballooning the repo to 77MB and keeping the working tree permanently `-dirty`. History rewritten to remove them; `.gitignore` now blocks their recurrence. Compiled binaries are distributed exclusively via GitHub Releases going forward.
+- **Automated release pipeline repaired**: the `ccdash-ci-sensor` (Argo Events) had a dead NATS JetStream subscription since 2026-08-24 and, independently, was unreachable behind a Traefik routing rule that always favored a separate Forgejo-based webhook path for `/ccdash`. Removed the dead GitHub-based trigger and consolidated on the working Forgejo-triggered pipeline (`ccdash-tag-trigger`), which builds all 4 platform binaries and publishes this release automatically on tag push.
+
 ## [1.1.2] - 2026-08-27
 
 ### Fixed
@@ -382,4 +388,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.2]: https://github.com/jedarden/ccdash/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jedarden/ccdash/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jedarden/ccdash/releases/tag/v0.1.0
-# CI pipeline verification test 2026-08-28T13:40:35Z

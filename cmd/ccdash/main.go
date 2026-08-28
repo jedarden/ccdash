@@ -249,11 +249,11 @@ func main() {
 
 // Snapshot represents a single-point-in-time collection of all metrics
 type Snapshot struct {
-	Timestamp   time.Time               `json:"timestamp"`
-	Version     string                  `json:"version"`
-	System      metrics.SystemMetrics   `json:"system"`
-	Tokens      *metrics.TokenMetrics   `json:"tokens"`
-	Sessions    *metrics.TmuxMetrics    `json:"sessions"`
+	Timestamp time.Time             `json:"timestamp"`
+	Version   string                `json:"version"`
+	System    metrics.SystemMetrics `json:"system"`
+	Tokens    *metrics.TokenMetrics `json:"tokens"`
+	Sessions  *metrics.TmuxMetrics  `json:"sessions"`
 }
 
 // runOnceMode runs a single collection cycle and outputs the result
@@ -554,11 +554,11 @@ func exportJSON(cache *metrics.TokenCache) error {
 
 	// Create export structure
 	type ExportData struct {
-		Events      []metrics.TokenEventExport       `json:"events"`
-		Aggregates  []metrics.FileAggregateExport     `json:"aggregates"`
-		ExportedAt  time.Time                         `json:"exported_at"`
-		Version     string                            `json:"version"`
-		TotalEvents int                               `json:"total_events"`
+		Events      []metrics.TokenEventExport    `json:"events"`
+		Aggregates  []metrics.FileAggregateExport `json:"aggregates"`
+		ExportedAt  time.Time                     `json:"exported_at"`
+		Version     string                        `json:"version"`
+		TotalEvents int                           `json:"total_events"`
 	}
 
 	export := ExportData{
