@@ -49,3 +49,7 @@ temp/
 .beads/traces/
 .beads/heartbeats.jsonl
 .needle-predispatch-sha
+
+# Compiled release binaries belong on GitHub Releases, never in git history
+/releases/
+/ccdash-test
