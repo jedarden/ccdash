@@ -117,6 +117,11 @@ to `main` and submits `ccdash-ci` at its `auto-version` entrypoint:
 So the "Manual Release Workflow" section above is now the fallback path, not
 the normal one — a plain `git push origin main` is enough to cut a release.
 
+Note: `check-release-commit`'s `activeDeadlineSeconds` was originally 60s and
+got killed by the shared workspace PVC's cross-node reattach latency (1-3+
+minutes on this cluster) before its own sub-second script ever ran — fixed to
+300s, matching checkout/lint/vet.
+
 ### Status
 ✅ **COMPLETE** - Multi-arch GitHub release pipeline operational, version
 bumping automated on every push to main
