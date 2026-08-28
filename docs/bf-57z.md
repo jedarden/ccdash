@@ -96,5 +96,27 @@ EOF
 - `083c48c` - feat(ccdash-ci): finalize multi-arch GitHub release pipeline
 - `4c6ee01` - fix(ccdash-ci): update sensor and workflow templates
 
+### Automatic Version Bumping (added 2026-08-28)
+
+Manually computing and tagging a release version is no longer required.
+`ccdash-push-trigger` (declarative-config
+`k8s/iad-ci/argo-events/ccdash-push-trigger.yaml`) fires on every plain push
+to `main` and submits `ccdash-ci` at its `auto-version` entrypoint:
+
+1. `checkout` → `check-release-commit` — skips everything below if `HEAD` is
+   already a `chore: release vX.Y.Z` commit, since that commit's own push
+   would otherwise re-trigger this sensor forever.
+2. `lint` / `vet` / `build` — the same checks `main-branch-checks` runs.
+3. `bump-version-and-tag` — compares `VERSION` to the latest existing release
+   tag. If the pushed commits already changed `VERSION` (a deliberate
+   minor/major bump), it's used as-is; otherwise the patch component is
+   auto-incremented. Either way it commits (if `VERSION` changed), tags, and
+   pushes — that tag push is what fires the existing `ccdash-tag-trigger`
+   Sensor into the real build+publish pipeline described above.
+
+So the "Manual Release Workflow" section above is now the fallback path, not
+the normal one — a plain `git push origin main` is enough to cut a release.
+
 ### Status
-✅ **COMPLETE** - Multi-arch GitHub release pipeline operational
+✅ **COMPLETE** - Multi-arch GitHub release pipeline operational, version
+bumping automated on every push to main
