@@ -68,11 +68,13 @@ type Dashboard struct {
 	lookbackEditField     int       // 0=year, 1=month, 2=day, 3=hour, 4=minute
 
 	// Update checking
-	updater         *updater.Updater
-	updateInfo      *updater.UpdateInfo
-	updating        bool
-	updateStatus    string
-	updateDismissed bool
+	updater             *updater.Updater
+	updateInfo          *updater.UpdateInfo
+	updating            bool
+	checkingUpdate      bool
+	updateStatus        string
+	updateStatusIsError bool
+	updateDismissed     bool
 
 	// Notification system
 	notifyConfig        *config.Config
@@ -198,10 +200,21 @@ type updateCompleteMsg struct {
 	err error
 }
 
-// checkForUpdates returns a command that checks for updates
+// checkForUpdates returns a command that checks for updates, using the
+// updater's normal cache.
 func (d *Dashboard) checkForUpdates() tea.Cmd {
 	return func() tea.Msg {
-		info := d.updater.CheckForUpdate()
+		info := d.updater.CheckForUpdate(false)
+		return updateCheckMsg{info: info}
+	}
+}
+
+// forceCheckForUpdates returns a command that checks for updates immediately,
+// bypassing the cache - for a user-initiated recheck (pressing 'u' with no
+// update currently known).
+func (d *Dashboard) forceCheckForUpdates() tea.Cmd {
+	return func() tea.Msg {
+		info := d.updater.CheckForUpdate(true)
 		return updateCheckMsg{info: info}
 	}
 }
@@ -242,13 +255,20 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return d, nil
 		case "u", "U":
-			// Perform update if available
-			if d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updating {
+			// If an update is already known available, install it. Otherwise
+			// (or if the last check errored/found nothing), trigger a fresh
+			// check rather than waiting for the once-at-startup check.
+			if d.updating || d.checkingUpdate {
+				return d, nil
+			}
+			if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
 				d.updating = true
 				d.updateStatus = "Downloading update..."
 				return d, d.performUpdate()
 			}
-			return d, nil
+			d.checkingUpdate = true
+			d.updateStatus = ""
+			return d, d.forceCheckForUpdates()
 		}
 
 	case tickMsg:
@@ -272,13 +292,30 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case updateCheckMsg:
+		wasManualCheck := d.checkingUpdate
+		d.checkingUpdate = false
 		d.updateInfo = msg.info
+		if wasManualCheck {
+			switch {
+			case msg.info.Error != "":
+				d.updateStatus = fmt.Sprintf("Update check failed: %s", msg.info.Error)
+				d.updateStatusIsError = true
+			case msg.info.UpdateAvailable:
+				// Clear any stale status so the "available" notice renders.
+				d.updateStatus = ""
+				d.updateStatusIsError = false
+			default:
+				d.updateStatus = fmt.Sprintf("Up to date (v%s)", msg.info.CurrentVersion)
+				d.updateStatusIsError = false
+			}
+		}
 		return d, nil
 
 	case updateCompleteMsg:
 		d.updating = false
 		if msg.err != nil {
 			d.updateStatus = fmt.Sprintf("Update failed: %v", msg.err)
+			d.updateStatusIsError = true
 		} else {
 			d.updateStatus = "Update complete! Restarting..."
 			// The app should restart automatically
@@ -1881,8 +1918,8 @@ Idle: Time since content changed (s/m/h)
 
 Layout: Auto-columns based on count/width
 
-Self-Update: Press 'u' to install an available update, or 'esc' to dismiss its notice
-  Status bar shows "⬆ vX.X.X available!"`
+Self-Update: Press 'u' to check for an update, or install one already found
+  Status bar shows "⬆ vX.X.X available!"; 'esc' dismisses its notice`
 	}
 
 	// Create help text panel with wrapping that preserves line breaks
@@ -1988,7 +2025,7 @@ Self-Update: Press 'u' to install an available update, or 'esc' to dismiss its n
 func (d *Dashboard) renderStatusBar() string {
 	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 
-	shortcuts := "l:lookback h:help q:quit r:refresh"
+	shortcuts := "u:check-update l:lookback h:help q:quit r:refresh"
 	if d.updateNoticeVisible() && !d.updating {
 		shortcuts = "u:update esc:dismiss l:lookback h:help q:quit r:refresh"
 	}
@@ -1998,8 +2035,12 @@ func (d *Dashboard) renderStatusBar() string {
 	var middle string
 	if d.updating {
 		middle = warningStyle.Render(d.updateStatus)
-	} else if d.updateStatus != "" {
+	} else if d.checkingUpdate {
+		middle = warningStyle.Render("Checking for updates...")
+	} else if d.updateStatus != "" && d.updateStatusIsError {
 		middle = errorStyle.Render(d.updateStatus)
+	} else if d.updateStatus != "" {
+		middle = successStyle.Render(d.updateStatus)
 	} else if d.updateNoticeVisible() {
 		middle = successStyle.Render(fmt.Sprintf("⬆ %s available! Press u to update, esc to dismiss", d.updateInfo.LatestVersion))
 	} else {

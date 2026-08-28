@@ -66,10 +66,12 @@ func NewUpdater(currentVersion string) *Updater {
 	}
 }
 
-// CheckForUpdate checks GitHub for a newer version
-func (u *Updater) CheckForUpdate() *UpdateInfo {
+// CheckForUpdate checks GitHub for a newer version. If force is true, the
+// cache is bypassed and GitHub is always queried - used for a user-initiated
+// recheck rather than the routine background check.
+func (u *Updater) CheckForUpdate(force bool) *UpdateInfo {
 	// Use cached result if recent enough
-	if u.cachedInfo != nil && time.Since(u.lastCheck) < u.checkInterval {
+	if !force && u.cachedInfo != nil && time.Since(u.lastCheck) < u.checkInterval {
 		return u.cachedInfo
 	}
 
