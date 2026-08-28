@@ -1171,19 +1171,21 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 		costDisplay = warningStyle.Render(costValue)
 	}
 	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costDisplay))
+	// Trend sparkline is rendered as its own full-width row below both columns
+	// (see below) rather than appended here, so it can't overflow the fixed
+	// left column and wrap the Models column beside it.
+	var trendSparkline string
 	if hasRate {
-		// Query bucketed token data for sparkline (last 30 min in 1-min buckets)
-		cache := d.tokenCollector.GetCache()
-		sparkline := ""
-		if cache != nil {
+		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate))))
+
+		if cache := d.tokenCollector.GetCache(); cache != nil {
 			buckets, _ := cache.QueryBuckets(30*60, 60) // 30 min, 1-min buckets
 			bucketValues := make([]int64, len(buckets))
 			for i, b := range buckets {
 				bucketValues[i] = b.Tokens
 			}
-			sparkline = d.renderSparkline(bucketValues)
+			trendSparkline = d.renderSparkline(bucketValues)
 		}
-		leftLines = append(leftLines, fmt.Sprintf("Rate:  %s %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.Rate)), dimStyle.Render(sparkline)))
 	}
 	if hasAvg {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
@@ -1261,6 +1263,18 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 			lines = append(lines, "")
 			lines = append(lines, rightLines...)
 		}
+	}
+
+	if trendSparkline != "" {
+		const prefix = "Trend (30m): "
+		spark := []rune(trendSparkline)
+		if maxSparkWidth := contentWidth - len(prefix); maxSparkWidth < len(spark) {
+			if maxSparkWidth < 0 {
+				maxSparkWidth = 0
+			}
+			spark = spark[:maxSparkWidth]
+		}
+		lines = append(lines, "", dimStyle.Render(prefix+string(spark)))
 	}
 
 	content := strings.Join(lines, "\n")
