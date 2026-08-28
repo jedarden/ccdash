@@ -41,3 +41,11 @@ temp/
 
 # Application specific
 /ccdash
+
+# Machine-local runtime state (not source, churns on every session/build)
+.ccdash/tokens.db
+.ccdash/tokens.db-shm
+.ccdash/tokens.db-wal
+.beads/traces/
+.beads/heartbeats.jsonl
+.needle-predispatch-sha
