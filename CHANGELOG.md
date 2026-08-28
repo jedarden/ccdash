@@ -5,6 +5,14 @@ All notable changes to ccdash will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Token trend sparkline overflowing the token panel**: it was appended inline to the `Rate:` line inside a fixed 22-column left column with no width truncation, so on sustained activity it could grow past 30 characters and wrap the whole panel, dragging the `Models:` column down with it on narrow terminals (e.g. 223x19). Now rendered as its own full-width "Trend (30m):" row below both columns, clipped to the panel's content width.
+
+### Added
+- **Automatic release versioning**: pushing to `main` now runs lint/vet/build and, if the push didn't already bump `VERSION` itself, auto-bumps the patch version and tags a release — no more manually computing and pushing a release tag by hand.
+
 ## [1.1.9] - 2026-08-28
 
 ### Fixed
