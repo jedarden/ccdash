@@ -662,21 +662,49 @@ type ModelPricing struct {
 	CacheCreatePerMillion float64
 }
 
-// Model pricing constants (as of February 2026)
+// claudeOpusPricing covers every Opus release from 4.5 through 5 — all
+// priced identically at $5/$25 per million tokens (verified against the
+// Claude API skill's live-cached pricing table, current as of 2026-08-28).
+// One shared value keyed by every ID that maps to it, rather than one
+// hand-copied block per version that can drift out of sync with the others
+// by typo — the failure mode that let claude-opus-4-7/4-8 silently fall
+// through to GLM-4.5's rate before this fix.
+var claudeOpusPricing = ModelPricing{
+	InputPerMillion:       5.0,
+	OutputPerMillion:      25.0,
+	CacheReadPerMillion:   0.50,
+	CacheCreatePerMillion: 6.25,
+}
+
+// claudeSonnet45Pricing covers Sonnet 4.5 and 4.6, which price identically;
+// Sonnet 5 dropped to $2/$10 and gets its own entry below.
+var claudeSonnet45Pricing = ModelPricing{
+	InputPerMillion:       3.0,
+	OutputPerMillion:      15.0,
+	CacheReadPerMillion:   0.30,
+	CacheCreatePerMillion: 3.75,
+}
+
+// Model pricing constants (as of 2026-08-28). Claude rates from the
+// claude-api skill's live-cached pricing table; GLM rates from
+// https://docs.z.ai/guides/overview/pricing unless noted otherwise. Cache
+// rates for Claude models follow Anthropic's standard 5-minute-cache ratio
+// (read = 0.1x input, write = 1.25x input).
 var modelPricing = map[string]ModelPricing{
-	// Claude Opus 4.5 pricing
-	"claude-opus-4-5-20251101": {
-		InputPerMillion:       5.0,
-		OutputPerMillion:      25.0,
-		CacheReadPerMillion:   0.50,
-		CacheCreatePerMillion: 6.25,
-	},
-	// Claude Sonnet 4.5 pricing
-	"claude-sonnet-4-5-20250929": {
-		InputPerMillion:       3.0,
-		OutputPerMillion:      15.0,
-		CacheReadPerMillion:   0.30,
-		CacheCreatePerMillion: 3.75,
+	// Claude Opus (4.5 through 5, all identically priced — see claudeOpusPricing)
+	"claude-opus-4-5-20251101": claudeOpusPricing,
+	"claude-opus-4-6":          claudeOpusPricing,
+	"claude-opus-4-7":          claudeOpusPricing,
+	"claude-opus-4-8":          claudeOpusPricing,
+	"claude-opus-5":            claudeOpusPricing,
+	// Claude Sonnet
+	"claude-sonnet-4-5-20250929": claudeSonnet45Pricing,
+	"claude-sonnet-4-6":          claudeSonnet45Pricing,
+	"claude-sonnet-5": {
+		InputPerMillion:       2.0,
+		OutputPerMillion:      10.0,
+		CacheReadPerMillion:   0.20,
+		CacheCreatePerMillion: 2.50,
 	},
 	// Claude Haiku 4.5 pricing
 	"claude-haiku-4-5-20250929": {
@@ -685,14 +713,59 @@ var modelPricing = map[string]ModelPricing{
 		CacheReadPerMillion:   0.10,
 		CacheCreatePerMillion: 1.25,
 	},
-	// GLM-5 pricing (Zhipu AI) - flagship model
+	// Claude Fable 5 pricing
+	"claude-fable-5": {
+		InputPerMillion:       10.0,
+		OutputPerMillion:      50.0,
+		CacheReadPerMillion:   1.00,
+		CacheCreatePerMillion: 12.50,
+	},
+	// GLM-5.x pricing (Zhipu AI) — 5.1/5.2/5.3 all price identically per
+	// docs.z.ai; 5.3-Flash is a separate, much cheaper tier
 	"glm-5": {
 		InputPerMillion:       1.0,
 		OutputPerMillion:      3.2,
 		CacheReadPerMillion:   0.20,
 		CacheCreatePerMillion: 0.00,
 	},
-	// GLM-5-Code - coding specialized
+	"glm-5.1": {
+		InputPerMillion:       1.4,
+		OutputPerMillion:      4.4,
+		CacheReadPerMillion:   0.26,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-5.2": {
+		InputPerMillion:       1.4,
+		OutputPerMillion:      4.4,
+		CacheReadPerMillion:   0.26,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-5.3": {
+		InputPerMillion:       1.4,
+		OutputPerMillion:      4.4,
+		CacheReadPerMillion:   0.26,
+		CacheCreatePerMillion: 0.00,
+	},
+	"glm-5.3-flash": {
+		InputPerMillion:       0.075,
+		OutputPerMillion:      0.25,
+		CacheReadPerMillion:   0.015,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-5-Turbo: NOT listed on docs.z.ai as of 2026-08-28 (confirmed absent
+	// from the full pricing table) despite appearing in live usage data —
+	// likely a reseller/proxy-specific tier rather than a first-party Z.ai
+	// rate. Sourced from third-party aggregators (OpenRouter, ModelPriceWatch)
+	// rather than an authoritative price list; confirm against whatever
+	// endpoint is actually billing this if precision matters.
+	"glm-5-turbo": {
+		InputPerMillion:       1.2,
+		OutputPerMillion:      4.0,
+		CacheReadPerMillion:   0.24,
+		CacheCreatePerMillion: 0.00,
+	},
+	// GLM-5-Code: same caveat as glm-5-turbo — not on the current docs.z.ai
+	// pricing page either. Left at its prior figures; unverified.
 	"glm-5-code": {
 		InputPerMillion:       1.2,
 		OutputPerMillion:      5.0,
@@ -861,9 +934,26 @@ func getPricingForModel(model string) ModelPricing {
 	}
 
 	// Check for model family prefix matches
-	// GLM-5 models (flagship)
+	// GLM-5.x models — check the specific point releases before the bare
+	// "glm-5" catch-all, or "glm-5.1"/"glm-5-turbo" would incorrectly match
+	// "glm-5" first and get its ($1/$3.2) rate instead of their own.
 	if strings.Contains(model, "glm-5-code") {
 		return modelPricing["glm-5-code"]
+	}
+	if strings.Contains(model, "glm-5-turbo") {
+		return modelPricing["glm-5-turbo"]
+	}
+	if strings.Contains(model, "glm-5.3-flash") || strings.Contains(model, "glm-5-3-flash") {
+		return modelPricing["glm-5.3-flash"]
+	}
+	if strings.Contains(model, "glm-5.3") || strings.Contains(model, "glm-5-3") {
+		return modelPricing["glm-5.3"]
+	}
+	if strings.Contains(model, "glm-5.2") || strings.Contains(model, "glm-5-2") {
+		return modelPricing["glm-5.2"]
+	}
+	if strings.Contains(model, "glm-5.1") || strings.Contains(model, "glm-5-1") {
+		return modelPricing["glm-5.1"]
 	}
 	if strings.Contains(model, "glm-5") {
 		return modelPricing["glm-5"]
@@ -914,15 +1004,30 @@ func getPricingForModel(model string) ModelPricing {
 	if strings.Contains(model, "glm-4") || strings.Contains(model, "glm-3") {
 		return modelPricing["glm-4"]
 	}
-	// Claude models
-	if strings.Contains(model, "opus-4-5") || strings.Contains(model, "opus-4.5") {
-		return modelPricing["claude-opus-4-5-20251101"]
+	// Claude Sonnet: price actually changes across versions (4.5/4.6 vs the
+	// cheaper 5), so each needs its own check; an unrecognized future sonnet
+	// ID falls through to Sonnet 5's rate as the closest known price rather
+	// than defaultPricing's unrelated GLM rate.
+	if strings.Contains(model, "sonnet-5") {
+		return modelPricing["claude-sonnet-5"]
 	}
-	if strings.Contains(model, "haiku-4-5") || strings.Contains(model, "haiku-4.5") {
+	if strings.Contains(model, "sonnet-4-6") || strings.Contains(model, "sonnet-4.6") ||
+		strings.Contains(model, "sonnet-4-5") || strings.Contains(model, "sonnet-4.5") {
+		return modelPricing["claude-sonnet-4-5-20250929"]
+	}
+	if strings.Contains(model, "sonnet") {
+		return modelPricing["claude-sonnet-5"]
+	}
+	// Claude Opus: every release from 4.5 through 5 prices identically (see
+	// claudeOpusPricing), so any opus match — known version or not — uses it.
+	if strings.Contains(model, "opus") {
+		return claudeOpusPricing
+	}
+	if strings.Contains(model, "haiku") {
 		return modelPricing["claude-haiku-4-5-20250929"]
 	}
-	if strings.Contains(model, "sonnet-4-5") || strings.Contains(model, "sonnet-4.5") {
-		return modelPricing["claude-sonnet-4-5-20250929"]
+	if strings.Contains(model, "fable") {
+		return modelPricing["claude-fable-5"]
 	}
 
 	return defaultPricing
