@@ -1,5 +1,7 @@
 # ccdash
 
+[![iad-ci](https://img.shields.io/github/checks-status/jedarden/ccdash/main?label=iad-ci)](docs/notes/bf-2t2-ci-migration.md)
+
 A lightweight terminal dashboard for Claude Code and Codex CLI — shows token usage, cost, agent session status, and system resources in real time.
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
