@@ -111,9 +111,12 @@ func (s *CodexSource) ParseUsageLine(raw []byte) (*TokenEvent, bool, error) {
 			return nil, false, nil
 		}
 
-		// Codex's input_tokens includes cached_input_tokens. Keep the dashboard
-		// counters mutually exclusive, just as Claude's input/cache counters are.
-		input := info.LastTokenUsage.InputTokens - info.LastTokenUsage.CachedInputTokens
+		// Codex's input_tokens includes both cache reads and cache writes. Keep
+		// every dashboard counter mutually exclusive, just as Claude's
+		// input/cache counters are.
+		input := info.LastTokenUsage.InputTokens -
+			info.LastTokenUsage.CachedInputTokens -
+			info.LastTokenUsage.CacheWriteInputTokens
 		if input < 0 {
 			input = 0
 		}

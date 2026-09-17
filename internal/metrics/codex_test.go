@@ -20,7 +20,7 @@ func TestCodexSourceParseUsageLine(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("token_count: ok=%v err=%v", ok, err)
 	}
-	if event.Model != "gpt-5.6-luna" || event.InputTokens != 8423 || event.CacheReadTokens != 28416 || event.CacheCreationTokens != 12 || event.OutputTokens != 526 {
+	if event.Model != "gpt-5.6-luna" || event.InputTokens != 8411 || event.CacheReadTokens != 28416 || event.CacheCreationTokens != 12 || event.OutputTokens != 526 {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 	if event.Source != "codex" {
