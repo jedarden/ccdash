@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.16] - 2026-09-20
+
+### Fixed
+- **Codex hook failures under concurrent status updates**: serialize session updates, write session and hook configuration files atomically, and record hook errors without logging payloads.
+- **Codex cached input double-counting**: exclude cache-write input as well as cached input from the uncached-input counter.
+
+## [1.1.15] - 2026-09-16
+
 ### Fixed
 - **Token trend sparkline overflowing the token panel**: it was appended inline to the `Rate:` line inside a fixed 22-column left column with no width truncation, so on sustained activity it could grow past 30 characters and wrap the whole panel, dragging the `Models:` column down with it on narrow terminals (e.g. 223x19). Now rendered as its own full-width "Trend (30m):" row below both columns, clipped to the panel's content width.
 - **Models column collapsing new model versions to a bare family name**: `shortenModelName` only recognized the `-4-5`/`4.5` generation via hardcoded per-version checks, so anything newer (`claude-opus-4-7`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-sonnet-5`, `claude-fable-5`) fell through to the generic `contains("opus")`/`contains("sonnet")` branches and rendered as an undifferentiated `"Opus"`/`"Sonnet"` — two different models showing the identical label. `glm-4.7` was worse: it matched the `contains("glm-4")` fallback and was mislabeled `"GLM 4"`. Replaced the hardcoded table with a generic family+version parser (`modelVersionNear`) that reads the version number adjacent to the family token directly out of the model ID, so new versions display correctly without a code change; a small `legacyModelNames` map still covers the handful of IDs that don't fit the pattern (GLM's qualitative variant names, Claude 3.x's `<version>-<family>` ordering).
