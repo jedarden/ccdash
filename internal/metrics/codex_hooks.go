@@ -44,7 +44,7 @@ func (h *CodexHookInstaller) InstallHooks() error {
 		return fmt.Errorf("failed to create Codex hook directory: %w", err)
 	}
 	for name, content := range codexHookScripts {
-		if err := os.WriteFile(filepath.Join(h.hooksDir, name), []byte(content), 0755); err != nil {
+		if err := writeCodexHookFile(filepath.Join(h.hooksDir, name), []byte(content), 0755); err != nil {
 			return fmt.Errorf("failed to write Codex hook script %s: %w", name, err)
 		}
 	}
@@ -160,7 +160,28 @@ func (h *CodexHookInstaller) writeConfig(settings map[string]interface{}) error 
 	if err := os.MkdirAll(filepath.Dir(h.configPath), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(h.configPath, data, 0600)
+	return writeCodexHookFile(h.configPath, data, 0600)
+}
+
+// Keep installed scripts and hooks.json readable throughout a reinstall.
+func writeCodexHookFile(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func (h *CodexHookInstaller) hasHooks() bool {
@@ -208,27 +229,68 @@ func (h *CodexHookInstaller) entryBelongsToCcdash(raw interface{}) bool {
 }
 
 const codexHookCommon = `#!/usr/bin/env bash
-set -e
+set -eEo pipefail
 
 CCDASH_DIR="$HOME/.ccdash"
 SESSIONS_DIR="$CCDASH_DIR/sessions"
+hook_error() {
+    local status="$1" line="$2"
+    trap - ERR
+    (umask 077; printf '%s hook=%s exit=%s line=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${0##*/}" "$status" "$line" \
+        >> "$CCDASH_DIR/codex-hook-errors.log") 2>/dev/null || true
+    exit "$status"
+}
+trap 'hook_error "$?" "$LINENO"' ERR
+
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty')
 
 if [ -z "$SESSION_ID" ]; then
     exit 0
 fi
 
 SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
+TMP_FILE=""
+trap 'if [ -n "$TMP_FILE" ]; then rm -f -- "$TMP_FILE"; fi' EXIT
+
+lock_sessions() {
+    mkdir -p "$SESSIONS_DIR"
+    # flock is available on Linux. Atomic renames still protect readers elsewhere.
+    if command -v flock >/dev/null 2>&1; then
+        exec {LOCK_FD}> "$SESSIONS_DIR/.codex-session.lock"
+        flock -x "$LOCK_FD"
+    fi
+}
+
+new_session_temp() {
+    TMP_FILE=$(mktemp "$SESSIONS_DIR/.codex-session.XXXXXXXX")
+}
+
+commit_session_temp() {
+    mv -f -- "$TMP_FILE" "$SESSION_FILE"
+    TMP_FILE=""
+}
+
+update_session() {
+    local filter="$1"
+    lock_sessions
+    if [ ! -f "$SESSION_FILE" ]; then
+        return 0
+    fi
+    new_session_temp
+    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$filter" "$SESSION_FILE" > "$TMP_FILE"
+    commit_session_temp
+}
 `
 
 // Codex hooks intentionally mirror the Claude status transitions. They never
 // inspect usage fields; token counts come from Codex rollout transcripts.
 var codexHookScripts = map[string]string{
 	"codex-session-start.sh": codexHookCommon + `
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
 TMUX_SESSION=""
-if [ -n "$TMUX" ]; then
+if [ -n "${TMUX:-}" ]; then
     TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
 fi
 CODEX_PID="$PPID"
@@ -241,44 +303,32 @@ while [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "1" ]; do
     fi
     CURRENT_PID=$(ps -p "$CURRENT_PID" -o ppid= 2>/dev/null | tr -d ' ' || echo "")
 done
-mkdir -p "$SESSIONS_DIR"
+lock_sessions
+new_session_temp
 jq -n --arg id "$SESSION_ID" --arg source "codex" --arg cwd "$CWD" \
     --arg tmux "$TMUX_SESSION" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson pid "$CODEX_PID" \
     '{session_id:$id, source:$source, project_dir:$cwd, tmux_session_name:$tmux, started_at:$now, last_activity:$now, pid:$pid, status:"active"}' \
-    > "$SESSIONS_DIR/${SESSION_ID}.json"
+    > "$TMP_FILE"
+commit_session_temp
 `,
 	"codex-session-end.sh": codexHookCommon + `
+lock_sessions
 rm -f "$SESSION_FILE"
 `,
 	"codex-prompt-submit.sh": codexHookCommon + `
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_activity=$now | .status="working"' "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
+update_session '.last_activity=$now | .status="working"'
 `,
 	"codex-pre-tool-use.sh": codexHookCommon + `
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_activity=$now' "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
+update_session '.last_activity=$now'
 `,
 	"codex-post-tool-use.sh": codexHookCommon + `
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_activity=$now | .status="working"' "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
+update_session '.last_activity=$now | .status="working"'
 `,
 	"codex-permission-request.sh": codexHookCommon + `
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_activity=$now | .status="waiting"' "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
+update_session '.last_activity=$now | .status="waiting"'
 `,
 	"codex-stop.sh": codexHookCommon + `
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_activity=$now | .last_stop=$now | .status="stopped"' "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
+update_session '.last_activity=$now | .last_stop=$now | .status="stopped"'
 `,
 }
