@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.17] - 2026-09-21
+
+### Fixed
+- **Self-update checks failing with GitHub API status 403**: use GitHub's documented latest-release redirect instead of the shared-IP unauthenticated REST API quota, then construct the exact platform download URL from the resolved tag.
+
 ## [1.1.16] - 2026-09-20
 
 ### Fixed

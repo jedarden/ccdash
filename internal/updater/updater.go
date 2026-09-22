@@ -1,10 +1,10 @@
 package updater
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,23 +17,10 @@ import (
 const (
 	// GitHubRepo is the repository for ccdash
 	GitHubRepo = "jedarden/ccdash"
-	// GitHubAPIURL is the GitHub API endpoint for releases
-	GitHubAPIURL = "https://api.github.com/repos/" + GitHubRepo + "/releases/latest"
+	// GitHubLatestReleaseURL redirects to the latest published release. Unlike
+	// the unauthenticated REST API, it does not share a 60-request hourly quota.
+	GitHubLatestReleaseURL = "https://github.com/" + GitHubRepo + "/releases/latest"
 )
-
-// Release represents a GitHub release
-type Release struct {
-	TagName string  `json:"tag_name"`
-	Name    string  `json:"name"`
-	Body    string  `json:"body"`
-	Assets  []Asset `json:"assets"`
-}
-
-// Asset represents a release asset
-type Asset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
 
 // UpdateInfo contains information about available updates
 type UpdateInfo struct {
@@ -50,6 +37,7 @@ type UpdateInfo struct {
 type Updater struct {
 	currentVersion string
 	httpClient     *http.Client
+	latestURL      string
 	lastCheck      time.Time
 	cachedInfo     *UpdateInfo
 	checkInterval  time.Duration
@@ -62,6 +50,7 @@ func NewUpdater(currentVersion string) *Updater {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		latestURL:     GitHubLatestReleaseURL,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
 	}
 }
@@ -80,45 +69,54 @@ func (u *Updater) CheckForUpdate(force bool) *UpdateInfo {
 		LastChecked:    time.Now(),
 	}
 
-	// Fetch latest release from GitHub
-	req, err := http.NewRequest("GET", GitHubAPIURL, nil)
+	// GitHub documents /releases/latest as the stable link to the newest
+	// published release. Its redirect target contains the tag and avoids the
+	// very small shared-IP quota on unauthenticated REST API requests.
+	req, err := http.NewRequest(http.MethodHead, u.latestURL, nil)
 	if err != nil {
-		info.Error = fmt.Sprintf("Failed to create request: %v", err)
+		info.Error = fmt.Sprintf("failed to create request: %v", err)
 		return info
 	}
 
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "ccdash/"+u.currentVersion)
 
 	resp, err := u.httpClient.Do(req)
 	if err != nil {
-		info.Error = fmt.Sprintf("Failed to check for updates: %v", err)
+		info.Error = fmt.Sprintf("failed to check for updates: %v", err)
 		return info
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		info.Error = fmt.Sprintf("GitHub API returned status %d", resp.StatusCode)
+		info.Error = fmt.Sprintf("GitHub latest release lookup returned status %d", resp.StatusCode)
 		return info
 	}
 
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		info.Error = fmt.Sprintf("Failed to parse release info: %v", err)
+	tag, err := latestReleaseTag(resp.Request.URL)
+	if err != nil {
+		info.Error = fmt.Sprintf("failed to identify latest release: %v", err)
 		return info
 	}
 
 	// Parse version (remove 'v' prefix if present)
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := strings.TrimPrefix(tag, "v")
 	info.LatestVersion = latestVersion
-	info.ReleaseNotes = release.Name
+	info.ReleaseNotes = "ccdash " + tag
 
 	// Compare versions
 	info.UpdateAvailable = compareVersions(u.currentVersion, latestVersion) < 0
 
 	// Find the appropriate download URL for this platform
 	if info.UpdateAvailable {
-		info.DownloadURL = u.findDownloadURL(release.Assets)
+		assetName := platformAssetName(runtime.GOOS, runtime.GOARCH)
+		if assetName == "" {
+			info.Error = fmt.Sprintf("no release binary for %s/%s", runtime.GOOS, runtime.GOARCH)
+			return info
+		}
+		info.DownloadURL = fmt.Sprintf(
+			"https://github.com/%s/releases/download/%s/%s",
+			GitHubRepo, url.PathEscape(tag), assetName,
+		)
 	}
 
 	u.lastCheck = time.Now()
@@ -131,39 +129,27 @@ func (u *Updater) CheckForUpdate(force bool) *UpdateInfo {
 	return info
 }
 
-// findDownloadURL finds the appropriate binary for the current platform
-func (u *Updater) findDownloadURL(assets []Asset) string {
-	// Build expected asset name based on OS and arch
-	var expectedName string
-	switch runtime.GOOS {
-	case "linux":
-		if runtime.GOARCH == "amd64" {
-			expectedName = "ccdash-linux-amd64"
-		} else if runtime.GOARCH == "arm64" {
-			expectedName = "ccdash-linux-arm64"
-		}
-	case "darwin":
-		if runtime.GOARCH == "amd64" {
-			expectedName = "ccdash-darwin-amd64"
-		} else if runtime.GOARCH == "arm64" {
-			expectedName = "ccdash-darwin-arm64"
-		}
+func latestReleaseTag(releaseURL *url.URL) (string, error) {
+	prefix := "/" + GitHubRepo + "/releases/tag/"
+	if releaseURL == nil || !strings.HasPrefix(releaseURL.Path, prefix) {
+		return "", fmt.Errorf("unexpected redirect URL")
 	}
-
-	for _, asset := range assets {
-		if asset.Name == expectedName {
-			return asset.BrowserDownloadURL
-		}
+	tag := strings.TrimPrefix(releaseURL.Path, prefix)
+	if tag == "" || strings.Contains(tag, "/") {
+		return "", fmt.Errorf("invalid release tag")
 	}
+	return tag, nil
+}
 
-	// Fallback: look for any matching pattern
-	for _, asset := range assets {
-		if strings.Contains(asset.Name, runtime.GOOS) && strings.Contains(asset.Name, runtime.GOARCH) {
-			return asset.BrowserDownloadURL
-		}
+func platformAssetName(goos, goarch string) string {
+	switch {
+	case goos == "linux" && (goarch == "amd64" || goarch == "arm64"):
+		return "ccdash-linux-" + goarch
+	case goos == "darwin" && (goarch == "amd64" || goarch == "arm64"):
+		return "ccdash-darwin-" + goarch
+	default:
+		return ""
 	}
-
-	return ""
 }
 
 // PerformUpdate downloads and applies the update, then restarts the application
