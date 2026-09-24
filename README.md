@@ -10,7 +10,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## What it shows
 
-**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects` and Codex rollout logs in `~/.codex/sessions/YYYY/MM/DD`. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown, color-coded and sorted by spend.
+**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects`, Codex rollout logs in `~/.codex/sessions/YYYY/MM/DD`, and OpenCode's session store at `~/.local/share/opencode/opencode.db` (read-only; override with `OPENCODE_DB`). OpenCode models appear as `<provider>/<model>`, for example NEEDLE's `opencode/space-bunny-free` workers; free Zen models (`-free`) are priced at zero. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown, color-coded and sorted by spend.
 
 **Session panel** — shows active Claude Code and Codex agent sessions and their current state. Hook-tracked sessions carry a Claude 🤖 or Codex 💻 badge:
 

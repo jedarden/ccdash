@@ -1887,6 +1887,8 @@ Models: Per-model cost breakdown
 
 Data Sources:
   - Claude: ~/.claude/projects/*.jsonl (sessions)
+  - Codex: ~/.codex/sessions/YYYY/MM/DD (rollouts)
+  - OpenCode: ~/.local/share/opencode/opencode.db (read-only)
   - GLM: Not currently tracked (zai-proxy only exports Prometheus)
 
 SQLite Cache: .ccdash/tokens.db

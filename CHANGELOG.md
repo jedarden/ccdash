@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.19] - 2026-09-24
+
+### Added
+- **OpenCode token usage**: read OpenCode's SQLite session store (`~/.local/share/opencode/opencode.db`, override with `OPENCODE_DB`) read-only, so the token panel, rate, sparkline and per-model breakdown include OpenCode sessions such as NEEDLE's `opencode/space-bunny-free` workers. Only sessions updated since the last cycle are read, through the message index, so the multi-GB message table is never scanned. Each completed assistant message is one event; reasoning counts as output; messages still streaming wait until complete. Free Zen models (`-free`) are priced at zero, known OpenAI/Claude/GLM families at list price, and unknown models at zero.
+
 ## [1.1.17] - 2026-09-21
 
 ### Fixed

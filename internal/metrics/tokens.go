@@ -148,10 +148,15 @@ func NewTokenCollector() *TokenCollector {
 	home, _ := os.UserHomeDir()
 	claude := NewClaudeSource()
 	codex := NewCodexSource()
+	opencode := NewOpenCodeSource()
 	claudeDirs := sourceDirs(claude, home)
 	tc := &TokenCollector{
-		sources:      []Source{claude, codex},
-		sourceDirs:   map[string][]string{"claude": claudeDirs, "codex": sourceDirs(codex, home)},
+		sources: []Source{claude, codex, opencode},
+		sourceDirs: map[string][]string{
+			"claude":   claudeDirs,
+			"codex":    sourceDirs(codex, home),
+			"opencode": sourceDirs(opencode, home),
+		},
 		projectsDirs: claudeDirs,
 		lookbackFrom: GetMondayNineAM(),
 		cache:        NewTokenCache(),
@@ -165,10 +170,15 @@ func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 	home, _ := os.UserHomeDir()
 	claude := NewClaudeSource()
 	codex := NewCodexSource()
+	opencode := NewOpenCodeSource()
 	claudeDirs := sourceDirs(claude, home)
 	tc := &TokenCollector{
-		sources:      []Source{claude, codex},
-		sourceDirs:   map[string][]string{"claude": claudeDirs, "codex": sourceDirs(codex, home)},
+		sources: []Source{claude, codex, opencode},
+		sourceDirs: map[string][]string{
+			"claude":   claudeDirs,
+			"codex":    sourceDirs(codex, home),
+			"opencode": sourceDirs(opencode, home),
+		},
 		projectsDirs: claudeDirs,
 		lookbackFrom: lookbackFrom,
 		cache:        NewTokenCache(),
@@ -231,6 +241,14 @@ func (tc *TokenCollector) runIngestionCycle() {
 	}
 	completeThreshold := GetFileCompleteThreshold()
 	for _, source := range tc.sources {
+		if ingester, ok := source.(dbIngestSource); ok {
+			// Database-backed sources ingest themselves; walking their
+			// directory for *.jsonl would read unrelated files.
+			if len(tc.sourceDirs[source.Name()]) > 0 {
+				ingester.IngestInto(tc.cache, completeThreshold)
+			}
+			continue
+		}
 		for _, root := range tc.sourceDirs[source.Name()] {
 			files, err := findJSONLFilesRecursive(root)
 			if err != nil {
