@@ -1497,95 +1497,29 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		return style.Width(width).Height(height).Render(content)
 	}
 
-	// Calculate available lines for sessions
-	// height includes borders, subtract: title(1) + borders(2) = 3 lines overhead
-	availableLines := height - 3
-	if availableLines < 1 {
-		availableLines = 1
+	workers, interactive := d.groupSessions(d.tmuxMetrics.Sessions)
+	contentWidth = width - 4 // borders and horizontal padding
+	if contentWidth < 1 {
+		contentWidth = 1
 	}
+	rowBudget := height - 3 // panel title and border rows
+	if rowBudget < 1 {
+		rowBudget = 1
+	}
+	interactiveCount, workerCount, columns, showMore := sessionLayout(len(interactive), len(workers), rowBudget, contentWidth)
 
-	sessionCount := len(d.tmuxMetrics.Sessions)
-	contentWidth = width - 4 // -4 for borders (2) and padding (2)
-
-	// Calculate columns needed to show ALL sessions (priority: show everything)
-	minCellWidth := 28 // Minimum readable session cell
-	maxCellWidth := 55 // Maximum cell width to avoid excessive whitespace
-	cols := 1
-	if sessionCount > availableLines {
-		// Calculate columns needed to fit all sessions
-		cols = (sessionCount + availableLines - 1) / availableLines // ceil division
+	if interactiveCount > 0 {
+		header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+		lines = append(lines, header.Render(truncateDisplayWidth(fmt.Sprintf("Interactive (%d)", len(interactive)), contentWidth)))
+		lines = append(lines, d.renderSessionRows(interactive[:interactiveCount], columns, contentWidth)...)
 	}
-
-	// Cap columns based on available width
-	maxCols := contentWidth / minCellWidth
-	if maxCols < 1 {
-		maxCols = 1
+	if workerCount > 0 {
+		header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45"))
+		lines = append(lines, header.Render(truncateDisplayWidth(fmt.Sprintf("Workers (%d)", len(workers)), contentWidth)))
+		lines = append(lines, d.renderSessionRows(workers[:workerCount], columns, contentWidth)...)
 	}
-	if cols > maxCols {
-		cols = maxCols
-	}
-	if cols > 4 {
-		cols = 4 // Reasonable maximum for readability
-	}
-
-	// Calculate cell width based on actual columns used, but cap to avoid whitespace.
-	// Only add columns for aesthetic reasons (reducing cell width) when we're already
-	// in multi-column mode due to session count — never force multiple columns purely
-	// for width when sessions fit comfortably in one column.
-	cellWidth := (contentWidth - (cols - 1)) / cols
-	if cols > 1 && cellWidth > maxCellWidth {
-		// Increase columns to reduce cell width
-		optimalCols := (contentWidth + maxCellWidth - 1) / maxCellWidth
-		if optimalCols > cols && optimalCols <= 4 {
-			cols = optimalCols
-			cellWidth = (contentWidth - (cols - 1)) / cols
-		} else {
-			// Can't add more columns, just cap the width
-			cellWidth = maxCellWidth
-		}
-	}
-
-	// Show ALL sessions - calculate how many we can actually display
-	maxDisplayed := availableLines * cols
-	maxSessions := sessionCount
-	if maxSessions > maxDisplayed {
-		maxSessions = maxDisplayed // Only limit if we truly can't fit more
-	}
-
-	// Render sessions in vertical columns (fill first column, then second, etc.)
-	rowCount := (maxSessions + cols - 1) / cols
-	for row := 0; row < rowCount; row++ {
-		var rowCells []string
-		for col := 0; col < cols; col++ {
-			idx := col*rowCount + row
-			if idx < maxSessions {
-				session := d.tmuxMetrics.Sessions[idx]
-				cellContent := d.renderSessionCell(session, cellWidth)
-				// Apply explicit width constraint using lipgloss
-				cellStyle := lipgloss.NewStyle().Width(cellWidth)
-				cell := cellStyle.Render(cellContent)
-				rowCells = append(rowCells, cell)
-			} else {
-				// Empty cell for alignment
-				emptyCell := lipgloss.NewStyle().Width(cellWidth).Render("")
-				rowCells = append(rowCells, emptyCell)
-			}
-		}
-		// Join cells with space separator for multiple columns
-		separator := ""
-		if cols > 1 {
-			separator = " "
-		}
-		if len(rowCells) == 1 {
-			lines = append(lines, rowCells[0])
-		} else {
-			lines = append(lines, strings.Join(rowCells, separator))
-		}
-	}
-
-	// Show "... and X more" if sessions were limited
-	if maxSessions < sessionCount {
-		remaining := sessionCount - maxSessions
+	if showMore {
+		remaining := len(interactive) + len(workers) - interactiveCount - workerCount
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("... +%d more", remaining)))
 	}
 
@@ -1593,9 +1527,135 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	return style.Width(width).Height(height).Render(content)
 }
 
+func (d *Dashboard) renderSessionRows(sessions []metrics.TmuxSession, columns, width int) []string {
+	if len(sessions) == 0 {
+		return nil
+	}
+	if columns < 1 {
+		columns = 1
+	}
+	cellWidth := (width - (columns - 1)) / columns
+	if cellWidth < 1 {
+		cellWidth = 1
+	}
+	rows := (len(sessions) + columns - 1) / columns
+	lines := make([]string, 0, rows)
+	for row := 0; row < rows; row++ {
+		cells := make([]string, 0, columns)
+		for col := 0; col < columns; col++ {
+			index := col*rows + row
+			if index >= len(sessions) {
+				continue
+			}
+			cell := d.renderSessionCell(sessions[index], cellWidth)
+			if columns > 1 {
+				cell = lipgloss.NewStyle().Width(cellWidth).Render(cell)
+			}
+			cells = append(cells, cell)
+		}
+		lines = append(lines, strings.Join(cells, " "))
+	}
+	return lines
+}
+
+// groupSessions preserves the collector's status ordering inside each group.
+// Older cached snapshots without a type are classified on demand.
+func (d *Dashboard) groupSessions(sessions []metrics.TmuxSession) (workers, interactive []metrics.TmuxSession) {
+	for _, session := range sessions {
+		typeOfSession := session.SessionType
+		if typeOfSession == "" {
+			if session.Source == "needle" {
+				typeOfSession = metrics.SessionTypeWorker
+			} else {
+				typeOfSession = metrics.DetectSessionType(session.Name)
+			}
+		}
+		if typeOfSession == metrics.SessionTypeWorker {
+			session.SessionType = metrics.SessionTypeWorker
+			workers = append(workers, session)
+		} else {
+			session.SessionType = metrics.SessionTypeInteractive
+			interactive = append(interactive, session)
+		}
+	}
+	return workers, interactive
+}
+
+// sessionLayout chooses as many single-line columns as needed to keep the
+// groups visible within the panel. It reserves rows for headers and overflow
+// text, and gives interactive sessions the first rows when space is tight.
+func sessionLayout(interactive, workers, rowBudget, width int) (visibleInteractive, visibleWorkers, columns int, showMore bool) {
+	if rowBudget < 0 {
+		rowBudget = 0
+	}
+	headers := 0
+	if interactive > 0 {
+		headers++
+	}
+	if workers > 0 {
+		headers++
+	}
+	maxColumns := width / 28
+	if maxColumns < 1 {
+		maxColumns = 1
+	}
+	if maxColumns > 4 {
+		maxColumns = 4
+	}
+	columns = 1
+	rowsFor := func(count int) int {
+		return (count + columns - 1) / columns
+	}
+	for columns < maxColumns && headers+rowsFor(interactive)+rowsFor(workers) > rowBudget {
+		columns++
+	}
+	if headers+rowsFor(interactive)+rowsFor(workers) <= rowBudget {
+		return interactive, workers, columns, false
+	}
+
+	rowsAvailable := rowBudget - headers
+	if rowsAvailable < 0 {
+		rowsAvailable = 0
+	}
+	if rowsAvailable > 1 {
+		rowsAvailable-- // Reserve one line for the overflow count.
+		showMore = true
+	}
+	interactiveRows := rowsFor(interactive)
+	workerRows := rowsFor(workers)
+	if interactive > 0 && workers > 0 && rowsAvailable > 1 {
+		visibleInteractiveRows := min(interactiveRows, rowsAvailable-1)
+		visibleWorkerRows := min(workerRows, rowsAvailable-visibleInteractiveRows)
+		visibleInteractive = min(interactive, visibleInteractiveRows*columns)
+		visibleWorkers = min(workers, visibleWorkerRows*columns)
+	} else {
+		visibleInteractiveRows := min(interactiveRows, rowsAvailable)
+		visibleWorkerRows := min(workerRows, rowsAvailable-visibleInteractiveRows)
+		visibleInteractive = min(interactive, visibleInteractiveRows*columns)
+		visibleWorkers = min(workers, visibleWorkerRows*columns)
+	}
+	renderedHeaders := 0
+	if visibleInteractive > 0 {
+		renderedHeaders++
+	}
+	if visibleWorkers > 0 {
+		renderedHeaders++
+	}
+	renderedRows := renderedHeaders + rowsFor(visibleInteractive) + rowsFor(visibleWorkers)
+	if visibleInteractive+visibleWorkers < interactive+workers && rowBudget > renderedRows {
+		showMore = true
+	}
+	return visibleInteractive, visibleWorkers, columns, showMore
+}
+
 // renderSessionCell renders a single tmux session cell
 func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) string {
-	emoji := session.Status.GetEmoji()
+	icon := "💻"
+	name := session.Name
+	if session.SessionType == metrics.SessionTypeWorker || session.Source == "needle" {
+		icon = "🤖"
+		name = abbreviateWorkerName(name)
+	}
 
 	// Convert ANSI color codes to hex colors for lipgloss
 	colorMap := map[string]string{
@@ -1614,7 +1674,7 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 
-	// Flag stale sessions: READY sessions idle > 5min get bold + clock emoji
+	// Flag stale sessions: READY sessions idle > 5min get bold + clock emoji.
 	staleIndicator := ""
 	isStale := session.Status == metrics.StatusReady && session.IdleDuration > 5*time.Minute
 	if isStale {
@@ -1622,64 +1682,96 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 		statusStyle = statusStyle.Bold(true) // Make stale sessions stand out
 	}
 
-	attached := ""
-	attachedWidth := 0
-	if session.Attached {
-		attached = "📎"
-		attachedWidth = 3 // emoji + space
-	}
-
-	// Format: emoji name status windows idle attached
-	statusText := string(session.Status)
-	if len(statusText) > 7 {
-		statusText = statusText[:7]
-	}
-
-	// Format idle duration
+	statusText := compactSessionStatus(session.Status)
 	idleStr := ""
 	if session.IdleDuration > 0 {
-		if session.IdleDuration < time.Minute {
-			idleStr = fmt.Sprintf("%ds", int(session.IdleDuration.Seconds()))
-		} else if session.IdleDuration < time.Hour {
-			idleStr = fmt.Sprintf("%dm", int(session.IdleDuration.Minutes()))
-		} else {
-			idleStr = fmt.Sprintf("%dh", int(session.IdleDuration.Hours()))
+		idleStr = formatDuration(session.IdleDuration)
+	}
+	status := statusStyle.Render(statusText)
+	suffix := fmt.Sprintf(" %s %s %s", session.Status.GetEmoji(), status, idleStr)
+	if staleIndicator != "" {
+		suffix = " " + staleIndicator + suffix
+	}
+	if session.Attached {
+		suffix += " 📎"
+	}
+	if width < 1 {
+		return ""
+	}
+	nameWidth := width - lipgloss.Width(icon+" ") - lipgloss.Width(suffix)
+	if nameWidth < 1 {
+		return truncateDisplayWidth(icon+" "+name+suffix, width)
+	}
+	name = truncateDisplayWidth(name, nameWidth)
+	return truncateDisplayWidth(icon+" "+name+suffix, width)
+}
+
+func compactSessionStatus(status metrics.SessionStatus) string {
+	switch status {
+	case metrics.StatusWorking:
+		return "WORK"
+	case metrics.StatusReady:
+		return "READY"
+	case metrics.StatusActive:
+		return "ACT"
+	case metrics.StatusError:
+		return "ERR"
+	default:
+		return string(status)
+	}
+}
+
+func abbreviateWorkerName(name string) string {
+	name = strings.TrimPrefix(name, "needle-")
+	switch {
+	case strings.HasPrefix(name, "claude-code-"):
+		name = "c-" + strings.TrimPrefix(name, "claude-code-")
+	case strings.HasPrefix(name, "opencode-"):
+		name = "o-" + strings.TrimPrefix(name, "opencode-")
+	}
+	parts := strings.Split(name, "-")
+	if len(parts) > 3 && (parts[0] == "c" || parts[0] == "o") && isModelVersion(parts[2]) {
+		parts = append(parts[:2], parts[3:]...)
+	}
+	return strings.Join(parts, "-")
+}
+
+func isModelVersion(value string) bool {
+	if value == "" {
+		return false
+	}
+	hasDigit := false
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			hasDigit = true
+			continue
+		}
+		if char != '.' && char != '_' {
+			return false
 		}
 	}
+	return hasDigit
+}
 
-	// Calculate available width for session name
-	harnessBadge := ""
-	if session.Harness == "claude" {
-		harnessBadge = "🤖 "
-	} else if session.Harness == "codex" {
-		harnessBadge = "💻 "
+func truncateDisplayWidth(value string, width int) string {
+	if width <= 0 {
+		return ""
 	}
-
-	// Fixed parts: status emoji, stale indicator, harness badge, status, windows, idle, attached.
-	fixedOverhead := 20 + lipgloss.Width(harnessBadge) + lipgloss.Width(staleIndicator) + attachedWidth
-	maxNameLen := width - fixedOverhead
-	if maxNameLen < 6 {
-		maxNameLen = 6 // Minimum readable name length
+	if lipgloss.Width(value) <= width {
+		return value
 	}
-
-	name := session.Name
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen-1] + "…"
+	if width == 1 {
+		return "…"
 	}
-
-	// Build the line with dynamic name width
-	nameFormat := fmt.Sprintf("%%-%ds", maxNameLen)
-	line := fmt.Sprintf("%s %s%s "+nameFormat+" %s %dw %-3s %s",
-		emoji,
-		staleIndicator,
-		harnessBadge,
-		name,
-		statusStyle.Render(fmt.Sprintf("%-7s", statusText)),
-		session.Windows,
-		idleStr,
-		attached)
-
-	return line
+	var out strings.Builder
+	for _, char := range value {
+		candidate := out.String() + string(char)
+		if lipgloss.Width(candidate)+1 > width {
+			break
+		}
+		out.WriteRune(char)
+	}
+	return out.String() + "…"
 }
 
 // renderLookbackPicker renders the lookback time picker overlay

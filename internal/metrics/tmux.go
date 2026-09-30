@@ -30,6 +30,14 @@ const (
 	StatusError SessionStatus = "ERROR"
 )
 
+// SessionType distinguishes background workers from interactive sessions.
+type SessionType string
+
+const (
+	SessionTypeInteractive SessionType = "interactive"
+	SessionTypeWorker      SessionType = "worker"
+)
+
 // GetColor returns the ANSI color code for the status
 func (s SessionStatus) GetColor() string {
 	switch s {
@@ -66,6 +74,7 @@ func (s SessionStatus) GetEmoji() string {
 // TmuxSession represents a single tmux session
 type TmuxSession struct {
 	Name              string        `json:"name"`
+	SessionType       SessionType   `json:"session_type,omitempty"`
 	Windows           int           `json:"windows"`
 	Attached          bool          `json:"attached"`
 	Status            SessionStatus `json:"status"`
@@ -252,6 +261,17 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		if !seenNames[normalizedKey] {
 			metrics.Sessions = append(metrics.Sessions, session)
 			seenNames[normalizedKey] = true
+		}
+	}
+
+	// Classify the merged view so the cached metrics and every renderer share
+	// the same worker/interactive decision. NEEDLE registry entries are workers
+	// even when their display name does not contain an executor prefix.
+	for i := range metrics.Sessions {
+		if metrics.Sessions[i].Source == "needle" {
+			metrics.Sessions[i].SessionType = SessionTypeWorker
+		} else {
+			metrics.Sessions[i].SessionType = DetectSessionType(metrics.Sessions[i].Name)
 		}
 	}
 

@@ -111,13 +111,14 @@ func (w *NeedleWorker) ToTmuxSession(busy bool) TmuxSession {
 	detail += " · " + strconv.Itoa(w.BeadsProcessed) + " beads"
 
 	return TmuxSession{
-		Name:      w.DisplayName(),
-		Windows:   1,
-		Attached:  busy,
-		Created:   w.StartedAt,
-		Status:    status,
-		LastLines: []string{detail},
-		Source:    "needle",
+		Name:        w.DisplayName(),
+		SessionType: SessionTypeWorker,
+		Windows:     1,
+		Attached:    busy,
+		Created:     w.StartedAt,
+		Status:      status,
+		LastLines:   []string{detail},
+		Source:      "needle",
 	}
 }
 
