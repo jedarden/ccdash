@@ -193,6 +193,7 @@ func (w *NeedleWorker) ToTmuxSession(busy bool) TmuxSession {
 		LastLines:   []string{strings.Join(detailParts, " · ")},
 		Source:      "needle",
 		Worker: &WorkerMetadata{
+			FullName:            w.ID,
 			Workspace:           w.Workspace,
 			Agent:               w.Agent,
 			Provider:            w.Provider,

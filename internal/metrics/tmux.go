@@ -91,6 +91,7 @@ type TmuxSession struct {
 // omitted for ordinary tmux and hook sessions, and all fields are optional so
 // older registry and heartbeat files remain usable.
 type WorkerMetadata struct {
+	FullName            string `json:"full_name,omitempty"`
 	Workspace           string `json:"workspace,omitempty"`
 	Agent               string `json:"agent,omitempty"`
 	Provider            string `json:"provider,omitempty"`

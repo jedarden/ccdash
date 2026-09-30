@@ -55,9 +55,11 @@ type Dashboard struct {
 	tmuxMetrics   *metrics.TmuxMetrics
 
 	// UI state
-	lastUpdate time.Time
-	err        error
-	helpMode   int // 0=none, 1=system, 2=tokens, 3=tmux
+	lastUpdate         time.Time
+	err                error
+	helpMode           int // 0=none, 1=system, 2=tokens, 3=tmux
+	workerDetailMode   bool
+	workerDetailOffset int
 
 	// Lookback picker state
 	lookbackMode          bool // true when lookback picker is open
@@ -229,6 +231,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case tea.KeyMsg:
+		if d.workerDetailMode {
+			return d.handleWorkerDetailKey(msg)
+		}
+
 		// Handle lookback picker mode
 		if d.lookbackMode {
 			return d.handleLookbackKey(msg)
@@ -242,6 +248,11 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			// Cycle through help modes: 0 -> 1 -> 2 -> 3 -> 0
 			d.helpMode = (d.helpMode + 1) % 4
+			return d, nil
+		case "w":
+			d.workerDetailMode = true
+			d.workerDetailOffset = 0
+			d.helpMode = 0
 			return d, nil
 		case "l", "L":
 			// Open lookback picker
@@ -405,6 +416,38 @@ func (d *Dashboard) handleLookbackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return d, nil
 }
 
+func (d *Dashboard) handleWorkerDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	workers, _ := d.groupSessions(d.workerSessions())
+	if d.workerDetailOffset >= len(workers) {
+		d.workerDetailOffset = max(len(workers)-1, 0)
+	}
+	switch msg.String() {
+	case "w", "q", "esc":
+		d.workerDetailMode = false
+		d.workerDetailOffset = 0
+	case "ctrl+c":
+		return d, tea.Quit
+	case "up", "k":
+		if d.workerDetailOffset > 0 {
+			d.workerDetailOffset--
+		}
+	case "down", "j":
+		if d.workerDetailOffset < len(workers)-1 {
+			d.workerDetailOffset++
+		}
+	case "r":
+		return d, d.collectMetrics()
+	}
+	return d, nil
+}
+
+func (d *Dashboard) workerSessions() []metrics.TmuxSession {
+	if d.tmuxMetrics == nil {
+		return nil
+	}
+	return d.tmuxMetrics.Sessions
+}
+
 // adjustCustomDate adjusts the custom date based on current edit field
 func (d *Dashboard) adjustCustomDate(delta int) {
 	switch d.lookbackEditField {
@@ -435,7 +478,9 @@ func (d *Dashboard) View() string {
 	var content string
 
 	// Check if in lookback picker mode
-	if d.lookbackMode {
+	if d.workerDetailMode {
+		content = d.renderWorkerDetailView()
+	} else if d.lookbackMode {
 		content = d.renderLookbackPicker()
 	} else if d.helpMode > 0 {
 		// Check if in help mode
@@ -1591,6 +1636,160 @@ func (d *Dashboard) groupSessions(sessions []metrics.TmuxSession) (workers, inte
 	return workers, interactive
 }
 
+func (d *Dashboard) renderWorkerDetailView() string {
+	workers, _ := d.groupSessions(d.workerSessions())
+	width := max(d.width, 1)
+	height := d.height - 1 // Leave the status bar visible.
+	if d.layoutMode == LayoutCompact {
+		height-- // Compact status bars use two rows.
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	lines := wrapDetailText(fmt.Sprintf("Worker Details (%d) · ↑/↓ or j/k browse · w/q/Esc return", len(workers)), width)
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	if len(workers) == 0 {
+		for _, line := range wrapDetailText("No workers currently detected.", width) {
+			if len(lines) == height {
+				break
+			}
+			lines = append(lines, line)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	start := min(d.workerDetailOffset, len(workers)-1)
+	for index := start; index < len(workers); index++ {
+		block := workerDetailLines(workers[index], width)
+		separatorRows := 0
+		if index > start {
+			separatorRows = 1
+		}
+		if len(lines)+separatorRows+len(block) > height {
+			if index == start && len(lines) < height {
+				for _, line := range wrapDetailText("Terminal too short for this worker; resize to show full details.", width) {
+					if len(lines) == height {
+						break
+					}
+					lines = append(lines, line)
+				}
+			}
+			break
+		}
+		if separatorRows > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, block...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func workerDetailLines(session metrics.TmuxSession, width int) []string {
+	name := session.Name
+	if session.Worker != nil && session.Worker.FullName != "" {
+		name = session.Worker.FullName
+	}
+	if name == "" {
+		name = "unknown session"
+	}
+	lines := wrapDetailText("🤖 "+name, width)
+
+	metadata := session.Worker
+	workspace := "unavailable"
+	executor := "unavailable"
+	if metadata != nil {
+		if metadata.Workspace != "" {
+			workspace = metadata.Workspace
+		}
+		executorParts := make([]string, 0, 3)
+		for _, part := range []string{metadata.Agent, metadata.Provider, metadata.Model} {
+			if part != "" {
+				executorParts = append(executorParts, part)
+			}
+		}
+		if len(executorParts) > 0 {
+			executor = strings.Join(executorParts, " / ")
+		}
+	}
+	lines = append(lines, wrapDetailText("Workspace: "+workspace, width)...)
+
+	status := string(session.Status)
+	if status == "" {
+		status = "UNKNOWN"
+	}
+	statusParts := []string{status}
+	if session.IdleDuration > 0 {
+		statusParts = append(statusParts, "idle "+formatDuration(session.IdleDuration))
+	}
+	if !session.Created.IsZero() && time.Since(session.Created) >= 0 {
+		statusParts = append(statusParts, "uptime "+formatDuration(time.Since(session.Created)))
+	}
+	if session.Windows > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("%d windows", session.Windows))
+	}
+	if session.Attached && session.Source != "needle" {
+		statusParts = append(statusParts, "attached")
+	}
+	lines = append(lines, wrapDetailText("Status: "+strings.Join(statusParts, " · "), width)...)
+	lines = append(lines, wrapDetailText("Executor: "+executor, width)...)
+
+	if metadata == nil || !metadata.BeadStatusAvailable {
+		beadStatus := "Bead status: unavailable"
+		if metadata != nil && metadata.State != "" {
+			beadStatus += " (worker state: " + metadata.State + ")"
+		}
+		lines = append(lines, wrapDetailText(beadStatus, width)...)
+	} else if metadata.CurrentBead != "" {
+		beadStatus := "Current bead: " + metadata.CurrentBead
+		if metadata.State != "" {
+			beadStatus += " · worker state: " + metadata.State
+		}
+		lines = append(lines, wrapDetailText(beadStatus, width)...)
+	} else if metadata.State == "EXHAUSTED" {
+		lines = append(lines, "Queue: empty (EXHAUSTED)")
+	} else {
+		beadStatus := "Current bead: none"
+		if metadata.State != "" {
+			beadStatus += " · worker state: " + metadata.State
+		}
+		lines = append(lines, wrapDetailText(beadStatus, width)...)
+	}
+	if metadata != nil && (metadata.BeadsProcessed > 0 || metadata.BeadsCompleted > 0) {
+		lines = append(lines, wrapDetailText(fmt.Sprintf("Cycles: %d completed / %d processed", metadata.BeadsCompleted, metadata.BeadsProcessed), width)...)
+	}
+	return lines
+}
+
+// wrapDetailText wraps at terminal display width and preserves every rune,
+// including long session names and workspace paths without spaces.
+func wrapDetailText(value string, width int) []string {
+	if width < 1 {
+		return nil
+	}
+	value = strings.ReplaceAll(strings.ReplaceAll(value, "\n", " "), "\r", " ")
+	lines := make([]string, 0, 1)
+	var line strings.Builder
+	lineWidth := 0
+	for _, r := range value {
+		runeText := string(r)
+		runeWidth := lipgloss.Width(runeText)
+		if line.Len() > 0 && lineWidth+runeWidth > width {
+			lines = append(lines, line.String())
+			line.Reset()
+			lineWidth = 0
+		}
+		line.WriteRune(r)
+		lineWidth += runeWidth
+	}
+	if line.Len() > 0 || len(lines) == 0 {
+		lines = append(lines, line.String())
+	}
+	return lines
+}
+
 // sessionLayout chooses as many single-line columns as needed to keep the
 // groups visible within the panel. It reserves rows for headers and overflow
 // text, and gives interactive sessions the first rows when space is tight.
@@ -2207,9 +2406,11 @@ Self-Update: Press 'u' to check for an update, or install one already found
 func (d *Dashboard) renderStatusBar() string {
 	left := fmt.Sprintf("%s %s", d.lastUpdate.Format("15:04:05"), d.version)
 
-	shortcuts := "u:check-update l:lookback h:help q:quit r:refresh"
-	if d.updateNoticeVisible() && !d.updating {
-		shortcuts = "u:update esc:dismiss l:lookback h:help q:quit r:refresh"
+	shortcuts := "u:check-update l:lookback h:help w:workers q:quit r:refresh"
+	if d.workerDetailMode {
+		shortcuts = "j/k or ↑/↓:next w/q/Esc:back r:refresh"
+	} else if d.updateNoticeVisible() && !d.updating {
+		shortcuts = "u:update esc:dismiss l:lookback h:help w:workers q:quit r:refresh"
 	}
 	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
@@ -2235,9 +2436,11 @@ func (d *Dashboard) renderStatusBar() string {
 		availableSpace := d.width - totalContent - 2 // -2 for statusBarStyle padding
 		if availableSpace < 4 {
 			// Not enough room — drop the middle
-			compactShortcuts := "l h q r"
-			if d.updateNoticeVisible() {
-				compactShortcuts = "u esc l h q r"
+			compactShortcuts := "l h w q r"
+			if d.workerDetailMode {
+				compactShortcuts = "j/k w/q/esc r"
+			} else if d.updateNoticeVisible() {
+				compactShortcuts = "u esc l h w q r"
 			}
 			return statusBarStyle.Render(fmt.Sprintf("%s %s %dx%d %s",
 				d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts))
@@ -2256,9 +2459,11 @@ func (d *Dashboard) renderStatusBar() string {
 	availableSpace := d.width - totalContent - 2
 	var statusLine string
 	if availableSpace < 2 {
-		compactShortcuts := "h q r"
-		if d.updateNoticeVisible() {
-			compactShortcuts = "u esc h q r"
+		compactShortcuts := "h w q r"
+		if d.workerDetailMode {
+			compactShortcuts = "j/k w/q/esc r"
+		} else if d.updateNoticeVisible() {
+			compactShortcuts = "u esc h w q r"
 		}
 		statusLine = fmt.Sprintf("%s %s %dx%d %s",
 			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts)

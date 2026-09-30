@@ -373,7 +373,7 @@ func TestCollectWorkersLoadsHeartbeatMetadata(t *testing.T) {
 		t.Fatalf("registry executor metadata was not preserved: %+v", got)
 	}
 	session := got.ToTmuxSession(true)
-	if session.Worker == nil || session.Worker.Workspace != got.Workspace || session.Worker.CurrentBead != beadID || !strings.Contains(session.LastLines[0], got.Workspace) {
+	if session.Worker == nil || session.Worker.FullName != worker.ID || session.Worker.Workspace != got.Workspace || session.Worker.CurrentBead != beadID || !strings.Contains(session.LastLines[0], got.Workspace) {
 		t.Fatalf("worker session is missing metadata: %+v", session)
 	}
 }

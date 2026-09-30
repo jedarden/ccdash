@@ -65,7 +65,11 @@ ccdash
 | `r` | Force refresh |
 | `h` | Cycle help panels (explains each section) |
 | `l` | Open lookback picker (change the token measurement window) |
+| `w` | Open worker details (full session names, workspace paths, status, executor, and bead progress) |
 | `u` | Self-update to latest release (when available) |
+
+In worker details, use `↑` / `↓` or `j` / `k` to browse workers. Press `w`,
+`q`, or `Esc` to return to the dashboard; `Ctrl+C` still quits.
 
 ### Lookback window
 
