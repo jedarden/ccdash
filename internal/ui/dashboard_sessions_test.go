@@ -57,6 +57,62 @@ func TestRenderTmuxPanelGroupsInteractiveBeforeWorkers(t *testing.T) {
 	}
 }
 
+func TestGroupSessionsDetectsWorkersAndHonorsClassificationMetadata(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workerLogDir := filepath.Join(home, ".beads-workers")
+	if err := os.Mkdir(workerLogDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workerLogDir, "custom-log-worker.log"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := []metrics.TmuxSession{
+		{Name: "claude-code-glm-47-alpha"},
+		{Name: "opencode-glm-47-bravo"},
+		{Name: "custom-log-worker"},
+		{
+			Name:   "custom-needle-worker",
+			Source: "needle",
+			Worker: &metrics.WorkerMetadata{FullName: "claude-code-glm-47-custom-needle-worker"},
+		},
+		{Name: "interactive-claude-code-sonnet", Source: "tmux"},
+		{Name: "claude-code-sonnet-explicitly-interactive", SessionType: metrics.SessionTypeInteractive},
+		{Name: "ordinary-session-explicitly-worker", SessionType: metrics.SessionTypeWorker},
+		{Name: "alpha"},
+	}
+
+	workers, interactive := (&Dashboard{}).groupSessions(sessions)
+	assertNames := func(group string, got []metrics.TmuxSession, want []string, wantType metrics.SessionType) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s group has %d sessions, want %d: %+v", group, len(got), len(want), got)
+		}
+		for i, name := range want {
+			if got[i].Name != name || got[i].SessionType != wantType {
+				t.Errorf("%s[%d] = (%q, %q), want (%q, %q)", group, i, got[i].Name, got[i].SessionType, name, wantType)
+			}
+		}
+	}
+
+	assertNames("workers", workers, []string{
+		"claude-code-glm-47-alpha",
+		"opencode-glm-47-bravo",
+		"custom-log-worker",
+		"custom-needle-worker",
+		"ordinary-session-explicitly-worker",
+	}, metrics.SessionTypeWorker)
+	assertNames("interactive", interactive, []string{
+		"interactive-claude-code-sonnet",
+		"claude-code-sonnet-explicitly-interactive",
+		"alpha",
+	}, metrics.SessionTypeInteractive)
+	if workers[3].Worker == nil || workers[3].Worker.FullName != "claude-code-glm-47-custom-needle-worker" {
+		t.Fatalf("NEEDLE metadata was not retained in the worker group: %+v", workers[3])
+	}
+}
+
 func TestRenderSessionCellFitsCompactWidth(t *testing.T) {
 	d := &Dashboard{}
 	cell := d.renderSessionCell(metrics.TmuxSession{
