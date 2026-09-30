@@ -284,11 +284,11 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 	switch hs.Status {
 	case "working":
 		status = StatusWorking
-	case "stopped", "ready", "stale", "waiting":
+	case "waiting", "asking":
+		status = StatusAsking
+	case "stopped", "ready", "stale":
 		// Stale sessions (idle > 5min) are just waiting for input, not errors.
-		// "waiting" covers mid-turn human-input-needed states (permission prompt,
-		// AskUserQuestion, ExitPlanMode, idle notification) — READY already means
-		// "ready for human input", so these fold into the same status.
+		// READY covers a completed turn or a session with no current request.
 		status = StatusReady
 	}
 

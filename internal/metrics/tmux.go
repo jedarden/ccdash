@@ -22,7 +22,9 @@ type SessionStatus string
 const (
 	// StatusWorking indicates Claude Code is currently processing
 	StatusWorking SessionStatus = "WORKING"
-	// StatusReady indicates Claude Code is waiting for user input
+	// StatusAsking indicates the harness is waiting for a human response.
+	StatusAsking SessionStatus = "ASKING"
+	// StatusReady indicates the harness is idle and ready for the next prompt.
 	StatusReady SessionStatus = "READY"
 	// StatusActive indicates user is actively in the tmux session
 	StatusActive SessionStatus = "ACTIVE"
@@ -43,6 +45,8 @@ func (s SessionStatus) GetColor() string {
 	switch s {
 	case StatusWorking:
 		return "\033[32m" // Green
+	case StatusAsking:
+		return "\033[35m" // Magenta
 	case StatusReady:
 		return "\033[31m" // Red
 	case StatusActive:
@@ -60,6 +64,8 @@ func (s SessionStatus) GetEmoji() string {
 	switch s {
 	case StatusWorking:
 		return "🟢" // U+1F7E2 - Green circle
+	case StatusAsking:
+		return "🟣" // U+1F7E3 - Purple circle
 	case StatusReady:
 		return "🔴" // U+1F534 - Red circle
 	case StatusActive:

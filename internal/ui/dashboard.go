@@ -1489,6 +1489,9 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	if count := statusCounts[metrics.StatusWorking]; count > 0 {
 		statusParts = append(statusParts, fmt.Sprintf("🟢%d", count))
 	}
+	if count := statusCounts[metrics.StatusAsking]; count > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("🟣%d", count))
+	}
 	if count := statusCounts[metrics.StatusReady]; count > 0 {
 		statusParts = append(statusParts, fmt.Sprintf("🔴%d", count))
 	}
@@ -1877,6 +1880,7 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	// Convert ANSI color codes to hex colors for lipgloss
 	colorMap := map[string]string{
 		"\033[32m": "#00ff00", // Green - WORKING (Claude processing)
+		"\033[35m": "#bf5fff", // Magenta - ASKING (waiting for human response)
 		"\033[31m": "#ff0000", // Red - READY (Waiting for input)
 		"\033[33m": "#ffff00", // Yellow - ACTIVE (User in session)
 		"\033[91m": "#ff5555", // Bright Red - ERROR (Error state)
@@ -1997,6 +2001,8 @@ func compactSessionStatus(status metrics.SessionStatus) string {
 	switch status {
 	case metrics.StatusWorking:
 		return "WORK"
+	case metrics.StatusAsking:
+		return "ASK"
 	case metrics.StatusReady:
 		return "READY"
 	case metrics.StatusActive:
