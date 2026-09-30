@@ -24,12 +24,13 @@ func TestRenderTmuxPanelGroupsInteractiveBeforeWorkers(t *testing.T) {
 
 	d := &Dashboard{tmuxMetrics: &metrics.TmuxMetrics{
 		Available: true,
-		Total:     4,
+		Total:     5,
 		Source:    "tmux",
 		Sessions: []metrics.TmuxSession{
 			{Name: "alpha", Status: metrics.StatusReady, Attached: true},
 			{Name: "claude-code-glm-47-bravo", Status: metrics.StatusWorking},
 			{Name: "custom-worker", Status: metrics.StatusReady, IdleDuration: 2 * time.Minute},
+			{Name: "opencode-glm-47-charlie", Status: metrics.StatusActive},
 			{Name: "delta", Harness: "claude", Status: metrics.StatusActive, Attached: true},
 		},
 	}}
@@ -38,17 +39,21 @@ func TestRenderTmuxPanelGroupsInteractiveBeforeWorkers(t *testing.T) {
 	interactiveHeader := strings.Index(view, "Interactive (2)")
 	alpha := strings.Index(view, "💻 alpha")
 	delta := strings.Index(view, "💻 delta")
-	workersHeader := strings.Index(view, "Workers (2)")
+	workersHeader := strings.Index(view, "Workers (3)")
 	abbreviatedWorker := strings.Index(view, "🤖 c-glm-bravo")
 	fallbackWorker := strings.Index(view, "🤖 custom-worker")
-	if interactiveHeader < 0 || alpha < 0 || delta < 0 || workersHeader < 0 || abbreviatedWorker < 0 || fallbackWorker < 0 {
+	secondAbbreviatedWorker := strings.Index(view, "🤖 o-glm-charlie")
+	if interactiveHeader < 0 || alpha < 0 || delta < 0 || workersHeader < 0 || abbreviatedWorker < 0 || fallbackWorker < 0 || secondAbbreviatedWorker < 0 {
 		t.Fatalf("grouped compact panel is missing expected entries:\n%s", view)
 	}
-	if !(interactiveHeader < alpha && alpha < delta && delta < workersHeader && workersHeader < abbreviatedWorker && abbreviatedWorker < fallbackWorker) {
+	if !(interactiveHeader < alpha && alpha < delta && delta < workersHeader && workersHeader < abbreviatedWorker && abbreviatedWorker < fallbackWorker && fallbackWorker < secondAbbreviatedWorker) {
 		t.Fatalf("sessions are not grouped with interactive first:\n%s", view)
 	}
 	if strings.Contains(view, "claude-code-glm-47-bravo") {
 		t.Fatalf("worker name was not abbreviated:\n%s", view)
+	}
+	if got := lipgloss.Height(view); got != 13 {
+		t.Fatalf("compact panel height = %d, want 13 rows for an 11-row panel plus borders:\n%s", got, view)
 	}
 }
 

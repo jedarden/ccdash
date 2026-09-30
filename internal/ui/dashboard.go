@@ -1514,6 +1514,9 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		lines = append(lines, d.renderSessionRows(interactive[:interactiveCount], columns, contentWidth)...)
 	}
 	if workerCount > 0 {
+		if interactiveCount == len(interactive) && interactiveCount > 0 && workerCount == len(workers) && rowBudget >= 2+sessionRows(len(interactive), columns)+sessionRows(len(workers), columns)+1 {
+			lines = append(lines, "")
+		}
 		header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45"))
 		lines = append(lines, header.Render(truncateDisplayWidth(fmt.Sprintf("Workers (%d)", len(workers)), contentWidth)))
 		lines = append(lines, d.renderSessionRows(workers[:workerCount], columns, contentWidth)...)
@@ -1538,7 +1541,7 @@ func (d *Dashboard) renderSessionRows(sessions []metrics.TmuxSession, columns, w
 	if cellWidth < 1 {
 		cellWidth = 1
 	}
-	rows := (len(sessions) + columns - 1) / columns
+	rows := sessionRows(len(sessions), columns)
 	lines := make([]string, 0, rows)
 	for row := 0; row < rows; row++ {
 		cells := make([]string, 0, columns)
@@ -1556,6 +1559,13 @@ func (d *Dashboard) renderSessionRows(sessions []metrics.TmuxSession, columns, w
 		lines = append(lines, strings.Join(cells, " "))
 	}
 	return lines
+}
+
+func sessionRows(count, columns int) int {
+	if count == 0 || columns < 1 {
+		return 0
+	}
+	return (count + columns - 1) / columns
 }
 
 // groupSessions preserves the collector's status ordering inside each group.
@@ -1595,6 +1605,10 @@ func sessionLayout(interactive, workers, rowBudget, width int) (visibleInteracti
 	if workers > 0 {
 		headers++
 	}
+	sectionGap := 0
+	if interactive > 0 && workers > 0 {
+		sectionGap = 1
+	}
 	maxColumns := width / 28
 	if maxColumns < 1 {
 		maxColumns = 1
@@ -1606,10 +1620,10 @@ func sessionLayout(interactive, workers, rowBudget, width int) (visibleInteracti
 	rowsFor := func(count int) int {
 		return (count + columns - 1) / columns
 	}
-	for columns < maxColumns && headers+rowsFor(interactive)+rowsFor(workers) > rowBudget {
+	for columns < maxColumns && headers+rowsFor(interactive)+rowsFor(workers)+sectionGap > rowBudget {
 		columns++
 	}
-	if headers+rowsFor(interactive)+rowsFor(workers) <= rowBudget {
+	if headers+rowsFor(interactive)+rowsFor(workers)+sectionGap <= rowBudget {
 		return interactive, workers, columns, false
 	}
 
@@ -1642,6 +1656,9 @@ func sessionLayout(interactive, workers, rowBudget, width int) (visibleInteracti
 		renderedHeaders++
 	}
 	renderedRows := renderedHeaders + rowsFor(visibleInteractive) + rowsFor(visibleWorkers)
+	if visibleInteractive > 0 && visibleWorkers > 0 {
+		renderedRows++
+	}
 	if visibleInteractive+visibleWorkers < interactive+workers && rowBudget > renderedRows {
 		showMore = true
 	}
