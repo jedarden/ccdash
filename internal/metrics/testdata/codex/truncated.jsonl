@@ -1,0 +1,2 @@
+{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:26:00.113Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":3000,"cached_input_tokens":500,"cache_write_input_tokens":100,"output_tokens":150,"reasoning_output_tokens":60,"total_tokens":3150},"total_token_usage":{"input_tokens":3000,"cached_input_tokens":500,"cache_write_input_tokens":100,"output_tokens":150,"reasoning_output_tokens":60,"total_tokens":3150}}}}

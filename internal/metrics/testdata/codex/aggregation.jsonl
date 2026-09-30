@@ -1,0 +1,13 @@
+{"type":"session_meta","payload":{"id":"fixture-session"}}
+{"type":"turn_context","payload":{"model":"gpt-5.6-luna"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:48.113Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":400,"cache_write_input_tokens":100,"output_tokens":50,"reasoning_output_tokens":20,"total_tokens":1050},"total_token_usage":{"input_tokens":100000,"cached_input_tokens":40000,"cache_write_input_tokens":10000,"output_tokens":5000,"reasoning_output_tokens":2000,"total_tokens":105000}}}}
+not-json
+{"type":"event_msg","timestamp":"2026-08-13T20:25:48.500Z","payload":{"type":"message","message":"not usage"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:48.750Z","payload":{"type":"token_count","info":{}}}
+{"type":"turn_context","payload":{"model":"gpt-5.6-luna"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:49.113Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":600,"cached_input_tokens":250,"cache_write_input_tokens":0,"output_tokens":30,"reasoning_output_tokens":10,"total_tokens":630},"total_token_usage":{"input_tokens":100600,"cached_input_tokens":40250,"cache_write_input_tokens":10000,"output_tokens":5030,"reasoning_output_tokens":2010,"total_tokens":105630}}}}
+{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:50.113Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2000,"cached_input_tokens":1000,"cache_write_input_tokens":200,"output_tokens":100,"reasoning_output_tokens":40,"total_tokens":2100},"total_token_usage":{"input_tokens":102600,"cached_input_tokens":41250,"cache_write_input_tokens":10200,"output_tokens":5130,"reasoning_output_tokens":2050,"total_tokens":107730}}}}
+{"type":"turn_context","payload":{"model":"gpt-9-private"}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:51.113Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":900,"cached_input_tokens":300,"cache_write_input_tokens":50,"output_tokens":80,"reasoning_output_tokens":25,"total_tokens":980},"total_token_usage":{"input_tokens":103500,"cached_input_tokens":41550,"cache_write_input_tokens":10250,"output_tokens":5210,"reasoning_output_tokens":2075,"total_tokens":108710}}}}
+{"type":"event_msg","timestamp":"2026-08-13T20:25:52.113Z","payload":{"type":"token_count"
