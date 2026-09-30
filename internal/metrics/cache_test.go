@@ -9,6 +9,47 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestCollectorLeaseIsExclusiveRenewableAndReleasedByOwner(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tokens.db")
+	newCache := func() *TokenCache {
+		t.Helper()
+		cache := &TokenCache{dbPath: dbPath, cacheDir: filepath.Dir(dbPath)}
+		if err := cache.initDB(); err != nil {
+			t.Fatalf("initialize token cache: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := cache.Close(); err != nil {
+				t.Errorf("close token cache: %v", err)
+			}
+		})
+		return cache
+	}
+	first := newCache()
+	second := newCache()
+
+	if !first.TryAcquireLease("instance-a") {
+		t.Fatal("first instance should acquire an unheld lease")
+	}
+	if second.TryAcquireLease("instance-b") {
+		t.Fatal("second instance acquired a lease held by the first")
+	}
+	if !first.TryAcquireLease("instance-a") {
+		t.Fatal("lease holder should be able to renew its own lease")
+	}
+
+	first.ReleaseLease("instance-b")
+	if second.TryAcquireLease("instance-b") {
+		t.Fatal("releasing another instance's lease should not transfer ownership")
+	}
+	first.ReleaseLease("instance-a")
+	if !second.TryAcquireLease("instance-b") {
+		t.Fatal("second instance should acquire the lease after its owner releases it")
+	}
+	if first.TryAcquireLease("instance-a") {
+		t.Fatal("first instance reacquired a lease held by the second")
+	}
+}
+
 func TestTokenCacheMigratesLegacyDataAndAggregatesMixedSourcesExactlyOnce(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "tokens.db")
 	legacy, err := sql.Open("sqlite", dbPath)

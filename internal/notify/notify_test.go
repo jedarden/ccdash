@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +85,59 @@ func TestSendTestReportsTransportFailure(t *testing.T) {
 	}
 	if result.Error == "" {
 		t.Error("transport failure returned no error")
+	}
+}
+
+func TestSendWebhookFailureDoesNotStopLaterNotifications(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "unavailable", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, true)
+	client.Send(&Payload{SessionName: "first"})
+	client.Send(&Payload{SessionName: "second"})
+
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("webhook requests = %d, want 2 after a failed first delivery", got)
+	}
+}
+
+func TestShouldNotifyDetectsOnlyEntryIntoWaitingState(t *testing.T) {
+	client := NewClient("https://example.test/webhook", true)
+	tests := []struct {
+		name string
+		old  string
+		new  string
+		want bool
+	}{
+		{name: "working to waiting", old: "working", new: "waiting", want: true},
+		{name: "active to asking", old: "active", new: "asking", want: true},
+		{name: "normalized states", old: " WORKING ", new: " ASKING ", want: true},
+		{name: "waiting to asking", old: "waiting", new: "asking"},
+		{name: "asking to waiting", old: "asking", new: "waiting"},
+		{name: "waiting to working", old: "waiting", new: "working"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := client.ShouldNotify(&SessionTransition{OldStatus: tt.old, NewStatus: tt.new})
+			if got != tt.want {
+				t.Fatalf("ShouldNotify(%q -> %q) = %t, want %t", tt.old, tt.new, got, tt.want)
+			}
+		})
+	}
+
+	if got := NewClient("https://example.test/webhook", false).ShouldNotify(&SessionTransition{NewStatus: "waiting"}); got {
+		t.Fatal("disabled client should not notify")
+	}
+	if got := client.ShouldNotify(nil); got {
+		t.Fatal("nil transition should not notify")
 	}
 }
 
@@ -168,6 +222,102 @@ func TestTrackerDebouncesHookSessionEscalation(t *testing.T) {
 	now = now.Add(time.Minute)
 	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
 		t.Fatalf("persistent waiting snapshot produced %d duplicate notifications", len(got))
+	}
+}
+
+func TestTrackerDoesNotNotifyBeforeDebounceBoundary(t *testing.T) {
+	now := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC)
+	const debounce = 15 * time.Second
+	tracker := NewTracker(debounce)
+	tracker.now = func() time.Time { return now }
+	session := metrics.HookSession{
+		SessionID:    "session-boundary",
+		ProjectDir:   "/work/project",
+		LastActivity: now,
+		Status:       "waiting",
+	}
+
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("initial waiting snapshot produced %d notifications", len(got))
+	}
+	now = now.Add(debounce - time.Nanosecond)
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("snapshot just before debounce produced %d notifications", len(got))
+	}
+	now = now.Add(time.Nanosecond)
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 1 {
+		t.Fatalf("snapshot at debounce boundary produced %d notifications, want 1", len(got))
+	}
+}
+
+func TestTrackerTreatsRecoveryAsSilentAndStartsANewDebounce(t *testing.T) {
+	now := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC)
+	const debounce = 10 * time.Second
+	tracker := NewTracker(debounce)
+	tracker.now = func() time.Time { return now }
+	session := metrics.HookSession{SessionID: "session-recovery", Status: "waiting", LastActivity: now}
+
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("initial waiting snapshot produced %d notifications", len(got))
+	}
+	now = now.Add(9 * time.Second)
+	session.Status = "working"
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("recovery transition produced %d notifications", len(got))
+	}
+
+	// A fresh wait after recovery must start a fresh debounce interval.
+	now = now.Add(time.Second)
+	session.Status = "waiting"
+	session.LastActivity = now
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("new waiting transition produced %d notifications", len(got))
+	}
+	now = now.Add(debounce - time.Nanosecond)
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("new wait just before debounce produced %d notifications", len(got))
+	}
+	now = now.Add(time.Nanosecond)
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 1 {
+		t.Fatalf("new wait at debounce boundary produced %d notifications, want 1", len(got))
+	}
+
+	// Recovery after delivery is silent, and a subsequent wait is a new event.
+	now = now.Add(time.Second)
+	session.Status = "active"
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("post-notification recovery produced %d notifications", len(got))
+	}
+	now = now.Add(time.Second)
+	session.Status = "asking"
+	session.LastActivity = now
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 0 {
+		t.Fatalf("re-escalation produced %d notifications before debounce", len(got))
+	}
+	now = now.Add(debounce)
+	if got := tracker.Update([]metrics.HookSession{session}); len(got) != 1 {
+		t.Fatalf("re-escalation produced %d notifications at debounce boundary, want 1", len(got))
+	}
+}
+
+func TestTrackerDeduplicatesBySessionIDWithoutCollidingOnProject(t *testing.T) {
+	now := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC)
+	tracker := NewTracker(time.Second)
+	tracker.now = func() time.Time { return now }
+	sessions := []metrics.HookSession{
+		{SessionID: "session-one", TmuxSessionName: "build", ProjectDir: "/work/project", Status: "waiting", LastActivity: now},
+		{SessionID: "session-two", TmuxSessionName: "build", ProjectDir: "/work/project", Status: "waiting", LastActivity: now},
+	}
+	if got := tracker.Update(sessions); len(got) != 0 {
+		t.Fatalf("initial snapshot produced %d notifications", len(got))
+	}
+	now = now.Add(time.Second)
+	if got := tracker.Update(sessions); len(got) != 2 {
+		t.Fatalf("two distinct session IDs in one project produced %d notifications, want 2", len(got))
+	}
+	now = now.Add(time.Minute)
+	if got := tracker.Update(sessions); len(got) != 0 {
+		t.Fatalf("persistent waiting sessions produced %d duplicate notifications", len(got))
 	}
 }
 
