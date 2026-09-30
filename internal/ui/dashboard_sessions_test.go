@@ -74,6 +74,152 @@ func TestRenderSessionCellFitsCompactWidth(t *testing.T) {
 	}
 }
 
+func TestRenderSessionCellTruncatesLongInteractiveNameOnOneLine(t *testing.T) {
+	d := &Dashboard{}
+	cell := d.renderSessionCell(metrics.TmuxSession{
+		Name:        "interactive-session-with-a-name-that-does-not-fit",
+		SessionType: metrics.SessionTypeInteractive,
+		Status:      metrics.StatusActive,
+	}, 28)
+	if got := lipgloss.Width(cell); got > 28 {
+		t.Fatalf("truncated cell width = %d, want <= 28: %q", got, cell)
+	}
+	if strings.Contains(cell, "\n") {
+		t.Fatalf("compact session cell wrapped onto multiple lines: %q", cell)
+	}
+	if !strings.Contains(cell, "…") {
+		t.Fatalf("long interactive name should be truncated with an ellipsis: %q", cell)
+	}
+}
+
+func TestRenderTmuxPanelOmitsEmptySections(t *testing.T) {
+	tests := []struct {
+		name     string
+		sessions []metrics.TmuxSession
+		want     string
+		omit     []string
+	}{
+		{
+			name: "interactive only",
+			sessions: []metrics.TmuxSession{{
+				Name: "alpha", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusActive,
+			}},
+			want: "Interactive (1)", omit: []string{"Workers (0)"},
+		},
+		{
+			name: "workers only",
+			sessions: []metrics.TmuxSession{{
+				Name: "worker-alpha", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusWorking,
+			}},
+			want: "Workers (1)", omit: []string{"Interactive (0)"},
+		},
+		{
+			name: "no sessions",
+			omit: []string{"Interactive (0)", "Workers (0)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Dashboard{tmuxMetrics: &metrics.TmuxMetrics{
+				Available: true,
+				Total:     len(tt.sessions),
+				Sessions:  tt.sessions,
+			}}
+			view := d.renderTmuxPanel(72, 11)
+			if tt.want != "" && !strings.Contains(view, tt.want) {
+				t.Fatalf("panel is missing %q:\n%s", tt.want, view)
+			}
+			for _, omit := range tt.omit {
+				if strings.Contains(view, omit) {
+					t.Fatalf("panel should omit empty section %q:\n%s", omit, view)
+				}
+			}
+			if tt.name == "no sessions" && !strings.Contains(view, "No active sessions") {
+				t.Fatalf("empty panel should report no active sessions:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestRenderTmuxPanelFitsDocumentedLayouts(t *testing.T) {
+	sessions := []metrics.TmuxSession{
+		{Name: "alpha", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusActive},
+		{Name: "delta", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusReady},
+		{Name: "worker-alpha", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusWorking},
+		{Name: "worker-bravo", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusReady},
+		{Name: "worker-charlie", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusActive},
+	}
+	tests := []struct {
+		name          string
+		width, height int
+		wantVisible   []string
+		wantOverflow  bool
+	}{
+		// README.md documents stacked narrow panels, two-panel wide layouts,
+		// and three-panel ultra-wide layouts. These are the corresponding
+		// sessions-panel sizes for representative 80x24, 160x40, and 240x30
+		// terminals. The final case is the documented 199x14 tmux panel.
+		{
+			name: "narrow 80x24", width: 78, height: 8,
+			wantVisible:  []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo"},
+			wantOverflow: true,
+		},
+		{
+			name: "wide 160x40", width: 158, height: 18,
+			wantVisible: []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo", "🤖 worker-charlie"},
+		},
+		{
+			name: "ultra-wide 240x30", width: 120, height: 27,
+			wantVisible: []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo", "🤖 worker-charlie"},
+		},
+		{
+			name: "199x14", width: 72, height: 11,
+			wantVisible: []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo", "🤖 worker-charlie"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Dashboard{tmuxMetrics: &metrics.TmuxMetrics{
+				Available: true,
+				Total:     len(sessions),
+				Sessions:  sessions,
+			}}
+			view := d.renderTmuxPanel(tt.width, tt.height)
+			if got := lipgloss.Height(view); got != tt.height+2 {
+				t.Fatalf("panel height = %d, want %d including borders:\n%s", got, tt.height+2, view)
+			}
+			interactiveHeader := strings.Index(view, "Interactive (2)")
+			workersHeader := strings.Index(view, "Workers (3)")
+			if interactiveHeader < 0 || workersHeader < 0 || interactiveHeader >= workersHeader {
+				t.Fatalf("panel should render nonempty sections with interactive first:\n%s", view)
+			}
+			for _, want := range tt.wantVisible {
+				if !strings.Contains(view, want) {
+					t.Errorf("panel is missing visible session %q:\n%s", want, view)
+				}
+			}
+			if got := strings.Contains(view, "... +"); got != tt.wantOverflow {
+				t.Errorf("overflow indicator present = %t, want %t:\n%s", got, tt.wantOverflow, view)
+			}
+
+			lines := strings.Split(view, "\n")
+			for _, want := range tt.wantVisible {
+				lineMatches := 0
+				for _, line := range lines {
+					if strings.Contains(line, want) {
+						lineMatches++
+					}
+				}
+				if lineMatches != 1 {
+					t.Errorf("session %q should render on exactly one line, got %d:\n%s", want, lineMatches, view)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderWorkerCellShowsWorkspaceExecutorAndBeadStatus(t *testing.T) {
 	d := &Dashboard{}
 	cell := d.renderSessionCell(metrics.TmuxSession{
