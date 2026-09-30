@@ -73,17 +73,33 @@ func (s SessionStatus) GetEmoji() string {
 
 // TmuxSession represents a single tmux session
 type TmuxSession struct {
-	Name              string        `json:"name"`
-	SessionType       SessionType   `json:"session_type,omitempty"`
-	Windows           int           `json:"windows"`
-	Attached          bool          `json:"attached"`
-	Status            SessionStatus `json:"status"`
-	Created           time.Time     `json:"created"`
-	LastContentChange time.Time     `json:"last_content_change"`
-	IdleDuration      time.Duration `json:"idle_duration"` // How long content unchanged
-	LastLines         []string      `json:"last_lines,omitempty"`
-	Source            string        `json:"source,omitempty"`  // "tmux" or "hooks"
-	Harness           string        `json:"harness,omitempty"` // "claude" or "codex" when hook-tracked
+	Name              string          `json:"name"`
+	SessionType       SessionType     `json:"session_type,omitempty"`
+	Worker            *WorkerMetadata `json:"worker,omitempty"`
+	Windows           int             `json:"windows"`
+	Attached          bool            `json:"attached"`
+	Status            SessionStatus   `json:"status"`
+	Created           time.Time       `json:"created"`
+	LastContentChange time.Time       `json:"last_content_change"`
+	IdleDuration      time.Duration   `json:"idle_duration"` // How long content unchanged
+	LastLines         []string        `json:"last_lines,omitempty"`
+	Source            string          `json:"source,omitempty"`  // "tmux" or "hooks"
+	Harness           string          `json:"harness,omitempty"` // "claude" or "codex" when hook-tracked
+}
+
+// WorkerMetadata carries optional NEEDLE context for a worker row. It is
+// omitted for ordinary tmux and hook sessions, and all fields are optional so
+// older registry and heartbeat files remain usable.
+type WorkerMetadata struct {
+	Workspace           string `json:"workspace,omitempty"`
+	Agent               string `json:"agent,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	Model               string `json:"model,omitempty"`
+	State               string `json:"state,omitempty"`
+	CurrentBead         string `json:"current_bead,omitempty"`
+	BeadStatusAvailable bool   `json:"bead_status_available"`
+	BeadsProcessed      uint64 `json:"beads_processed,omitempty"`
+	BeadsCompleted      uint64 `json:"beads_completed,omitempty"`
 }
 
 // TmuxMetrics holds information about all tmux sessions

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.20] - 2026-09-29
 
 ### Added
+- **NEEDLE worker context and bead status**: worker rows show the workspace path, agent/provider/model, active bead and worker state, or an empty queue; unavailable heartbeat metadata degrades to explicit unavailable labels.
 - **Grouped worker and interactive sessions**: classifies Claude Code and OpenCode worker names, with a per-user worker-log fallback; displays interactive sessions first, adds section headers and type icons, and uses abbreviated single-line entries to fit constrained terminal heights.
 
 ## [1.1.19] - 2026-09-24

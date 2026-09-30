@@ -74,6 +74,79 @@ func TestRenderSessionCellFitsCompactWidth(t *testing.T) {
 	}
 }
 
+func TestRenderWorkerCellShowsWorkspaceExecutorAndBeadStatus(t *testing.T) {
+	d := &Dashboard{}
+	cell := d.renderSessionCell(metrics.TmuxSession{
+		Name:        "claude-code-worker-1",
+		SessionType: metrics.SessionTypeWorker,
+		Status:      metrics.StatusWorking,
+		Source:      "needle",
+		Worker: &metrics.WorkerMetadata{
+			Workspace:           "/home/coding/project/.worktrees/current",
+			Agent:               "claude-code",
+			Provider:            "anthropic",
+			Model:               "sonnet",
+			CurrentBead:         "ccdash-current",
+			State:               "EXECUTING",
+			BeadStatusAvailable: true,
+			BeadsProcessed:      3,
+			BeadsCompleted:      2,
+		},
+	}, 180)
+	for _, want := range []string{
+		"/home/coding/project/.worktrees/current",
+		"claude-code/anthropic/sonnet",
+		"ccdash-current (EXECUTING)",
+		"2 closed/3 cycles",
+	} {
+		if !strings.Contains(cell, want) {
+			t.Errorf("worker cell %q does not contain %q", cell, want)
+		}
+	}
+	if got := lipgloss.Width(cell); got > 180 {
+		t.Fatalf("worker cell width = %d, want <= 180: %q", got, cell)
+	}
+}
+
+func TestRenderWorkerCellFallsBackWhenMetadataIsMissing(t *testing.T) {
+	d := &Dashboard{}
+	cell := d.renderSessionCell(metrics.TmuxSession{
+		Name:        "claude-code-worker-1",
+		SessionType: metrics.SessionTypeWorker,
+		Status:      metrics.StatusReady,
+		Source:      "needle",
+		Worker:      &metrics.WorkerMetadata{State: "SELECTING"},
+	}, 140)
+	for _, want := range []string{
+		"workspace unavailable",
+		"executor unavailable",
+		"bead status unavailable (SELECTING)",
+	} {
+		if !strings.Contains(cell, want) {
+			t.Errorf("worker cell %q does not contain fallback %q", cell, want)
+		}
+	}
+}
+
+func TestRenderWorkerCellShowsAnEmptyQueue(t *testing.T) {
+	d := &Dashboard{}
+	cell := d.renderSessionCell(metrics.TmuxSession{
+		Name:        "claude-code-worker-1",
+		SessionType: metrics.SessionTypeWorker,
+		Status:      metrics.StatusReady,
+		Source:      "needle",
+		Worker: &metrics.WorkerMetadata{
+			Workspace:           "/home/coding/project",
+			Agent:               "claude-code",
+			State:               "EXHAUSTED",
+			BeadStatusAvailable: true,
+		},
+	}, 140)
+	if !strings.Contains(cell, "queue empty") {
+		t.Fatalf("worker row does not show an empty queue: %q", cell)
+	}
+}
+
 func TestSessionVisibilityAccountsForSectionsAndOverflow(t *testing.T) {
 	tests := []struct {
 		name                         string

@@ -1,6 +1,10 @@
 package metrics
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -309,6 +313,111 @@ func TestNormalizeForNeedle(t *testing.T) {
 			got := normalizeForNeedle(tt.input)
 			if got != tt.want {
 				t.Errorf("normalizeForNeedle(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectWorkersLoadsHeartbeatMetadata(t *testing.T) {
+	root := t.TempDir()
+	registryPath := filepath.Join(root, "workers.json")
+	heartbeatDir := filepath.Join(root, "heartbeats")
+	if err := os.MkdirAll(heartbeatDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	worker := NeedleWorker{
+		ID:             "claude-code-alpha",
+		PID:            os.Getpid(),
+		Workspace:      "/home/coding/project",
+		Agent:          "claude-code",
+		Provider:       "anthropic",
+		Model:          "sonnet",
+		BeadsProcessed: 3,
+		BeadsCompleted: 2,
+	}
+	registryData, err := json.Marshal(needleRegistry{Workers: []NeedleWorker{worker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registryPath, registryData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	beadID := "ccdash-current"
+	heartbeatData, err := json.Marshal(needleHeartbeat{
+		QualifiedID: worker.ID,
+		PID:         worker.PID,
+		Workspace:   "/home/coding/project/.worktrees/current",
+		State:       "EXECUTING",
+		CurrentBead: &beadID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(heartbeatDir, worker.ID+".json"), heartbeatData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	collector := &NeedleCollector{registryPath: registryPath, heartbeatDir: heartbeatDir}
+	workers, err := collector.CollectWorkers()
+	if err != nil {
+		t.Fatalf("CollectWorkers() error = %v", err)
+	}
+	if len(workers) != 1 {
+		t.Fatalf("CollectWorkers() returned %d workers, want 1", len(workers))
+	}
+	got := workers[0]
+	if got.Workspace != "/home/coding/project/.worktrees/current" || got.State != "EXECUTING" || got.CurrentBead != beadID || !got.BeadStatusAvailable {
+		t.Fatalf("heartbeat metadata was not loaded: %+v", got)
+	}
+	if got.Agent != worker.Agent || got.Provider != worker.Provider || got.Model != worker.Model || got.BeadsProcessed != 3 || got.BeadsCompleted != 2 {
+		t.Fatalf("registry executor metadata was not preserved: %+v", got)
+	}
+	session := got.ToTmuxSession(true)
+	if session.Worker == nil || session.Worker.Workspace != got.Workspace || session.Worker.CurrentBead != beadID || !strings.Contains(session.LastLines[0], got.Workspace) {
+		t.Fatalf("worker session is missing metadata: %+v", session)
+	}
+}
+
+func TestCollectWorkersKeepsWorkerWhenHeartbeatUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		heartbeatData []byte
+	}{
+		{name: "missing"},
+		{name: "malformed", heartbeatData: []byte("{")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			registryPath := filepath.Join(root, "workers.json")
+			heartbeatDir := filepath.Join(root, "heartbeats")
+			if err := os.MkdirAll(heartbeatDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			worker := NeedleWorker{ID: "claude-code-alpha", PID: os.Getpid(), Agent: "claude-code"}
+			registryData, err := json.Marshal(needleRegistry{Workers: []NeedleWorker{worker}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(registryPath, registryData, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.heartbeatData != nil {
+				if err := os.WriteFile(filepath.Join(heartbeatDir, worker.ID+".json"), tc.heartbeatData, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			collector := &NeedleCollector{registryPath: registryPath, heartbeatDir: heartbeatDir}
+			workers, err := collector.CollectWorkers()
+			if err != nil {
+				t.Fatalf("CollectWorkers() error = %v", err)
+			}
+			if len(workers) != 1 || workers[0].BeadStatusAvailable {
+				t.Fatalf("CollectWorkers() = %+v, want one worker with unavailable bead status", workers)
+			}
+			session := workers[0].ToTmuxSession(true)
+			if session.Worker == nil || session.Worker.BeadStatusAvailable || !strings.Contains(session.LastLines[0], "bead status unavailable") {
+				t.Fatalf("worker did not degrade gracefully: %+v", session)
 			}
 		})
 	}

@@ -1669,7 +1669,8 @@ func sessionLayout(interactive, workers, rowBudget, width int) (visibleInteracti
 func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) string {
 	icon := "💻"
 	name := session.Name
-	if session.SessionType == metrics.SessionTypeWorker || session.Source == "needle" {
+	isWorker := session.SessionType == metrics.SessionTypeWorker || session.Source == "needle"
+	if isWorker {
 		icon = "🤖"
 		name = abbreviateWorkerName(name)
 	}
@@ -1715,12 +1716,82 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	if width < 1 {
 		return ""
 	}
-	nameWidth := width - lipgloss.Width(icon+" ") - lipgloss.Width(suffix)
+	workerDetails := ""
+	if isWorker {
+		if session.Worker != nil {
+			workerDetails = " · " + formatWorkerDetails(session.Worker)
+		} else if session.Source == "needle" {
+			workerDetails = " · worker metadata unavailable"
+		}
+	}
+	iconWidth := lipgloss.Width(icon + " ")
+	suffixWidth := lipgloss.Width(suffix)
+	detailWidth := lipgloss.Width(workerDetails)
+	nameWidth := width - iconWidth - suffixWidth - detailWidth
+	if nameWidth < 1 && workerDetails != "" {
+		// Keep enough space for a recognizable worker name and status when a
+		// compact multi-column layout cannot fit the full metadata summary.
+		minNameWidth := min(8, max(width-iconWidth-suffixWidth, 0))
+		maxDetailWidth := max(width-iconWidth-suffixWidth-minNameWidth, 0)
+		workerDetails = truncateDisplayWidth(workerDetails, maxDetailWidth)
+		detailWidth = lipgloss.Width(workerDetails)
+		nameWidth = width - iconWidth - suffixWidth - detailWidth
+	}
 	if nameWidth < 1 {
-		return truncateDisplayWidth(icon+" "+name+suffix, width)
+		return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
 	}
 	name = truncateDisplayWidth(name, nameWidth)
-	return truncateDisplayWidth(icon+" "+name+suffix, width)
+	return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
+}
+
+func formatWorkerDetails(metadata *metrics.WorkerMetadata) string {
+	if metadata == nil {
+		return "worker metadata unavailable"
+	}
+	parts := make([]string, 0, 4)
+	if metadata.Workspace == "" {
+		parts = append(parts, "workspace unavailable")
+	} else {
+		parts = append(parts, "workspace "+metadata.Workspace)
+	}
+	executorParts := make([]string, 0, 3)
+	if metadata.Agent != "" {
+		executorParts = append(executorParts, metadata.Agent)
+	}
+	if metadata.Provider != "" {
+		executorParts = append(executorParts, metadata.Provider)
+	}
+	if metadata.Model != "" {
+		executorParts = append(executorParts, metadata.Model)
+	}
+	if len(executorParts) == 0 {
+		parts = append(parts, "executor unavailable")
+	} else {
+		parts = append(parts, "executor "+strings.Join(executorParts, "/"))
+	}
+	if !metadata.BeadStatusAvailable {
+		beadStatus := "bead status unavailable"
+		if metadata.State != "" {
+			beadStatus += " (" + metadata.State + ")"
+		}
+		parts = append(parts, beadStatus)
+	} else if metadata.CurrentBead != "" {
+		beadStatus := "bead " + metadata.CurrentBead
+		if metadata.State != "" {
+			beadStatus += " (" + metadata.State + ")"
+		}
+		parts = append(parts, beadStatus)
+	} else if metadata.State == "EXHAUSTED" {
+		parts = append(parts, "queue empty")
+	} else if metadata.State != "" {
+		parts = append(parts, "queue no active bead ("+metadata.State+")")
+	} else {
+		parts = append(parts, "queue no active bead")
+	}
+	if metadata.BeadsProcessed > 0 || metadata.BeadsCompleted > 0 {
+		parts = append(parts, fmt.Sprintf("%d closed/%d cycles", metadata.BeadsCompleted, metadata.BeadsProcessed))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func compactSessionStatus(status metrics.SessionStatus) string {

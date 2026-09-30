@@ -17,22 +17,36 @@ import (
 // print mode. So such workers are invisible to both the tmux collector and the
 // hook collector, and the registry is the only source that sees them.
 type NeedleWorker struct {
-	ID             string    `json:"id"`
-	PID            int       `json:"pid"`
-	Workspace      string    `json:"workspace"`
-	Agent          string    `json:"agent"`
-	Provider       string    `json:"provider"`
-	StartedAt      time.Time `json:"started_at"`
-	BeadsProcessed int       `json:"beads_processed"`
+	ID                  string    `json:"id"`
+	PID                 int       `json:"pid"`
+	Workspace           string    `json:"workspace"`
+	Agent               string    `json:"agent"`
+	Model               string    `json:"model"`
+	Provider            string    `json:"provider"`
+	StartedAt           time.Time `json:"started_at"`
+	BeadsProcessed      uint64    `json:"beads_processed"`
+	BeadsCompleted      uint64    `json:"beads_completed"`
+	State               string    `json:"state"`
+	CurrentBead         string    `json:"-"`
+	BeadStatusAvailable bool      `json:"-"`
 }
 
 type needleRegistry struct {
 	Workers []NeedleWorker `json:"workers"`
 }
 
+type needleHeartbeat struct {
+	QualifiedID string  `json:"qualified_id"`
+	PID         int     `json:"pid"`
+	Workspace   string  `json:"workspace"`
+	State       string  `json:"state"`
+	CurrentBead *string `json:"current_bead"`
+}
+
 // NeedleCollector reads the NEEDLE worker registry.
 type NeedleCollector struct {
 	registryPath string
+	heartbeatDir string
 }
 
 // NewNeedleCollector creates a collector pointed at the default registry path.
@@ -43,6 +57,7 @@ func NewNeedleCollector() (*NeedleCollector, error) {
 	}
 	return &NeedleCollector{
 		registryPath: filepath.Join(home, ".needle", "state", "workers.json"),
+		heartbeatDir: filepath.Join(home, ".needle", "state", "heartbeats"),
 	}, nil
 }
 
@@ -77,10 +92,45 @@ func (nc *NeedleCollector) CollectWorkers() ([]NeedleWorker, error) {
 	live := make([]NeedleWorker, 0, len(reg.Workers))
 	for _, w := range reg.Workers {
 		if w.PID > 0 && isProcessRunning(w.PID) {
+			nc.enrichWorker(&w)
 			live = append(live, w)
 		}
 	}
 	return live, nil
+}
+
+// enrichWorker adds the latest per-worker heartbeat fields when that file is
+// available. The registry remains the source of identity and executor
+// configuration; an absent or unreadable heartbeat only leaves bead status
+// unavailable.
+func (nc *NeedleCollector) enrichWorker(worker *NeedleWorker) {
+	if nc == nil || worker == nil || worker.ID == "" || filepath.Base(worker.ID) != worker.ID || nc.heartbeatDir == "" {
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(nc.heartbeatDir, worker.ID+".json"))
+	if err != nil {
+		return
+	}
+
+	var heartbeat needleHeartbeat
+	if err := json.Unmarshal(data, &heartbeat); err != nil || heartbeat.PID != worker.PID || heartbeat.State == "" {
+		return
+	}
+	if heartbeat.QualifiedID != "" && heartbeat.QualifiedID != worker.ID {
+		return
+	}
+
+	worker.BeadStatusAvailable = true
+	if heartbeat.Workspace != "" {
+		worker.Workspace = heartbeat.Workspace
+	}
+	if heartbeat.State != "" {
+		worker.State = heartbeat.State
+	}
+	if heartbeat.CurrentBead != nil {
+		worker.CurrentBead = *heartbeat.CurrentBead
+	}
 }
 
 // DisplayName strips the redundant agent prefix from the worker id, so
@@ -104,11 +154,34 @@ func (w *NeedleWorker) ToTmuxSession(busy bool) TmuxSession {
 		status = StatusWorking
 	}
 
-	detail := w.Agent
-	if w.Workspace != "" {
-		detail += " · " + filepath.Base(w.Workspace)
+	detailParts := make([]string, 0, 7)
+	if w.Agent != "" {
+		detailParts = append(detailParts, w.Agent)
 	}
-	detail += " · " + strconv.Itoa(w.BeadsProcessed) + " beads"
+	if w.Provider != "" {
+		detailParts = append(detailParts, w.Provider)
+	}
+	if w.Model != "" {
+		detailParts = append(detailParts, w.Model)
+	}
+	if w.Workspace != "" {
+		detailParts = append(detailParts, w.Workspace)
+	}
+	if w.BeadStatusAvailable {
+		if w.CurrentBead != "" {
+			detailParts = append(detailParts, "bead "+w.CurrentBead)
+		} else {
+			detailParts = append(detailParts, "no active bead")
+		}
+		if w.State != "" {
+			detailParts = append(detailParts, w.State)
+		}
+	} else {
+		detailParts = append(detailParts, "bead status unavailable")
+	}
+	if w.BeadsProcessed > 0 || w.BeadsCompleted > 0 {
+		detailParts = append(detailParts, strconv.FormatUint(w.BeadsCompleted, 10)+" closed / "+strconv.FormatUint(w.BeadsProcessed, 10)+" cycles")
+	}
 
 	return TmuxSession{
 		Name:        w.DisplayName(),
@@ -117,8 +190,19 @@ func (w *NeedleWorker) ToTmuxSession(busy bool) TmuxSession {
 		Attached:    busy,
 		Created:     w.StartedAt,
 		Status:      status,
-		LastLines:   []string{detail},
+		LastLines:   []string{strings.Join(detailParts, " · ")},
 		Source:      "needle",
+		Worker: &WorkerMetadata{
+			Workspace:           w.Workspace,
+			Agent:               w.Agent,
+			Provider:            w.Provider,
+			Model:               w.Model,
+			State:               w.State,
+			CurrentBead:         w.CurrentBead,
+			BeadStatusAvailable: w.BeadStatusAvailable,
+			BeadsProcessed:      w.BeadsProcessed,
+			BeadsCompleted:      w.BeadsCompleted,
+		},
 	}
 }
 
