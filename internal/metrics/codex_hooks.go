@@ -68,6 +68,9 @@ func (h *CodexHookInstaller) UninstallHooks() error {
 	}
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
+		if raw, exists := settings["hooks"]; exists && raw != nil {
+			return fmt.Errorf("invalid Codex hooks.json hooks field: expected an object")
+		}
 		return nil
 	}
 	modified := false
@@ -109,6 +112,9 @@ func (h *CodexHookInstaller) updateConfig() error {
 	}
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
+		if raw, exists := settings["hooks"]; exists && raw != nil {
+			return fmt.Errorf("invalid Codex hooks.json hooks field: expected an object")
+		}
 		hooks = make(map[string]interface{})
 	}
 

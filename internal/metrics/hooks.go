@@ -704,8 +704,13 @@ func (h *HookSessionCollector) updateSingleSettingsFile(settingsPath, hooksDir s
 	var settings map[string]interface{}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("invalid Claude settings %s: %w", settingsPath, err)
+		}
+		if settings == nil {
 			settings = make(map[string]interface{})
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read Claude settings %s: %w", settingsPath, err)
 	} else {
 		settings = make(map[string]interface{})
 	}
@@ -713,6 +718,9 @@ func (h *HookSessionCollector) updateSingleSettingsFile(settingsPath, hooksDir s
 	// Get or create hooks section
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
+		if raw, exists := settings["hooks"]; exists && raw != nil {
+			return fmt.Errorf("invalid Claude hooks settings %s: expected an object", settingsPath)
+		}
 		hooks = make(map[string]interface{})
 	}
 
@@ -994,13 +1002,29 @@ func (h *HookSessionCollector) UninstallHooks() error {
 		return err
 	}
 
-	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+	settingsFiles, err := filepath.Glob(filepath.Join(homeDir, ".claude", "settings*.json"))
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for _, settingsPath := range settingsFiles {
+		if err := h.uninstallSingleSettingsFile(settingsPath); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func (h *HookSessionCollector) uninstallSingleSettingsFile(settingsPath string) error {
 	hooksDir := filepath.Join(h.baseDir, HooksSubdir)
 
 	// Read existing settings
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return nil // No settings file, nothing to uninstall
+		if os.IsNotExist(err) {
+			return nil // No settings file, nothing to uninstall
+		}
+		return err
 	}
 
 	var settings map[string]interface{}
@@ -1010,6 +1034,9 @@ func (h *HookSessionCollector) UninstallHooks() error {
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
+		if raw, exists := settings["hooks"]; exists && raw != nil {
+			return fmt.Errorf("invalid Claude hooks settings %s: expected an object", settingsPath)
+		}
 		return nil // No hooks section, nothing to uninstall
 	}
 
