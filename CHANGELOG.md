@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.20] - 2026-09-29
+
+### Added
+- **Grouped worker and interactive sessions**: classifies Claude Code and OpenCode worker names, with a per-user worker-log fallback; displays interactive sessions first, adds section headers and type icons, and uses abbreviated single-line entries to fit constrained terminal heights.
+
 ## [1.1.19] - 2026-09-24
 
 ### Added
