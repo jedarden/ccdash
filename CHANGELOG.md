@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.25] - 2026-10-02
+## [1.1.26] - 2026-10-02
 
 ### Fixed
 - **Dashboard help listed panel-focus keys with no handler and omitted active controls and ASKING**: derive documented shortcuts from the dashboard key bindings and render session indicators from the canonical status list.
