@@ -511,11 +511,14 @@ func (d *Dashboard) View() string {
 	outputHeight := lipgloss.Height(output)
 	if outputHeight < d.height {
 		// Pad with empty lines to fill the screen
-		padding := strings.Repeat("\n", d.height-outputHeight-1)
+		padding := strings.Repeat("\n", d.height-outputHeight)
 		output = output + padding
 	}
 
-	return output
+	// Panel renderers intentionally favor readable content, which can exceed
+	// their requested size when a terminal is too small. Keep the final frame
+	// inside the actual terminal dimensions in every layout and view mode.
+	return lipgloss.NewStyle().MaxWidth(d.width).MaxHeight(d.height).Render(output)
 }
 
 // updateLayout determines the current layout mode based on terminal size
@@ -762,9 +765,12 @@ func (d *Dashboard) getTmuxColumnCount(panelHeight int) int {
 // renderUltraWide renders 3 panels side-by-side
 // Balances space between Token and TMUX panels based on content needs
 func (d *Dashboard) renderUltraWide() string {
-	// Account for panel padding (0,1) which adds 2 chars per panel = 6 total
-	totalPanelWidth := d.width - 6
+	// Each panel adds two border and two padding columns around its content.
+	totalPanelWidth := d.width - 12
 	panelHeight := d.height - 3 // -2 borders, -1 status line
+	if panelHeight < 0 {
+		panelHeight = 0
+	}
 
 	// Step 1: System panel width. Its floor is set by its fixed-format Disk
 	// I/O / Net I/O lines ("Disk I/O | Read: 1024.00 KB/s | Write: 1024.00
@@ -857,16 +863,9 @@ func (d *Dashboard) renderUltraWide() string {
 		tmuxWidth = 1
 	}
 
-	systemPanel := d.renderSystemPanel(systemWidth, panelHeight)
-	tokenPanel := d.renderTokenPanel(tokenWidth, panelHeight)
-	tmuxPanel := d.renderTmuxPanel(tmuxWidth, panelHeight)
-
-	// Force all panels to exactly the same height using lipgloss
-	// This ensures borders align even if content varies
-	uniformHeight := lipgloss.NewStyle().Height(panelHeight)
-	systemPanel = uniformHeight.Render(systemPanel)
-	tokenPanel = uniformHeight.Render(tokenPanel)
-	tmuxPanel = uniformHeight.Render(tmuxPanel)
+	systemPanel := fitPanelToSize(d.renderSystemPanel(systemWidth, panelHeight), systemWidth, panelHeight)
+	tokenPanel := fitPanelToSize(d.renderTokenPanel(tokenWidth, panelHeight), tokenWidth, panelHeight)
+	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(tmuxWidth, panelHeight), tmuxWidth, panelHeight)
 
 	// Join horizontally with top alignment
 	return lipgloss.JoinHorizontal(lipgloss.Top,
@@ -878,13 +877,19 @@ func (d *Dashboard) renderUltraWide() string {
 
 // renderWide renders 2 panels on top, 1 on bottom
 func (d *Dashboard) renderWide() string {
-	panelWidth := (d.width - 3) / 2 // 2 panels with spacing
-	topHeight := (d.height - 4) / 2 // Split height
-	bottomHeight := d.height - topHeight - 4
+	panelWidth := (d.width - 9) / 2      // Two panel frames, their gap, and 8 frame columns
+	availablePanelHeight := d.height - 5 // Two border rows per panel row and one status row
+	if availablePanelHeight < 0 {
+		availablePanelHeight = 0
+	}
+	topHeight := availablePanelHeight / 2
+	bottomHeight := availablePanelHeight - topHeight
+	panelWidth = max(panelWidth, 1)
 
-	systemPanel := d.renderSystemPanel(panelWidth, topHeight)
-	tokenPanel := d.renderTokenPanel(panelWidth, topHeight)
-	tmuxPanel := d.renderTmuxPanel(d.width-2, bottomHeight)
+	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, topHeight), panelWidth, topHeight)
+	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, topHeight), panelWidth, topHeight)
+	tmuxWidth := max(d.width-4, 1)
+	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(tmuxWidth, bottomHeight), tmuxWidth, bottomHeight)
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, " ", tokenPanel)
 
@@ -893,12 +898,16 @@ func (d *Dashboard) renderWide() string {
 
 // renderNarrow renders panels stacked vertically
 func (d *Dashboard) renderNarrow() string {
-	panelWidth := d.width - 2
-	panelHeight := (d.height - 5) / 3 // 3 panels stacked
+	panelWidth := max(d.width-4, 1)
+	availablePanelHeight := d.height - 7 // Three panel frames and a one-row status bar
+	if availablePanelHeight < 0 {
+		availablePanelHeight = 0
+	}
+	panelHeight := availablePanelHeight / 3
 
-	systemPanel := d.renderSystemPanel(panelWidth, panelHeight)
-	tokenPanel := d.renderTokenPanel(panelWidth, panelHeight)
-	tmuxPanel := d.renderTmuxPanel(panelWidth, panelHeight)
+	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, panelHeight), panelWidth, panelHeight)
+	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, panelHeight), panelWidth, panelHeight)
+	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(panelWidth, panelHeight), panelWidth, panelHeight)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		systemPanel,
@@ -911,8 +920,11 @@ func (d *Dashboard) renderNarrow() string {
 // tmux sessions on top, token usage in the middle, system resources on the bottom.
 // Height is distributed with tmux getting extra rows since session lists are tall.
 func (d *Dashboard) renderCompact() string {
-	panelWidth := d.width - 2
+	panelWidth := max(d.width-4, 1)
 	available := d.height - 8 // 3×2 border rows + 1 status line + 1 repo/updater line
+	if available < 0 {
+		available = 0
+	}
 
 	// Give tmux a bit more room — sessions need more lines than the other panels
 	tmuxHeight := available / 2
@@ -920,26 +932,29 @@ func (d *Dashboard) renderCompact() string {
 	tokenHeight := remaining / 2
 	systemHeight := remaining - tokenHeight
 
-	// Enforce a sensible minimum so panels don't collapse
-	if tmuxHeight < 8 {
-		tmuxHeight = 8
-	}
-	if tokenHeight < 8 {
-		tokenHeight = 8
-	}
-	if systemHeight < 8 {
-		systemHeight = 8
-	}
-
-	tmuxPanel := d.renderTmuxPanel(panelWidth, tmuxHeight)
-	tokenPanel := d.renderTokenPanel(panelWidth, tokenHeight)
-	systemPanel := d.renderSystemPanel(panelWidth, systemHeight)
+	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(panelWidth, tmuxHeight), panelWidth, tmuxHeight)
+	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, tokenHeight), panelWidth, tokenHeight)
+	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, systemHeight), panelWidth, systemHeight)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		tmuxPanel,
 		tokenPanel,
 		systemPanel,
 	)
+}
+
+// fitPanelToSize bounds the complete panel frame, including its border and
+// padding. Lip Gloss Height pads short content but deliberately does not trim
+// long content, so retain the top and bottom border rows when a tight panel
+// needs to drop interior rows.
+func fitPanelToSize(panel string, width, height int) string {
+	panel = lipgloss.NewStyle().MaxWidth(max(width+4, 1)).Render(panel)
+	lines := strings.Split(panel, "\n")
+	maxHeight := max(height+2, 2)
+	if len(lines) > maxHeight {
+		lines = append(append([]string(nil), lines[:maxHeight-1]...), lines[len(lines)-1])
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderSystemPanel renders the system resources panel

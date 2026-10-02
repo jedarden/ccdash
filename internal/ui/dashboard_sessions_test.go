@@ -276,6 +276,84 @@ func TestRenderTmuxPanelFitsDocumentedLayouts(t *testing.T) {
 	}
 }
 
+func TestDashboardViewFitsFixedTerminalSizes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	tests := []struct {
+		name          string
+		width, height int
+		wantOneRow    bool
+	}{
+		{name: "80x24", width: 80, height: 24},
+		{name: "100x35", width: 100, height: 35},
+		{name: "160x45", width: 160, height: 45, wantOneRow: true},
+		{name: "199x14", width: 199, height: 14, wantOneRow: true},
+		{name: "240x50", width: 240, height: 50, wantOneRow: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Dashboard{
+				width:  tt.width,
+				height: tt.height,
+				tokenMetrics: &metrics.TokenMetrics{
+					Available:    true,
+					InputTokens:  1200,
+					OutputTokens: 850,
+					TotalTokens:  2050,
+					Prompts:      7,
+					TotalCost:    0.25,
+					ModelUsages: []metrics.ModelUsage{{
+						Model:       "claude-sonnet-4-20250514",
+						TotalTokens: 2050,
+						Cost:        0.25,
+					}},
+				},
+				tmuxMetrics: &metrics.TmuxMetrics{
+					Available: true,
+					Total:     5,
+					Source:    "tmux",
+					Sessions: []metrics.TmuxSession{
+						{Name: "alpha", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusActive},
+						{Name: "delta", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusReady},
+						{Name: "worker-alpha", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusWorking},
+						{Name: "worker-bravo", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusReady},
+						{Name: "worker-charlie", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusActive},
+					},
+				},
+				version: "test",
+			}
+			d.updateLayout()
+
+			view := d.View()
+			if got := lipgloss.Height(view); got > tt.height {
+				t.Fatalf("View() height = %d, want <= %d:\n%s", got, tt.height, view)
+			}
+			for i, line := range strings.Split(view, "\n") {
+				if got := lipgloss.Width(line); got > tt.width {
+					t.Errorf("View() line %d width = %d, want <= %d: %q", i+1, got, tt.width, line)
+				}
+			}
+
+			if tt.wantOneRow {
+				lines := strings.Split(view, "\n")
+				var topRow, bottomRow int = -1, -1
+				for i, line := range lines {
+					if strings.Count(line, "╭") == 3 {
+						topRow = i
+					}
+					if strings.Count(line, "╰") == 3 {
+						bottomRow = i
+					}
+				}
+				if topRow < 0 || bottomRow <= topRow {
+					t.Fatalf("three-panel row does not have aligned top and bottom borders (top=%d bottom=%d):\n%s", topRow, bottomRow, view)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderWorkerCellShowsWorkspaceExecutorAndBeadStatus(t *testing.T) {
 	d := &Dashboard{}
 	cell := d.renderSessionCell(metrics.TmuxSession{
