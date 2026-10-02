@@ -47,3 +47,22 @@ func TestTokenPanelHidesZeroTokenZeroCostModelRows(t *testing.T) {
 		t.Fatalf("empty model rows should not produce a Models section:\n%s", view)
 	}
 }
+
+func TestTokenPanelMarksEstimatedPricing(t *testing.T) {
+	d := &Dashboard{tokenMetrics: &metrics.TokenMetrics{
+		Available:   true,
+		TotalTokens: 120,
+		TotalCost:   0.01,
+		ModelUsages: []metrics.ModelUsage{{
+			Model:            "claude-sonnet-next",
+			TotalTokens:      120,
+			Cost:             0.01,
+			PricingEstimated: true,
+		}},
+	}}
+
+	view := d.renderTokenPanel(100, 10)
+	if !strings.Contains(view, "? = estimated") || !strings.Contains(view, "Sonnet?") {
+		t.Fatalf("estimated model pricing should be marked in the token panel:\n%s", view)
+	}
+}

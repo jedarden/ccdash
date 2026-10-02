@@ -10,8 +10,9 @@ import (
 
 // Config represents the ccdash configuration file
 type Config struct {
-	Notify NotifyConfig `yaml:"notify"`
-	Alerts AlertsConfig `yaml:"alerts"`
+	Notify  NotifyConfig  `yaml:"notify"`
+	Alerts  AlertsConfig  `yaml:"alerts"`
+	Pricing PricingConfig `yaml:"pricing"`
 }
 
 // NotifyConfig contains notification settings
@@ -23,6 +24,53 @@ type NotifyConfig struct {
 // AlertsConfig contains alert threshold settings
 type AlertsConfig struct {
 	CostThresholdUSD float64 `yaml:"cost_threshold_usd"`
+}
+
+// PricingConfig contains optional per-model pricing overrides. The preferred
+// form is:
+//
+//	pricing:
+//	  models:
+//	    model-name:
+//	      input_per_million: 1
+//	      output_per_million: 5
+//	      cache_read_per_million: 0.1
+//	      cache_create_per_million: 1.25
+//
+// Direct model entries under pricing are accepted too for a compact config.
+type PricingConfig struct {
+	Models map[string]ModelPricing `yaml:"models"`
+}
+
+// ModelPricing contains prices in dollars per million tokens.
+type ModelPricing struct {
+	InputPerMillion       float64 `yaml:"input_per_million"`
+	OutputPerMillion      float64 `yaml:"output_per_million"`
+	CacheReadPerMillion   float64 `yaml:"cache_read_per_million"`
+	CacheCreatePerMillion float64 `yaml:"cache_create_per_million"`
+}
+
+// UnmarshalYAML accepts both pricing.models and direct model entries under
+// pricing. The latter keeps the common one-or-two-model override concise while
+// the former leaves room for future pricing settings alongside models.
+func (p *PricingConfig) UnmarshalYAML(value *yaml.Node) error {
+	var grouped struct {
+		Models map[string]ModelPricing `yaml:"models"`
+	}
+	if err := value.Decode(&grouped); err != nil {
+		return err
+	}
+	if grouped.Models != nil {
+		p.Models = grouped.Models
+		return nil
+	}
+
+	var direct map[string]ModelPricing
+	if err := value.Decode(&direct); err != nil {
+		return err
+	}
+	p.Models = direct
+	return nil
 }
 
 // Load reads the configuration from ~/.ccdash/config.yaml

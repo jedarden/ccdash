@@ -75,22 +75,26 @@ func (s *OpenCodeSource) HookInstaller() HookInstaller { return nil }
 // price, matching the API-equivalent cost ccdash shows for other sources.
 // Anything else is zero rather than borrowing an unrelated default rate.
 func (s *OpenCodeSource) PricingForModel(model string) ModelPricing {
+	return s.pricingDetailsForModel(model).pricing
+}
+
+func (s *OpenCodeSource) pricingDetailsForModel(model string) pricingDetails {
 	id := model
 	if i := strings.LastIndex(model, "/"); i >= 0 {
 		id = model[i+1:]
 	}
 	if strings.HasSuffix(id, "-free") {
-		return ModelPricing{}
+		return pricingDetails{}
 	}
-	if pricing := NewCodexSource().PricingForModel(id); pricing != (ModelPricing{}) {
-		return pricing
+	if details := NewCodexSource().pricingDetailsForModel(id); details.pricing != (ModelPricing{}) {
+		return details
 	}
 	for _, family := range []string{"claude", "sonnet", "opus", "haiku", "fable", "glm"} {
 		if strings.Contains(id, family) {
-			return getPricingForModel(id)
+			return getPricingDetailsForModel(id)
 		}
 	}
-	return ModelPricing{}
+	return pricingDetails{}
 }
 
 // dbIngestSource is implemented by sources backed by a database rather than

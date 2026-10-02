@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jedarden/ccdash/internal/config"
 )
 
 // ModelUsage tracks token usage and cost for a specific model
@@ -20,6 +22,7 @@ type ModelUsage struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
 	Cost                float64 `json:"cost"`
+	PricingEstimated    bool    `json:"pricing_estimated"`
 }
 
 // TokenMetrics represents aggregated token usage metrics
@@ -48,12 +51,13 @@ type TokenMetrics struct {
 // TokenCollector collects and aggregates token usage from all configured
 // harness sources.
 type TokenCollector struct {
-	sources       []Source // Harness-specific transcript readers
-	sourceDirs    map[string][]string
-	projectsDirs  []string  // Claude roots retained for extra-dir compatibility
-	lookbackFrom  time.Time // Only include data from this time onwards
-	cache         *TokenCache
-	stopIngestion chan struct{} // Closed to stop the background ingestion goroutine
+	sources          []Source // Harness-specific transcript readers
+	sourceDirs       map[string][]string
+	projectsDirs     []string  // Claude roots retained for extra-dir compatibility
+	lookbackFrom     time.Time // Only include data from this time onwards
+	cache            *TokenCache
+	pricingOverrides map[string]ModelPricing
+	stopIngestion    chan struct{} // Closed to stop the background ingestion goroutine
 }
 
 // GetMondayNineAM returns the most recent Monday at 9am local time
@@ -157,9 +161,10 @@ func NewTokenCollector() *TokenCollector {
 			"codex":    sourceDirs(codex, home),
 			"opencode": sourceDirs(opencode, home),
 		},
-		projectsDirs: claudeDirs,
-		lookbackFrom: GetMondayNineAM(),
-		cache:        NewTokenCache(),
+		projectsDirs:     claudeDirs,
+		lookbackFrom:     GetMondayNineAM(),
+		cache:            NewTokenCache(),
+		pricingOverrides: loadPricingOverrides(),
 	}
 	tc.startBackgroundIngestion()
 	return tc
@@ -179,9 +184,10 @@ func NewTokenCollectorWithLookback(lookbackFrom time.Time) *TokenCollector {
 			"codex":    sourceDirs(codex, home),
 			"opencode": sourceDirs(opencode, home),
 		},
-		projectsDirs: claudeDirs,
-		lookbackFrom: lookbackFrom,
-		cache:        NewTokenCache(),
+		projectsDirs:     claudeDirs,
+		lookbackFrom:     lookbackFrom,
+		cache:            NewTokenCache(),
+		pricingOverrides: loadPricingOverrides(),
 	}
 	tc.startBackgroundIngestion()
 	return tc
@@ -192,11 +198,12 @@ func NewTokenCollectorWithPath(path string) *TokenCollector {
 	claude := NewClaudeSource()
 	codex := NewCodexSource()
 	tc := &TokenCollector{
-		sources:      []Source{claude, codex},
-		sourceDirs:   map[string][]string{"claude": []string{path}, "codex": nil},
-		projectsDirs: []string{path},
-		lookbackFrom: GetMondayNineAM(),
-		cache:        NewTokenCache(),
+		sources:          []Source{claude, codex},
+		sourceDirs:       map[string][]string{"claude": []string{path}, "codex": nil},
+		projectsDirs:     []string{path},
+		lookbackFrom:     GetMondayNineAM(),
+		cache:            NewTokenCache(),
+		pricingOverrides: loadPricingOverrides(),
 	}
 	tc.startBackgroundIngestion()
 	return tc
@@ -389,7 +396,7 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 	for model, mm := range aggregated.ModelMetrics {
 		metrics.Models = append(metrics.Models, model)
 
-		pricing := tc.pricingForModel(mm.Source, model)
+		pricing, pricingEstimated := tc.pricingForModel(mm.Source, model)
 		inputCost := float64(mm.InputTokens) * pricing.InputPerMillion / 1_000_000
 		outputCost := float64(mm.OutputTokens) * pricing.OutputPerMillion / 1_000_000
 		cacheReadCost := float64(mm.CacheReadTokens) * pricing.CacheReadPerMillion / 1_000_000
@@ -405,6 +412,7 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 			CacheCreationTokens: mm.CacheCreationTokens,
 			TotalTokens:         mm.InputTokens + mm.OutputTokens + mm.CacheReadTokens + mm.CacheCreationTokens,
 			Cost:                modelCost,
+			PricingEstimated:    pricingEstimated,
 		}
 		metrics.ModelUsages = append(metrics.ModelUsages, usage)
 		totalCost += modelCost
@@ -456,13 +464,47 @@ func (tc *TokenCollector) hasConfiguredSourceDirs() bool {
 	return len(tc.projectsDirs) > 0
 }
 
-func (tc *TokenCollector) pricingForModel(source, model string) ModelPricing {
-	for _, candidate := range tc.sources {
-		if candidate.Name() == source {
-			return candidate.PricingForModel(model)
+func loadPricingOverrides() map[string]ModelPricing {
+	cfg, err := config.Load()
+	if err != nil || len(cfg.Pricing.Models) == 0 {
+		return nil
+	}
+	overrides := make(map[string]ModelPricing, len(cfg.Pricing.Models))
+	for model, pricing := range cfg.Pricing.Models {
+		overrides[model] = ModelPricing{
+			InputPerMillion:       pricing.InputPerMillion,
+			OutputPerMillion:      pricing.OutputPerMillion,
+			CacheReadPerMillion:   pricing.CacheReadPerMillion,
+			CacheCreatePerMillion: pricing.CacheCreatePerMillion,
 		}
 	}
-	return getPricingForModel(model)
+	return overrides
+}
+
+type pricingDetails struct {
+	pricing   ModelPricing
+	estimated bool
+}
+
+type pricingDetailsSource interface {
+	pricingDetailsForModel(model string) pricingDetails
+}
+
+func (tc *TokenCollector) pricingForModel(source, model string) (ModelPricing, bool) {
+	if pricing, ok := tc.pricingOverrides[model]; ok {
+		return pricing, false
+	}
+	for _, candidate := range tc.sources {
+		if candidate.Name() == source {
+			if detailed, ok := candidate.(pricingDetailsSource); ok {
+				result := detailed.pricingDetailsForModel(model)
+				return result.pricing, result.estimated
+			}
+			return candidate.PricingForModel(model), false
+		}
+	}
+	result := getPricingDetailsForModel(model)
+	return result.pricing, result.estimated
 }
 
 // ingestJSONLFile keeps the historical Claude-only helper available to
@@ -1054,6 +1096,17 @@ func getPricingForModel(model string) ModelPricing {
 	}
 
 	return defaultPricing
+}
+
+// getPricingDetailsForModel reports whether the selected rate came from a
+// non-exact family/default fallback. A configured override is handled by the
+// TokenCollector before this function is called.
+func getPricingDetailsForModel(model string) pricingDetails {
+	pricing, exact := modelPricing[model]
+	if exact {
+		return pricingDetails{pricing: pricing}
+	}
+	return pricingDetails{pricing: getPricingForModel(model), estimated: true}
 }
 
 // GetCacheDBPath returns the path to the SQLite database for external tools like DuckDB

@@ -65,7 +65,11 @@ func (s *ClaudeSource) ParseUsageLine(raw []byte) (*TokenEvent, bool, error) {
 }
 
 func (s *ClaudeSource) PricingForModel(model string) ModelPricing {
-	return getPricingForModel(model)
+	return s.pricingDetailsForModel(model).pricing
+}
+
+func (s *ClaudeSource) pricingDetailsForModel(model string) pricingDetails {
+	return getPricingDetailsForModel(model)
 }
 
 func (s *ClaudeSource) HookInstaller() HookInstaller {

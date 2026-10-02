@@ -1362,13 +1362,33 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	// Build right column: Per-model costs with dynamic name width
 	var rightLines []string
 	if modelCount > 0 {
-		rightLines = append(rightLines, boldStyle.Render("Models:"))
+		hasEstimatedPricing := false
+		for _, usage := range modelUsages {
+			if usage.PricingEstimated {
+				hasEstimatedPricing = true
+				break
+			}
+		}
+		modelsLabel := "Models:"
+		if hasEstimatedPricing {
+			modelsLabel = "Models (? = estimated):"
+		}
+		rightLines = append(rightLines, boldStyle.Render(modelsLabel))
 		for _, usage := range modelUsages {
 			displayName := shortenModelName(usage.Model)
-			// Dynamically truncate based on available space
-			if len(displayName) > maxModelNameWidth {
-				displayName = displayName[:maxModelNameWidth-1] + "…"
+			estimatedMarker := ""
+			if usage.PricingEstimated {
+				estimatedMarker = "?"
 			}
+			// Dynamically truncate based on available space
+			nameWidth := maxModelNameWidth - len(estimatedMarker)
+			if nameWidth < 1 {
+				nameWidth = 1
+			}
+			if len(displayName) > nameWidth {
+				displayName = displayName[:nameWidth-1] + "…"
+			}
+			displayName += estimatedMarker
 			modelStyle := getModelStyle(usage.Model)
 			// All model info on one line: Name Cost (Tokens)
 			line := fmt.Sprintf("%s %s %s",
@@ -1554,8 +1574,12 @@ func (d *Dashboard) calculateRequiredTokenWidth() int {
 
 	if d.tokenMetrics != nil {
 		for _, usage := range nonzeroModelUsages(d.tokenMetrics.ModelUsages) {
-			if n := len(shortenModelName(usage.Model)); n > maxNameLen {
-				maxNameLen = n
+			nameLen := len(shortenModelName(usage.Model))
+			if usage.PricingEstimated {
+				nameLen++
+			}
+			if nameLen > maxNameLen {
+				maxNameLen = nameLen
 			}
 		}
 	}

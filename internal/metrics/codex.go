@@ -168,18 +168,22 @@ var codexPricing = map[string]ModelPricing{
 }
 
 func (s *CodexSource) PricingForModel(model string) ModelPricing {
+	return s.pricingDetailsForModel(model).pricing
+}
+
+func (s *CodexSource) pricingDetailsForModel(model string) pricingDetails {
 	if pricing, ok := codexPricing[model]; ok {
-		return pricing
+		return pricingDetails{pricing: pricing}
 	}
 	// Codex may emit dated snapshots. Prefer the stable model family when a
 	// snapshot suffix is present; unknown models use zero pricing rather than
 	// accidentally applying a Claude rate.
 	for prefix, pricing := range codexPricing {
 		if strings.HasPrefix(model, prefix+"-") {
-			return pricing
+			return pricingDetails{pricing: pricing, estimated: true}
 		}
 	}
-	return ModelPricing{}
+	return pricingDetails{}
 }
 
 func (s *CodexSource) HookInstaller() HookInstaller {
