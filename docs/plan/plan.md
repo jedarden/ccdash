@@ -1,10 +1,10 @@
 # ccdash Implementation Plan
 
-**Project:** Lightweight TUI dashboard for Claude Code token usage, agent sessions, and system resources
+**Project:** Lightweight TUI dashboard for Claude Code, Codex CLI and OpenCode token usage, agent sessions, and system resources
 **Repo:** jedarden/ccdash
-**Language:** Go 1.21+
-**Current Version:** v0.9.4
-**Total Lines of Code:** ~7,500 lines
+**Language:** Go 1.24+ (per `go.mod`)
+**Current Version:** see `VERSION` (v1.1.20 as of 2026-10-02)
+**Total Lines of Code:** ~15,000 lines of Go
 
 ## Overview
 
@@ -27,11 +27,18 @@ ccdash/
 │   ├── metrics/         # Metrics collectors
 │   │   ├── system.go    # System resources (CPU, memory, disk, network)
 │   │   ├── tokens.go    # Token usage from Claude Code JSONL logs
-│   │   ├── source.go    # Source interface (multi-harness) — planned, ADR-0007
-│   │   ├── codex.go     # Token usage from Codex CLI rollout JSONL — planned, ADR-0007
-│   │   ├── tmux.go      # Tmux session monitoring
-│   │   ├── hooks.go     # Hook session tracking
-│   │   └── cache.go     # SQLite token caching
+│   │   ├── source.go    # Source interface (multi-harness), ADR-0007
+│   │   ├── codex.go     # Token usage from Codex CLI rollout JSONL, ADR-0007
+│   │   ├── opencode.go  # Token usage from OpenCode's opencode.db
+│   │   ├── tmux.go      # Tmux session monitoring and session merge
+│   │   ├── agentproc.go # Which tmux sessions actually host an agent
+│   │   ├── needle.go    # NEEDLE worker registry
+│   │   ├── worker.go    # Worker vs. interactive classification
+│   │   ├── hooks.go     # Claude Code hook session tracking
+│   │   ├── codex_hooks.go # Codex hook session tracking
+│   │   └── cache.go     # SQLite token caching, leader lease
+│   ├── config/          # ~/.ccdash/config.yaml
+│   ├── notify/          # Webhook notifications (ADR-0006)
 │   ├── ui/              # Bubble Tea UI components
 │   │   ├── dashboard.go # Main TUI model and layout logic
 │   │   └── styles.go    # Terminal styling
@@ -104,9 +111,9 @@ Production readiness improvements:
 - Cross-platform binary releases (linux, darwin, amd64, arm64)
 - SHA256 checksums for releases
 
-### Phase 5: CI/CD Migration - IN PROGRESS
+### Phase 5: CI/CD Migration - COMPLETE
 
-**Status:** 🔄 In Progress
+**Status:** ✅ Complete (releases build on Argo Workflows in iad-ci; see `AGENTS.md` "Shipping changes")
 
 Migrate from GitHub Actions to Argo Workflows:
 - Create argo-workflows WorkflowTemplate
@@ -127,9 +134,10 @@ Potential future features:
 - Additional Claude Code integrations
 - Plugin system for custom metrics
 
-### Phase 7: Codex CLI Support - PLANNED
+### Phase 7: Codex CLI Support - COMPLETE
 
-**Status:** 📋 Planned (ADR-0007, 2026-08-12)
+**Status:** ✅ Complete (ADR-0007, 2026-08-12; shipped through v1.1.x). OpenCode
+token ingestion followed in v1.1.19 (bead ccdash-08d219ce).
 
 Extend token and session tracking to Codex CLI alongside Claude Code, via a
 pluggable `Source` abstraction rather than a hardcoded second path or a
@@ -164,6 +172,76 @@ below) for context and alternatives considered.
   extending the 🤖/💻 convention from ADR-0001/0002
 
 **Related ADR:** ADR-0007
+
+### Phase 8: Review Backlog (2026-10) - IN PROGRESS
+
+**Status:** 🔄 In Progress
+
+A review on 2026-09-25, re-verified against HEAD `91678f2` on 2026-10-02 by
+rendering the dashboard at 240x30, 100x35 and 199x14 and running `--once`,
+produced the beads below (label `review-2026-10`). Arrows are blocking
+dependencies; they serialize beads that edit the same file.
+
+**Correctness**
+
+| Bead | Outcome |
+|------|---------|
+| ccdash-3a4ef2c2 | Sessions panel lists only sessions that host an agent |
+| ccdash-6203cfd7 | Token panel no longer reads 0 while the cache holds the window's events |
+| ccdash-557f1c09 | No layout overflows the terminal (199x14, stacked); size-matrix render tests |
+| ccdash-078deb63 | No-op mouse capture removed so terminal text selection works |
+| ccdash-eec2c3a4 | No update nag on `dev` builds; update prompt shown once |
+| ccdash-e023a79b | `--help` matches the real key handlers and status set |
+
+**Usability and agent API**
+
+| Bead | Outcome |
+|------|---------|
+| ccdash-f0f62bea | Worker names stay legible; zero-spend model rows hidden |
+| ccdash-9923a717 | ASKING is the loudest status; READY is no longer red |
+| ccdash-0a0b6ab4 | `--once --json` has a stable, versioned snake_case schema |
+| ccdash-9ebd82fd | `--since` and `--attention` for the headless snapshot |
+| ccdash-e8ee18c5 | `config.yaml` pricing overrides; guessed prices are marked |
+
+**Documentation**
+
+| Bead | Outcome |
+|------|---------|
+| ccdash-956950fd | This plan: standard path, corrected facts, this phase |
+| ccdash-a390f6e1 | README covers every flag, config and notifications; working SQL example; screenshot |
+| ccdash-ed76f608 | Docs consolidated to the standard layout; architecture page |
+
+**Order**
+
+```
+3a4ef2c2 (tmux detection) → 557f1c09 (layout) → f0f62bea (row labels) → 9923a717 (status colours)
+                            557f1c09           → eec2c3a4 (update nag)
+078deb63 (mouse) → e023a79b (--help) → 0a0b6ab4 (JSON schema) → 9ebd82fd (--since/--attention)
+                   e023a79b           → a390f6e1 (README) → ed76f608 (docs layout)
+6203cfd7 (zero tokens) → e8ee18c5 (pricing overrides)
+```
+
+**Decisions taken**
+
+- *Non-agent tmux sessions are hidden, not greyed out.* The Sessions panel is
+  documented as "active Claude Code and Codex agent sessions"; a shell, build
+  or log-tail session is not one, and listing it (as WORKING whenever its
+  output scrolled) made the panel's counts meaningless. A tmux session is an
+  agent session if any of these hold: it is hook-tracked; it is classified as
+  a worker (executor-named or NEEDLE registry); an agent process (`claude`,
+  `codex`, `opencode`, `needle`) is in a pane's process tree; or its pane
+  shows agent UI markers (covers an agent reached over `ssh` inside tmux).
+- *Size-matrix render tests are the verification for layout work.* Every
+  layout bead in this phase proves itself by rendering `View()` at fixed
+  sizes with fixed metrics, not by eyeballing a terminal.
+- The three-panel layout stays locked (see Key Design Decisions); nothing in
+  this phase adds a panel.
+
+**Candidates not admitted as beads** (ideas from the same review; they need an
+explicit go-ahead before becoming work): weekly spend projection and a budget
+bar against `alerts.cost_threshold_usd`; `ccdash doctor`; `--watch --json`
+line-delimited stream; per-session cost in the Sessions panel; splitting
+`internal/ui/dashboard.go` by panel.
 
 ## Key Design Decisions
 
@@ -227,8 +305,7 @@ make release    # Create release build
 ### Testing
 
 ```bash
-go test ./internal/metrics/...
-go test ./internal/ui/...
+go test ./...
 ```
 
 ## Deployment

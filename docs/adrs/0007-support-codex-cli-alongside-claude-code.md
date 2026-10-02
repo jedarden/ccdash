@@ -142,7 +142,7 @@ the same narrow role — liveness/status signal, not a usage feed.
 - Related ADR: none directly; builds on the hook-tracking foundation from
   the CHANGELOG [1.0.2] Notification/PermissionRequest wiring referenced in
   ADR-0006.
-- `docs/plan.md` — canonical copy of this ADR under "ADR-0007", plus Phase 7
+- `docs/plan/plan.md` — canonical copy of this ADR under "ADR-0007", plus Phase 7
   in Implementation Phases.
 - Codex hooks docs (2026-08-12 capture): `developers.openai.com/codex/hooks`
   (redirects to `learn.chatgpt.com/docs/hooks`) and

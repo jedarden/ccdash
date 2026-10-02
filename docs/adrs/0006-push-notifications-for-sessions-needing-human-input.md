@@ -51,5 +51,5 @@ Add an optional, opt-in outbound notifier to ccdash:
 ## References
 
 - Related ADR: ADR 0005 (per-instance independence, leader-election precedent)
-- `docs/plan.md` — canonical copy of this ADR under "ADR-0006"
+- `docs/plan/plan.md` — canonical copy of this ADR under "ADR-0006"
 - `CHANGELOG.md` [1.0.2] — the Notification/PermissionRequest hook wiring this decision builds on
