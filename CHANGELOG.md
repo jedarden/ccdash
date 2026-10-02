@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.21] - 2026-10-02
+
+### Fixed
+- **Sessions panel listed every tmux session as an agent**: a tmux session running a shell, a build, a log tail or ccdash itself was shown as an agent session, and as `WORKING` whenever its output had scrolled in the last 30 seconds. A tmux session is now listed only if it is hook-tracked, is a worker, has a `claude`, `codex`, `opencode` or NEEDLE process in one of its panes' process trees, or shows agent prompt markers in its pane (an agent reached over `ssh`). Where the process table cannot be read (macOS) the previous behaviour is kept.
+
 ## [1.1.20] - 2026-09-29
 
 ### Added

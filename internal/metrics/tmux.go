@@ -91,6 +91,9 @@ type TmuxSession struct {
 	LastLines         []string        `json:"last_lines,omitempty"`
 	Source            string          `json:"source,omitempty"`  // "tmux" or "hooks"
 	Harness           string          `json:"harness,omitempty"` // "claude" or "codex" when hook-tracked
+
+	// agentUI records that the pane showed agent prompt or working markers.
+	agentUI bool
 }
 
 // WorkerMetadata carries optional NEEDLE context for a worker row. It is
@@ -267,8 +270,17 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		seenNames[normalizedKey] = true
 	}
 
-	// Then, add tmux sessions that aren't already tracked by hooks
+	// Then, add tmux sessions that aren't already tracked by hooks. Only
+	// sessions that host an agent belong here; when that cannot be determined
+	// (no /proc, tmux list-panes failed) every session is kept.
+	withAgentProcess, canTell := map[string]bool(nil), false
+	if len(tmuxSessions) > 0 {
+		withAgentProcess, canTell = tc.agentSessions()
+	}
 	for _, session := range tmuxSessions {
+		if canTell && !hostsAgent(session, withAgentProcess) {
+			continue
+		}
 		normalizedKey := normalizeForNeedle(session.Name)
 		if !seenNames[normalizedKey] {
 			metrics.Sessions = append(metrics.Sessions, session)
@@ -503,12 +515,14 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 	// Working indicators like "(esc to interrupt)" or "(ctrl+c to interrupt)" take precedence over prompt detection
 	// because both can appear on screen simultaneously while Claude is processing
 	if tc.isClaudeWorking(content) {
+		session.agentUI = true
 		session.Status = StatusWorking
 		return session
 	}
 
 	// Priority 2: Check if Claude Code is at a prompt (READY)
 	if tc.isClaudeWaiting(content) {
+		session.agentUI = true
 		if session.IdleDuration > 30*time.Second {
 			session.Status = StatusReady
 		} else {
