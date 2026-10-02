@@ -254,13 +254,259 @@ func main() {
 	}
 }
 
-// Snapshot represents a single-point-in-time collection of all metrics
+// Snapshot is the versioned public JSON representation emitted by --once --json.
 type Snapshot struct {
-	Timestamp time.Time             `json:"timestamp"`
-	Version   string                `json:"version"`
-	System    metrics.SystemMetrics `json:"system"`
-	Tokens    *metrics.TokenMetrics `json:"tokens"`
-	Sessions  *metrics.TmuxMetrics  `json:"sessions"`
+	SchemaVersion int                      `json:"schema_version"`
+	Timestamp     time.Time                `json:"timestamp"`
+	Version       string                   `json:"version"`
+	System        snapshotSystemMetrics    `json:"system"`
+	Tokens        *snapshotTokenMetrics    `json:"tokens"`
+	Sessions      *snapshotSessionsMetrics `json:"sessions"`
+}
+
+const snapshotSchemaVersion = 1
+
+// These snapshot types define the external --once --json schema independently
+// of the collector types. Rate fields are pointers so a single sample is
+// encoded as null instead of looking like a measured zero.
+type snapshotSystemMetrics struct {
+	CPU        snapshotCPUMetrics       `json:"cpu"`
+	Load       snapshotLoadMetrics      `json:"load"`
+	Memory     snapshotMemoryMetrics    `json:"memory"`
+	Swap       snapshotSwapMetrics      `json:"swap"`
+	DiskUsage  snapshotDiskUsageMetrics `json:"disk_usage"`
+	DiskIO     snapshotDiskIOMetrics    `json:"disk_io"`
+	NetIO      snapshotNetIOMetrics     `json:"net_io"`
+	LastUpdate time.Time                `json:"last_update"`
+}
+
+type snapshotCPUMetrics struct {
+	TotalPercent float64   `json:"total_percent"`
+	PerCore      []float64 `json:"per_core"`
+	Error        *string   `json:"error,omitempty"`
+}
+
+type snapshotLoadMetrics struct {
+	Load1  float64 `json:"load1"`
+	Load5  float64 `json:"load5"`
+	Load15 float64 `json:"load15"`
+	Error  *string `json:"error,omitempty"`
+}
+
+type snapshotMemoryMetrics struct {
+	Used       uint64  `json:"used"`
+	Total      uint64  `json:"total"`
+	Percentage float64 `json:"percentage"`
+	Error      *string `json:"error,omitempty"`
+}
+
+type snapshotSwapMetrics struct {
+	Used       uint64  `json:"used"`
+	Total      uint64  `json:"total"`
+	Percentage float64 `json:"percentage"`
+	Error      *string `json:"error,omitempty"`
+}
+
+type snapshotDiskUsageMetrics struct {
+	Used       uint64  `json:"used"`
+	Total      uint64  `json:"total"`
+	Free       uint64  `json:"free"`
+	Percentage float64 `json:"percentage"`
+	Path       string  `json:"path"`
+	Error      *string `json:"error,omitempty"`
+}
+
+type snapshotDiskIOMetrics struct {
+	ReadBytesPerSec  *float64 `json:"read_bytes_per_sec"`
+	WriteBytesPerSec *float64 `json:"write_bytes_per_sec"`
+	Error            *string  `json:"error,omitempty"`
+}
+
+type snapshotNetInterface struct {
+	Name            string   `json:"name"`
+	RecvBytesPerSec *float64 `json:"recv_bytes_per_sec"`
+	SentBytesPerSec *float64 `json:"sent_bytes_per_sec"`
+	TotalRecvBytes  uint64   `json:"total_recv_bytes"`
+	TotalSentBytes  uint64   `json:"total_sent_bytes"`
+}
+
+type snapshotNetIOMetrics struct {
+	RecvBytesPerSec *float64               `json:"recv_bytes_per_sec"`
+	SentBytesPerSec *float64               `json:"sent_bytes_per_sec"`
+	Interfaces      []snapshotNetInterface `json:"interfaces"`
+	Error           *string                `json:"error,omitempty"`
+}
+
+type snapshotTokenMetrics struct {
+	InputTokens         int64                `json:"input_tokens"`
+	OutputTokens        int64                `json:"output_tokens"`
+	CacheReadTokens     int64                `json:"cache_read_tokens"`
+	CacheCreationTokens int64                `json:"cache_creation_tokens"`
+	TotalTokens         int64                `json:"total_tokens"`
+	Prompts             int64                `json:"prompts"`
+	TotalCost           float64              `json:"total_cost"`
+	Rate                *float64             `json:"rate"`
+	SessionAvgRate      float64              `json:"session_avg_rate"`
+	TimeSpan            time.Duration        `json:"time_span"`
+	EarliestTimestamp   time.Time            `json:"earliest_timestamp"`
+	LatestTimestamp     time.Time            `json:"latest_timestamp"`
+	LookbackFrom        time.Time            `json:"lookback_from"`
+	Models              []string             `json:"models"`
+	ModelUsages         []snapshotModelUsage `json:"model_usages"`
+	RateHistory         []int64              `json:"rate_history"`
+	Available           bool                 `json:"available"`
+	Error               string               `json:"error,omitempty"`
+	LastUpdate          time.Time            `json:"last_update"`
+}
+
+type snapshotModelUsage struct {
+	Model               string  `json:"model"`
+	Source              string  `json:"source,omitempty"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	Cost                float64 `json:"cost"`
+}
+
+type snapshotSessionsMetrics struct {
+	Sessions         []snapshotSession `json:"sessions"`
+	Total            int               `json:"total"`
+	Available        bool              `json:"available"`
+	Error            string            `json:"error,omitempty"`
+	LastUpdate       time.Time         `json:"last_update"`
+	HooksAvailable   bool              `json:"hooks_available"`
+	HooksInstalled   bool              `json:"hooks_installed"`
+	Source           string            `json:"source"`
+	RunningProcesses int               `json:"running_processes"`
+}
+
+type snapshotSession struct {
+	Name              string                  `json:"name"`
+	SessionType       string                  `json:"session_type,omitempty"`
+	Worker            *snapshotWorkerMetadata `json:"worker,omitempty"`
+	Windows           int                     `json:"windows"`
+	Attached          bool                    `json:"attached"`
+	Status            string                  `json:"status"`
+	Created           time.Time               `json:"created"`
+	LastContentChange time.Time               `json:"last_content_change"`
+	IdleDuration      time.Duration           `json:"idle_duration"`
+	LastLines         []string                `json:"last_lines,omitempty"`
+	Source            string                  `json:"source,omitempty"`
+	Harness           string                  `json:"harness,omitempty"`
+}
+
+type snapshotWorkerMetadata struct {
+	FullName            string `json:"full_name,omitempty"`
+	Workspace           string `json:"workspace,omitempty"`
+	Agent               string `json:"agent,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	Model               string `json:"model,omitempty"`
+	State               string `json:"state,omitempty"`
+	CurrentBead         string `json:"current_bead,omitempty"`
+	BeadStatusAvailable bool   `json:"bead_status_available"`
+	BeadsProcessed      uint64 `json:"beads_processed,omitempty"`
+	BeadsCompleted      uint64 `json:"beads_completed,omitempty"`
+}
+
+func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetrics, tokens *metrics.TokenMetrics, sessions *metrics.TmuxMetrics) Snapshot {
+	result := Snapshot{
+		SchemaVersion: snapshotSchemaVersion,
+		Timestamp:     timestamp,
+		Version:       version,
+		System: snapshotSystemMetrics{
+			CPU: snapshotCPUMetrics{
+				TotalPercent: system.CPU.TotalPercent,
+				PerCore:      system.CPU.PerCore,
+				Error:        errorString(system.CPU.Error),
+			},
+			Load: snapshotLoadMetrics{
+				Load1: system.Load.Load1, Load5: system.Load.Load5, Load15: system.Load.Load15,
+				Error: errorString(system.Load.Error),
+			},
+			Memory: snapshotMemoryMetrics{
+				Used: system.Memory.Used, Total: system.Memory.Total, Percentage: system.Memory.Percentage,
+				Error: errorString(system.Memory.Error),
+			},
+			Swap: snapshotSwapMetrics{
+				Used: system.Swap.Used, Total: system.Swap.Total, Percentage: system.Swap.Percentage,
+				Error: errorString(system.Swap.Error),
+			},
+			DiskUsage: snapshotDiskUsageMetrics{
+				Used: system.DiskUsage.Used, Total: system.DiskUsage.Total, Free: system.DiskUsage.Free,
+				Percentage: system.DiskUsage.Percentage, Path: system.DiskUsage.Path,
+				Error: errorString(system.DiskUsage.Error),
+			},
+			DiskIO: snapshotDiskIOMetrics{Error: errorString(system.DiskIO.Error)},
+			NetIO: snapshotNetIOMetrics{
+				Interfaces: make([]snapshotNetInterface, len(system.NetIO.Interfaces)),
+				Error:      errorString(system.NetIO.Error),
+			},
+			LastUpdate: system.LastUpdate,
+		},
+	}
+	if tokens != nil {
+		result.Tokens = &snapshotTokenMetrics{
+			InputTokens: tokens.InputTokens, OutputTokens: tokens.OutputTokens,
+			CacheReadTokens: tokens.CacheReadTokens, CacheCreationTokens: tokens.CacheCreationTokens,
+			TotalTokens: tokens.TotalTokens, Prompts: tokens.Prompts, TotalCost: tokens.TotalCost,
+			Rate: nil, SessionAvgRate: tokens.SessionAvgRate, TimeSpan: tokens.TimeSpan,
+			EarliestTimestamp: tokens.EarliestTimestamp, LatestTimestamp: tokens.LatestTimestamp,
+			LookbackFrom: tokens.LookbackFrom, Models: tokens.Models,
+			RateHistory: tokens.RateHistory, Available: tokens.Available, Error: tokens.Error,
+			LastUpdate: tokens.LastUpdate,
+		}
+		result.Tokens.ModelUsages = make([]snapshotModelUsage, len(tokens.ModelUsages))
+		for i, usage := range tokens.ModelUsages {
+			result.Tokens.ModelUsages[i] = snapshotModelUsage{
+				Model: usage.Model, Source: usage.Source, InputTokens: usage.InputTokens,
+				OutputTokens: usage.OutputTokens, CacheReadTokens: usage.CacheReadTokens,
+				CacheCreationTokens: usage.CacheCreationTokens, TotalTokens: usage.TotalTokens, Cost: usage.Cost,
+			}
+		}
+	}
+	if sessions != nil {
+		result.Sessions = &snapshotSessionsMetrics{
+			Sessions: make([]snapshotSession, len(sessions.Sessions)),
+			Total:    sessions.Total, Available: sessions.Available, Error: sessions.Error,
+			LastUpdate: sessions.LastUpdate, HooksAvailable: sessions.HooksAvailable,
+			HooksInstalled: sessions.HooksInstalled, Source: sessions.Source,
+			RunningProcesses: sessions.RunningProcesses,
+		}
+		for i, session := range sessions.Sessions {
+			result.Sessions.Sessions[i] = snapshotSession{
+				Name: session.Name, SessionType: string(session.SessionType),
+				Windows: session.Windows, Attached: session.Attached, Status: string(session.Status),
+				Created: session.Created, LastContentChange: session.LastContentChange,
+				IdleDuration: session.IdleDuration, LastLines: session.LastLines,
+				Source: session.Source, Harness: session.Harness,
+			}
+			if session.Worker != nil {
+				worker := session.Worker
+				result.Sessions.Sessions[i].Worker = &snapshotWorkerMetadata{
+					FullName: worker.FullName, Workspace: worker.Workspace, Agent: worker.Agent,
+					Provider: worker.Provider, Model: worker.Model, State: worker.State,
+					CurrentBead: worker.CurrentBead, BeadStatusAvailable: worker.BeadStatusAvailable,
+					BeadsProcessed: worker.BeadsProcessed, BeadsCompleted: worker.BeadsCompleted,
+				}
+			}
+		}
+	}
+	for i, iface := range system.NetIO.Interfaces {
+		result.System.NetIO.Interfaces[i] = snapshotNetInterface{
+			Name: iface.Name, TotalRecvBytes: iface.TotalRecvBytes, TotalSentBytes: iface.TotalSentBytes,
+		}
+	}
+	return result
+}
+
+func errorString(err error) *string {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	return &message
 }
 
 // runOnceMode runs a single collection cycle and outputs the result
@@ -287,9 +533,13 @@ func runOnceMode(asJSON bool, extraDirs string) int {
 	}
 
 	// Collect metrics
-	snapshot := Snapshot{
+	snapshot := struct {
+		Timestamp time.Time
+		System    metrics.SystemMetrics
+		Tokens    *metrics.TokenMetrics
+		Sessions  *metrics.TmuxMetrics
+	}{
 		Timestamp: time.Now(),
-		Version:   version,
 		System:    systemCollector.Collect(),
 	}
 
@@ -311,7 +561,7 @@ func runOnceMode(asJSON bool, extraDirs string) int {
 	if asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(snapshot); err != nil {
+		if err := encoder.Encode(makeSnapshot(snapshot.Timestamp, version, snapshot.System, snapshot.Tokens, snapshot.Sessions)); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 			return 1
 		}

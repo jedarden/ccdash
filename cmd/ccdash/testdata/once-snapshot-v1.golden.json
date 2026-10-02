@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-01-02T03:04:05Z",
+  "version": "test",
+  "system": {
+    "cpu": {
+      "total_percent": 12.5,
+      "per_core": [
+        12.5,
+        0
+      ]
+    },
+    "load": {
+      "load1": 1.25,
+      "load5": 0.75,
+      "load15": 0.5
+    },
+    "memory": {
+      "used": 100,
+      "total": 400,
+      "percentage": 25
+    },
+    "swap": {
+      "used": 10,
+      "total": 100,
+      "percentage": 10
+    },
+    "disk_usage": {
+      "used": 200,
+      "total": 1000,
+      "free": 800,
+      "percentage": 20,
+      "path": "/"
+    },
+    "disk_io": {
+      "read_bytes_per_sec": null,
+      "write_bytes_per_sec": null
+    },
+    "net_io": {
+      "recv_bytes_per_sec": null,
+      "sent_bytes_per_sec": null,
+      "interfaces": [
+        {
+          "name": "eth0",
+          "recv_bytes_per_sec": null,
+          "sent_bytes_per_sec": null,
+          "total_recv_bytes": 1024,
+          "total_sent_bytes": 512
+        }
+      ]
+    },
+    "last_update": "2026-01-02T03:04:05Z"
+  },
+  "tokens": {
+    "input_tokens": 2,
+    "output_tokens": 3,
+    "cache_read_tokens": 4,
+    "cache_creation_tokens": 5,
+    "total_tokens": 14,
+    "prompts": 1,
+    "total_cost": 0.25,
+    "rate": null,
+    "session_avg_rate": 7.5,
+    "time_span": 120000000000,
+    "earliest_timestamp": "2026-01-02T03:03:05Z",
+    "latest_timestamp": "2026-01-02T03:04:05Z",
+    "lookback_from": "2026-01-02T02:04:05Z",
+    "models": [
+      "test-model"
+    ],
+    "model_usages": [
+      {
+        "model": "test-model",
+        "source": "claude",
+        "input_tokens": 2,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 5,
+        "total_tokens": 14,
+        "cost": 0.25
+      }
+    ],
+    "rate_history": [
+      2,
+      4
+    ],
+    "available": true,
+    "last_update": "2026-01-02T03:04:05Z"
+  },
+  "sessions": {
+    "sessions": [
+      {
+        "name": "agent-1",
+        "session_type": "worker",
+        "worker": {
+          "full_name": "worker",
+          "workspace": "/work",
+          "agent": "codex",
+          "provider": "openai",
+          "model": "test-model",
+          "state": "working",
+          "current_bead": "ccdash-0a0b6ab4",
+          "bead_status_available": true,
+          "beads_processed": 2,
+          "beads_completed": 1
+        },
+        "windows": 2,
+        "attached": true,
+        "status": "WORKING",
+        "created": "2026-01-02T02:54:05Z",
+        "last_content_change": "2026-01-02T03:03:05Z",
+        "idle_duration": 60000000000,
+        "last_lines": [
+          "hello"
+        ],
+        "source": "hooks",
+        "harness": "codex"
+      }
+    ],
+    "total": 0,
+    "available": true,
+    "last_update": "2026-01-02T03:04:05Z",
+    "hooks_available": true,
+    "hooks_installed": true,
+    "source": "hooks",
+    "running_processes": 0
+  }
+}

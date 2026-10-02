@@ -57,6 +57,27 @@ make install
 ccdash
 ```
 
+### One-shot JSON output
+
+Use `--once --json` to collect one snapshot without starting the dashboard:
+
+```bash
+ccdash --once --json
+```
+
+The output has a top-level `schema_version` integer. Version `1` uses
+`snake_case` field names throughout `system`, `tokens`, and `sessions`. Consumers
+should check this value before relying on the documented shape; an incompatible
+schema change increments it. Optional `error` fields appear only when a
+collector reports an error.
+
+Rates that require two samples are `null` in a one-shot result: `system.disk_io`
+and `system.net_io` byte-per-second fields, each interface's byte-per-second
+fields, and `tokens.rate`. A `null` value means no current rate sample is
+available; it is distinct from a measured rate of zero. `tokens.session_avg_rate`
+is an aggregate over the token session and remains numeric. `tokens.time_span`
+is encoded as a duration in nanoseconds.
+
 ### Keyboard controls
 
 | Key | Action |
