@@ -96,7 +96,7 @@ Workers will display additional context:
 - **Phase 3** (4-8 hours): Worker metadata integration
 - **Total effort**: 10-18 hours
 
-See `docs/notes/QUICKSTART-199x14.md` for implementation guide.
+See `docs/research/QUICKSTART-199x14.md` for the historical implementation guide.
 
 ## Alternatives Considered
 
@@ -126,6 +126,6 @@ Leave all sessions in mixed list.
 
 ## References
 
-- Research: `docs/notes/worker-visualization-research.md`
-- Implementation guide: `docs/notes/QUICKSTART-199x14.md`
-- Display analysis: `docs/notes/ADDENDUM-199x14-analysis.md`
+- Research: `docs/research/worker-visualization-research.md`
+- Implementation guide: `docs/research/QUICKSTART-199x14.md`
+- Display analysis: `docs/research/ADDENDUM-199x14-analysis.md`

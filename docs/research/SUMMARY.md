@@ -1,6 +1,6 @@
 # Worker Visualization Research - Quick Summary
 
-## What Changed
+## Historical summary
 
 **Interactive sessions now display FIRST, workers SECOND** (user requested update)
 
@@ -37,11 +37,11 @@ Workers (3)            ← Background agents below
 🤖 o-glm-charlie 🟡 ACT 1m ~/backtest
 ```
 
-## Where to Start
+## Historical entry point
 
 **[QUICKSTART-199x14.md](./QUICKSTART-199x14.md)** - Complete implementation guide for 199x14 displays
 
-## Files in This Research Folder (256KB, 10 files)
+## Files in This Research Folder
 
 | Priority | File | Purpose |
 |----------|------|---------|
@@ -52,7 +52,6 @@ Workers (3)            ← Background agents below
 | | **README.md** | Navigation guide |
 | | **display-size-comparison.txt** | 199x14 vs 206x30 comparison |
 | | **comparison-table.md** | Layout options analysis |
-| | **implementation-sketch.go** | Code examples |
 | | **worker-visualization-research.md** | Original comprehensive research |
 | | **QUICKSTART.md** | Original guide (206x14+ displays) |
 
@@ -66,4 +65,7 @@ Workers (3)            ← Background agents below
 
 ## Three-Second Takeaway
 
-Put user sessions on top, workers below. Single-line format for tight 14-row display. Read QUICKSTART-199x14.md to implement.
+The shipped design puts user sessions on top, workers below, and uses
+single-line format for tight 14-row displays. Read
+`docs/architecture.md` for the maintained behavior; use
+`QUICKSTART-199x14.md` only as historical context.

@@ -180,5 +180,5 @@ Let users choose display order via config.
 
 - User request: Context conversation (2026-02-07)
 - Related ADR: ADR 0001 (Session distinction)
-- Updated research: `docs/notes/CHANGELOG.md`
-- Visual mockups: `docs/notes/layout-mockups-199x14.txt`
+- Updated research: `CHANGELOG.md` and the archived material in `docs/research/`
+- Visual mockups: `docs/research/layout-mockups-199x14.txt`

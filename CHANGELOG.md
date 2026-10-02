@@ -118,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.3] - 2026-07-15
 
 ### Removed
-- **Network I/O panel**: reverted the dedicated 4th panel added in v0.9.x-era commit `57fd448` (an autonomous NEEDLE worker pickup, bead bf-d0c, never approved as core scope). ccdash is back to the intended 3-panel layout (System Resources, Token Usage, Sessions) in every mode — the Net I/O summary line inside System Resources is unchanged. `docs/plan.md` now documents the 3-panel layout as a locked decision so it isn't re-added autonomously.
+- **Network I/O panel**: reverted the dedicated 4th panel added in v0.9.x-era commit `57fd448` (an autonomous NEEDLE worker pickup, bead bf-d0c, never approved as core scope). ccdash is back to the intended 3-panel layout (System Resources, Token Usage, Sessions) in every mode — the Net I/O summary line inside System Resources is unchanged. `docs/plan/plan.md` now documents the 3-panel layout as a locked decision so it isn't re-added autonomously.
 
 ## [1.0.2] - 2026-07-15
 

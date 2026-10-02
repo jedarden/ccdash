@@ -248,5 +248,5 @@ Workers (3)        ← Bold, colored text
 - Related ADR: ADR 0001 (Session distinction)
 - Related ADR: ADR 0002 (Display order)
 - Related ADR: ADR 0003 (Single-line format)
-- Comparison table: `docs/notes/comparison-table.md`
-- Visual mockups: `docs/notes/layout-mockups-199x14.txt`
+- Comparison table: `docs/research/comparison-table.md`
+- Visual mockups: `docs/research/layout-mockups-199x14.txt`

@@ -52,9 +52,9 @@ A comprehensive enhancement to distinguish and better visualize worker sessions 
 - **Total**: 10-18 hours
 
 **Documentation:**
-- Implementation guide: `docs/notes/QUICKSTART-199x14.md`
-- Research: `docs/notes/worker-visualization-research.md`
-- Display analysis: `docs/notes/ADDENDUM-199x14-analysis.md`
+- Historical implementation guide: `docs/research/QUICKSTART-199x14.md`
+- Research archive: `docs/research/worker-visualization-research.md`
+- Display analysis: `docs/research/ADDENDUM-199x14-analysis.md`
 
 ## Creating New ADRs
 

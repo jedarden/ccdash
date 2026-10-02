@@ -45,8 +45,11 @@ ccdash/
 │   └── updater/         # Self-update functionality
 │       └── updater.go   # GitHub releases integration
 ├── docs/                # Documentation
+│   ├── architecture.md  # Current runtime architecture
 │   ├── adrs/            # Architecture Decision Records
-│   └── notes/           # Design notes and research
+│   ├── notes/           # Short current notes
+│   ├── plan/plan.md     # This living implementation plan
+│   └── research/        # Historical research and shipped-feature rationale
 └── Makefile             # Build automation
 ```
 
@@ -327,7 +330,7 @@ Releases published to GitHub Releases with:
 
 - **GitHub:** https://github.com/jedarden/ccdash
 - **Releases:** https://github.com/jedarden/ccdash/releases
-- **Docs:** `docs/` folder
+- **Docs:** `docs/README.md` index and `docs/architecture.md`
 - **ADRs:** `docs/adrs/` folder
 
 ## ADR-0006: 2026-07-20 — Push notifications for sessions needing human input

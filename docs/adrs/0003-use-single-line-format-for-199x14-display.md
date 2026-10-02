@@ -272,7 +272,7 @@ This provides optimal layout for each display constraint.
 
 ## References
 
-- Display analysis: `docs/notes/ADDENDUM-199x14-analysis.md`
-- Implementation guide: `docs/notes/QUICKSTART-199x14.md`
-- Visual mockups: `docs/notes/layout-mockups-199x14.txt`
-- Space calculations: `docs/notes/display-size-comparison.txt`
+- Display analysis: `docs/research/ADDENDUM-199x14-analysis.md`
+- Implementation guide: `docs/research/QUICKSTART-199x14.md`
+- Visual mockups: `docs/research/layout-mockups-199x14.txt`
+- Space calculations: `docs/research/display-size-comparison.txt`
