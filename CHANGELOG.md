@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.22] - 2026-10-02
+
+### Fixed
+- **Dashboard panels overflowing terminal dimensions**: budget panel frames and compact layouts against available terminal space, preserve aligned borders, and bound the final view by terminal width and height.
+
 ## [1.1.21] - 2026-10-02
 
 ### Fixed
