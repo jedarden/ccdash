@@ -57,6 +57,12 @@ func TestHelpMatchesDashboardKeysAndSessionStatuses(t *testing.T) {
 		if strings.TrimSpace(strings.TrimPrefix(statusLines[i], wantPrefix)) == "" {
 			t.Errorf("status %q has no help description", status)
 		}
+		if !strings.HasSuffix(statusLines[i], status.Description()) {
+			t.Errorf("status %q description = %q, want %q", status, statusLines[i], status.Description())
+		}
+	}
+	if statuses[0] != metrics.StatusAsking {
+		t.Fatalf("help should list ASKING first, got %s", statuses[0])
 	}
 }
 

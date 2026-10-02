@@ -21,14 +21,6 @@ import (
 // If not set, defaults to "dev" for local development builds
 var version = "dev"
 
-var sessionStatusDescriptions = map[metrics.SessionStatus]string{
-	metrics.StatusWorking: "Claude Code is actively processing",
-	metrics.StatusAsking:  "Waiting for a human response",
-	metrics.StatusReady:   "Waiting for the next prompt",
-	metrics.StatusActive:  "Recent user activity detected",
-	metrics.StatusError:   "Error or undefined session state",
-}
-
 func main() {
 	// Parse command-line flags
 	var (
@@ -955,7 +947,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("STATUS INDICATORS:")
 	for _, status := range metrics.SessionStatuses() {
-		fmt.Printf("  %s %-8s - %s\n", status.GetEmoji(), status, sessionStatusDescriptions[status])
+		fmt.Printf("  %s %-8s - %s\n", status.GetEmoji(), status, status.Description())
 	}
 	fmt.Println()
 	fmt.Println("REQUIREMENTS:")

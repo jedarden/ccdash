@@ -33,8 +33,8 @@ const (
 )
 
 var sessionStatuses = [...]SessionStatus{
-	StatusWorking,
 	StatusAsking,
+	StatusWorking,
 	StatusReady,
 	StatusActive,
 	StatusError,
@@ -59,15 +59,33 @@ func (s SessionStatus) GetColor() string {
 	case StatusWorking:
 		return "\033[32m" // Green
 	case StatusAsking:
-		return "\033[35m" // Magenta
+		return "\033[95m" // Bright magenta: blocked on a human
 	case StatusReady:
-		return "\033[31m" // Red
+		return "\033[90m" // Gray: idle and low urgency
 	case StatusActive:
 		return "\033[33m" // Yellow
 	case StatusError:
 		return "\033[91m" // Bright Red
 	default:
 		return "\033[0m" // Reset
+	}
+}
+
+// Description returns the user-facing explanation for a session status.
+func (s SessionStatus) Description() string {
+	switch s {
+	case StatusWorking:
+		return "Claude Code is actively processing"
+	case StatusAsking:
+		return "Waiting for a human response"
+	case StatusReady:
+		return "Idle and waiting for the next prompt"
+	case StatusActive:
+		return "Recent user activity detected"
+	case StatusError:
+		return "Error or undefined session state"
+	default:
+		return "Unknown session state"
 	}
 }
 
@@ -80,7 +98,7 @@ func (s SessionStatus) GetEmoji() string {
 	case StatusAsking:
 		return "🟣" // U+1F7E3 - Purple circle
 	case StatusReady:
-		return "🔴" // U+1F534 - Red circle
+		return "⚪" // U+26AA - White circle (idle/low urgency)
 	case StatusActive:
 		return "🟡" // U+1F7E1 - Yellow circle
 	case StatusError:
@@ -340,25 +358,10 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		metrics.Source = "tmux"
 	}
 
-	// Sort sessions: stale READY sessions first (idle > 5min), then alphabetically by name
-	// This helps users spot sessions that have been waiting the longest
-	staleThreshold := 5 * time.Minute
-	sort.Slice(metrics.Sessions, func(i, j int) bool {
-		iSession := metrics.Sessions[i]
-		jSession := metrics.Sessions[j]
-
-		// Both READY: stale one first
-		if iSession.Status == StatusReady && jSession.Status == StatusReady {
-			iStale := iSession.IdleDuration > staleThreshold
-			jStale := jSession.IdleDuration > staleThreshold
-			if iStale != jStale {
-				return iStale // stale (true) sorts before non-stale (false)
-			}
-		}
-
-		// Same staleness or different status: sort alphabetically
-		return iSession.Name < jSession.Name
-	})
+	// Put sessions that need a human first; keep every other status in stable
+	// alphabetical order so the attention signal is visible without making the
+	// rest of the dashboard jump around based on normal idle time.
+	sortSessionsByAttention(metrics.Sessions)
 
 	metrics.Available = hasTmux || hasHooks || hasNeedle
 	metrics.Total = len(metrics.Sessions)
@@ -369,6 +372,17 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 	}
 
 	return metrics
+}
+
+func sortSessionsByAttention(sessions []TmuxSession) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		iAsking := sessions[i].Status == StatusAsking
+		jAsking := sessions[j].Status == StatusAsking
+		if iAsking != jAsking {
+			return iAsking
+		}
+		return sessions[i].Name < sessions[j].Name
+	})
 }
 
 // isTmuxAvailable checks if tmux is installed and available

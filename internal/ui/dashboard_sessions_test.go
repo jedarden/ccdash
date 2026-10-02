@@ -58,6 +58,26 @@ func TestRenderTmuxPanelGroupsInteractiveBeforeWorkers(t *testing.T) {
 	}
 }
 
+func TestRenderTmuxPanelHighlightsSessionsNeedingYou(t *testing.T) {
+	d := &Dashboard{tmuxMetrics: &metrics.TmuxMetrics{
+		Available: true,
+		Total:     3,
+		Sessions: []metrics.TmuxSession{
+			{Name: "ready", Status: metrics.StatusReady},
+			{Name: "asking-one", Status: metrics.StatusAsking},
+			{Name: "asking-two", Status: metrics.StatusAsking},
+		},
+	}}
+
+	view := d.renderTmuxPanel(100, 12)
+	if !strings.Contains(view, "needs you (2)") {
+		t.Fatalf("sessions header should show human-attention count:\n%s", view)
+	}
+	if !strings.Contains(view, "🟣") || !strings.Contains(view, "⚪") {
+		t.Fatalf("sessions panel should use ASKING purple and READY neutral indicators:\n%s", view)
+	}
+}
+
 func TestGroupSessionsDetectsWorkersAndHonorsClassificationMetadata(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

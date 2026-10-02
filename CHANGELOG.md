@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.28] - 2026-10-02
+
+### Changed
+- **Human-attention sessions are now prominent**: ASKING sessions sort first and use bright purple indicators, READY sessions use a neutral indicator, and the sessions header reports how many sessions need you.
+
 ## [1.1.27] - 2026-10-02
 
 ### Fixed

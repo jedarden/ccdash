@@ -1609,20 +1609,10 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 
 	// Build status summary (right-justified)
 	var statusParts []string
-	if count := statusCounts[metrics.StatusWorking]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("🟢%d", count))
-	}
-	if count := statusCounts[metrics.StatusAsking]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("🟣%d", count))
-	}
-	if count := statusCounts[metrics.StatusReady]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("🔴%d", count))
-	}
-	if count := statusCounts[metrics.StatusActive]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("🟡%d", count))
-	}
-	if count := statusCounts[metrics.StatusError]; count > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("❌%d", count))
+	for _, status := range metrics.SessionStatuses() {
+		if count := statusCounts[status]; count > 0 {
+			statusParts = append(statusParts, fmt.Sprintf("%s%d", status.GetEmoji(), count))
+		}
 	}
 	statusSummary := strings.Join(statusParts, " ")
 
@@ -1643,6 +1633,9 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		countStr = fmt.Sprintf("%d/%d procs", d.tmuxMetrics.Total, d.tmuxMetrics.RunningProcesses)
 	}
 	title := successStyle.Render(fmt.Sprintf("%s %s (%s)", sourceIcon, sourceLabel, countStr))
+	if askingCount := statusCounts[metrics.StatusAsking]; askingCount > 0 {
+		title += " " + askingStyle.Render(fmt.Sprintf("needs you (%d)", askingCount))
+	}
 	titleLen := lipgloss.Width(title)
 	summaryLen := lipgloss.Width(statusSummary)
 	spacing := contentWidth - titleLen - summaryLen
@@ -2003,8 +1996,8 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	// Convert ANSI color codes to hex colors for lipgloss
 	colorMap := map[string]string{
 		"\033[32m": "#00ff00", // Green - WORKING (Claude processing)
-		"\033[35m": "#bf5fff", // Magenta - ASKING (waiting for human response)
-		"\033[31m": "#ff0000", // Red - READY (Waiting for input)
+		"\033[95m": "#ff00ff", // Bright magenta - ASKING (waiting for human response)
+		"\033[90m": "#888888", // Gray - READY (idle, low urgency)
 		"\033[33m": "#ffff00", // Yellow - ACTIVE (User in session)
 		"\033[91m": "#ff5555", // Bright Red - ERROR (Error state)
 		"\033[0m":  "#ffffff", // White/Reset
@@ -2416,14 +2409,11 @@ SQLite Cache: .ccdash/tokens.db
 		helpText = `Monitors tmux sessions running Claude Code:
 
 Title: Shows total count + status summary
-  Format: "📺 TMUX Sessions (N) 🟢2 🔴1"
+  Format: "📺 TMUX Sessions (N) needs you (N) 🟣2 ⚪1"
   When counts differ, "(N/M procs)" means N tracked sessions and M detected agent processes.
 
 Status (analyzes pane content):
-  🟢 WORKING - Claude Code processing
-  🔴 READY - Waiting for user input
-  🟡 ACTIVE - User in session
-  ❌ ERROR - Error or undefined state
+` + sessionStatusHelpText() + `
 
 Detection: Analyzes last 15 lines for:
   Working indicators, prompts, errors
@@ -2527,6 +2517,14 @@ Self-Update: Press 'u' to check for an update, or install one already found
 
 	// Render panel on left, help on right
 	return lipgloss.JoinHorizontal(lipgloss.Top, panel, " ", helpPanel)
+}
+
+func sessionStatusHelpText() string {
+	var lines strings.Builder
+	for _, status := range metrics.SessionStatuses() {
+		fmt.Fprintf(&lines, "  %s %-8s - %s\n", status.GetEmoji(), status, status.Description())
+	}
+	return strings.TrimSuffix(lines.String(), "\n")
 }
 
 // renderStatusBar renders the status bar at the bottom of the view.
@@ -2775,6 +2773,10 @@ var (
 
 	successStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00ff00"))
+
+	askingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ff00ff")).
+			Bold(true)
 
 	costStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffaa00")).

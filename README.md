@@ -6,6 +6,10 @@ A lightweight terminal dashboard for Claude Code and Codex CLI — shows token u
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
+![ccdash dashboard](docs/images/ccdash.gif)
+
+*Recorded with an isolated home directory and no sample session or token data.*
+
 ---
 
 ## What it shows
@@ -14,12 +18,13 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 **Session panel** — shows active Claude Code and Codex agent sessions and their current state. Hook-tracked sessions carry a Claude 🤖 or Codex 💻 badge:
 
-| Status | Meaning |
-|--------|---------|
-| WORKING | Claude is actively processing a turn |
-| ASKING | Claude asked the human a question, waiting for input |
-| READY | Prompt is idle, waiting for the next message |
-| ACTIVE | User is typing in the session |
+| Status | Indicator | Meaning |
+|--------|-----------|---------|
+| ASKING | 🟣 | Waiting for a human response |
+| WORKING | 🟢 | Claude Code is actively processing |
+| READY | ⚪ | Idle and waiting for the next prompt |
+| ACTIVE | 🟡 | Recent user activity detected |
+| ERROR | ❌ | Error or undefined session state |
 
 Session tracking has two modes: tmux pane inspection (automatic) and hook-based tracking (more accurate). Install Claude hooks with `ccdash --install-hooks` or Codex hooks with `ccdash --install-codex-hooks`.
 
@@ -35,7 +40,7 @@ Download the latest release from the [releases page](https://github.com/jedarden
 
 ### Using Go
 
-Requires Go 1.21+.
+Requires Go 1.24.0 or newer, as specified in `go.mod`.
 
 ```bash
 go install github.com/jedarden/ccdash/cmd/ccdash@latest
@@ -55,6 +60,29 @@ make install
 
 ```bash
 ccdash
+```
+
+## Command-line flags
+
+| Flag | Description |
+|------|-------------|
+| `--help` | Show usage and keyboard shortcuts. |
+| `--version` | Print the build version. |
+| `--install-hooks` | Install Claude Code hooks for session status tracking. |
+| `--install-codex-hooks` | Install Codex hooks for session status tracking. |
+| `--check-hooks` | Check whether Claude Code or Codex hooks are installed. |
+| `--uninstall-hooks` | Remove ccdash hooks from Claude Code and Codex. |
+| `--once` | Collect one metrics snapshot and exit without opening the dashboard. |
+| `--json` | Print the snapshot as JSON; use with `--once`. See the schema notes below. |
+| `--export=<format>` | Write cached token data to standard output. Formats: `csv`, `json`, or `json-aggregated` (legacy summary). |
+| `--test-notify` | Send a test payload to the configured notification webhook and report whether it succeeded. |
+| `--extra-dirs=<paths>` | Also scan comma-separated Claude project roots. Paths may include glob patterns. `CCDASH_EXTRA_DIRS` provides the same setting with colon-separated paths. |
+
+For example, collect one snapshot as JSON or export the raw cache data:
+
+```bash
+ccdash --once --json
+ccdash --export=csv
 ```
 
 ### One-shot JSON output
@@ -156,41 +184,82 @@ CCDASH_EXTRA_DIRS=/path/to/projects:/other/path ccdash
 Token data is persisted to `~/.ccdash/tokens.db` (SQLite). You can query it directly with `sqlite3` or DuckDB:
 
 ```bash
-sqlite3 ~/.ccdash/tokens.db "SELECT model, SUM(total_tokens), SUM(cost) FROM token_events GROUP BY model;"
+sqlite3 ~/.ccdash/tokens.db "SELECT model, SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) AS total_tokens FROM token_events GROUP BY model ORDER BY total_tokens DESC;"
 ```
+
+The cache stores token categories, not `total_tokens` or `cost` columns. ccdash
+calculates totals and estimated costs from those counts and the model pricing
+data.
 
 ---
 
-## Project structure
+## Configuration and notifications
 
-```
-ccdash/
-├── cmd/ccdash/          # Entry point, CLI flags
-├── internal/
-│   ├── metrics/         # Collectors: system, tokens (JSONL + SQLite), tmux, hooks
-│   └── ui/              # Bubble Tea dashboard model and panels
-└── Makefile
+Create `~/.ccdash/config.yaml` to enable webhook notifications or set a cost
+threshold. Notifications are off by default; replace the example URL with your
+own HTTP(S) webhook before enabling them.
+
+```yaml
+notify:
+  enabled: false
+  webhook_url: "https://your-webhook.example/ccdash"
+alerts:
+  cost_threshold_usd: 25.00
 ```
 
----
+`notify.enabled` defaults to `false`. When enabled, ccdash sends a webhook when
+a hook-tracked session enters a waiting/asking state and remains there for 15
+seconds. Only the lease-holding dashboard instance sends it, once per waiting
+episode. Delivery failures do not stop the dashboard.
+
+The JSON POST body contains only the session name, project directory, and idle
+duration in nanoseconds:
+
+```json
+{
+  "session_name": "example-session",
+  "project_dir": "/path/to/project",
+  "idle_duration": 30000000000
+}
+```
+
+It does not include transcripts, prompts, token counts, or cost data. Running
+`ccdash --test-notify` sends a synthetic payload to the configured URL
+immediately; the command requires `notify.enabled: true` and a webhook URL.
+The `alerts.cost_threshold_usd` setting is independent of webhooks: a positive
+value highlights the dashboard's cost when the current lookback total reaches
+that USD amount. Zero or omission disables the highlight.
 
 ## Development
 
+Requires Go 1.24.0 or newer. From a clone, build and install with:
+
 ```bash
-make build    # Build binary to ./bin/ccdash
-make test     # Run tests
-make deps     # Download dependencies
-make clean    # Remove build artifacts
+make build       # Build ./bin/ccdash
+make install     # Install ccdash into the Go bin directory
 ```
+
+Run the checks and formatting tools with:
+
+```bash
+make test        # Run the Go test suite
+make fmt         # Format Go source
+make vet         # Run go vet ./...
+go mod download  # Download dependencies
+```
+
+The entry point and CLI are in `cmd/ccdash`; `internal/metrics` collects
+system, token, tmux, and hook data; `internal/notify` sends optional webhooks;
+and `internal/ui` implements the Bubble Tea dashboard. `make clean` removes
+local build artifacts.
 
 ---
 
 ## Requirements
 
-- Go 1.21+
-- `~/.claude/` directory (Claude Code data; created automatically when you use Claude Code)
-- `~/.codex/` directory (Codex CLI data; created automatically when you use Codex)
-- tmux (optional, for session panel)
+- Go 1.24.0 or newer for installation from source.
+- Claude Code and/or Codex CLI data for token usage and hook tracking.
+- tmux (optional, for pane-based session tracking).
 
 ---
 
