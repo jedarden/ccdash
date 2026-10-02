@@ -59,6 +59,13 @@ func NewUpdater(currentVersion string) *Updater {
 // cache is bypassed and GitHub is always queried - used for a user-initiated
 // recheck rather than the routine background check.
 func (u *Updater) CheckForUpdate(force bool) *UpdateInfo {
+	// Development and otherwise non-release builds do not have a published
+	// version to compare against. Skip the network request entirely rather
+	// than showing an update notice for a local build.
+	if !IsReleaseVersion(u.currentVersion) {
+		return &UpdateInfo{CurrentVersion: u.currentVersion}
+	}
+
 	// Use cached result if recent enough
 	if !force && u.cachedInfo != nil && time.Since(u.lastCheck) < u.checkInterval {
 		return u.cachedInfo
@@ -127,6 +134,30 @@ func (u *Updater) CheckForUpdate(force bool) *UpdateInfo {
 	}
 
 	return info
+}
+
+// IsReleaseVersion reports whether version is a stable three-part release
+// version, with an optional lower-case "v" prefix (for example, "1.2.3" or
+// "v1.2.3"). Development, prerelease, and build-metadata versions are not
+// eligible for update checks.
+func IsReleaseVersion(version string) bool {
+	version = strings.TrimPrefix(version, "v")
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+
+	for _, part := range parts {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func latestReleaseTag(releaseURL *url.URL) (string, error) {

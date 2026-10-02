@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.27] - 2026-10-02
+
+### Fixed
+- **Development builds nagged about updates and duplicated the update prompt**: skip update checks for non-release versions and keep the update actions in one status-bar notice.
+
 ## [1.1.26] - 2026-10-02
 
 ### Fixed

@@ -44,6 +44,47 @@ func TestCheckForUpdateUsesLatestReleaseRedirect(t *testing.T) {
 	}
 }
 
+func TestCheckForUpdateSkipsNonReleaseVersions(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "non-release build must not make update requests", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	for _, version := range []string{"dev", "1.2", "v1.2.3-rc.1", "1.2.3+local", ""} {
+		u := NewUpdater(version)
+		u.latestURL = server.URL + "/releases/latest"
+		u.httpClient = server.Client()
+
+		info := u.CheckForUpdate(true)
+		if info == nil || info.CurrentVersion != version || info.UpdateAvailable || info.Error != "" {
+			t.Fatalf("CheckForUpdate(%q) = %+v, want an inert result", version, info)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("non-release versions made %d update requests, want 0", requests)
+	}
+}
+
+func TestIsReleaseVersion(t *testing.T) {
+	tests := map[string]bool{
+		"1.2.3":       true,
+		"v1.2.3":      true,
+		"0.0.1":       true,
+		"dev":         false,
+		"1.2":         false,
+		"v1.2.3-rc.1": false,
+		"1.2.3+local": false,
+		"01.2.3":      false,
+	}
+	for version, want := range tests {
+		if got := IsReleaseVersion(version); got != want {
+			t.Errorf("IsReleaseVersion(%q) = %t, want %t", version, got, want)
+		}
+	}
+}
+
 func TestLatestReleaseTag(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -184,12 +184,15 @@ func (d *Dashboard) AddProjectsDirs(dirs []string) {
 
 // Init initializes the dashboard
 func (d *Dashboard) Init() tea.Cmd {
-	return tea.Batch(
+	commands := []tea.Cmd{
 		d.tick(),
 		d.collectMetrics(),
+	}
+	if updater.IsReleaseVersion(d.version) {
 		// Run the network check asynchronously so it cannot delay the initial dashboard render.
-		d.checkForUpdates(),
-	)
+		commands = append(commands, d.checkForUpdates())
+	}
+	return tea.Batch(commands...)
 }
 
 // updateCheckMsg carries update check results
@@ -309,6 +312,10 @@ func (d *Dashboard) handleDashboardKey(key string) (tea.Cmd, bool) {
 }
 
 func (d *Dashboard) handleUpdateKey() tea.Cmd {
+	if !updater.IsReleaseVersion(d.version) {
+		return nil
+	}
+
 	// If an update is already known available, install it. Otherwise (or if the
 	// last check errored/found nothing), trigger a fresh check.
 	if d.updating || d.checkingUpdate {
@@ -417,7 +424,7 @@ func (d *Dashboard) performUpdate() tea.Cmd {
 
 // updateNoticeVisible reports whether the update notice should be shown.
 func (d *Dashboard) updateNoticeVisible() bool {
-	return d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updateDismissed
+	return updater.IsReleaseVersion(d.version) && d.updateInfo != nil && d.updateInfo.UpdateAvailable && !d.updateDismissed
 }
 
 // handleLookbackKey handles keyboard input when lookback picker is open
@@ -2515,7 +2522,7 @@ func (d *Dashboard) renderStatusBar() string {
 	if d.workerDetailMode {
 		shortcuts = "j/k or ↑/↓:next w/q/Esc:back r:refresh"
 	} else if d.updateNoticeVisible() && !d.updating {
-		shortcuts = "u:update esc:dismiss l:lookback h:help w:workers q:quit r:refresh"
+		shortcuts = "l:lookback h:help w:workers q:quit r:refresh"
 	}
 	right := fmt.Sprintf("%dx%d %s", d.width, d.height, shortcuts)
 
@@ -2568,7 +2575,7 @@ func (d *Dashboard) renderStatusBar() string {
 		if d.workerDetailMode {
 			compactShortcuts = "j/k w/q/esc r"
 		} else if d.updateNoticeVisible() {
-			compactShortcuts = "u esc h w q r"
+			compactShortcuts = "h w q r"
 		}
 		statusLine = fmt.Sprintf("%s %s %dx%d %s",
 			d.lastUpdate.Format("15:04"), d.version, d.width, d.height, compactShortcuts)

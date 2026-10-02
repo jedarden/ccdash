@@ -33,7 +33,7 @@ func TestDocumentedDashboardKeysHaveHandlers(t *testing.T) {
 			}
 			seen[key] = true
 
-			d := &Dashboard{updateInfo: &updater.UpdateInfo{UpdateAvailable: true}}
+			d := &Dashboard{version: "1.0.0", updateInfo: &updater.UpdateInfo{UpdateAvailable: true}}
 			_, cmd := d.Update(keyMessage(key))
 			if cmd == nil && d.helpMode == 0 && !d.workerDetailMode && !d.lookbackMode && !d.updateDismissed && !d.checkingUpdate && !d.updating {
 				t.Errorf("documented key %q did not reach a dashboard handler", key)

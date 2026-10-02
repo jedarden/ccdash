@@ -28,6 +28,9 @@ func TestUpdateNoticeCanBeDismissed(t *testing.T) {
 	if got := d.renderStatusBar(); !strings.Contains(got, "esc to dismiss") {
 		t.Fatalf("status bar should advertise dismissal, got %q", got)
 	}
+	if got := d.renderStatusBar(); strings.Contains(got, "u:update") || strings.Contains(got, "esc:dismiss") {
+		t.Fatalf("update actions should appear only in the banner, got %q", got)
+	}
 
 	model, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	if model != d {
@@ -44,6 +47,29 @@ func TestUpdateNoticeCanBeDismissed(t *testing.T) {
 	}
 	if strings.Contains(d.renderStatusBar(), "available") {
 		t.Fatal("dismissed status bar should not contain the update notice")
+	}
+}
+
+func TestDevBuildDoesNotCheckOrShowUpdateNotice(t *testing.T) {
+	d := &Dashboard{
+		version: "dev",
+		width:   200,
+		height:  24,
+		updateInfo: &updater.UpdateInfo{
+			LatestVersion:   "1.1.20",
+			UpdateAvailable: true,
+		},
+		updater: updater.NewUpdater("dev"),
+	}
+
+	if d.updateNoticeVisible() {
+		t.Fatal("development builds must not show an update notice")
+	}
+	if got := d.renderStatusBar(); strings.Contains(got, "available") || strings.Contains(got, "u:update") {
+		t.Fatalf("development build status bar contains an update prompt: %q", got)
+	}
+	if _, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")}); cmd != nil {
+		t.Fatal("development builds must not schedule an update check")
 	}
 }
 
