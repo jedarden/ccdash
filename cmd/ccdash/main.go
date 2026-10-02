@@ -21,6 +21,14 @@ import (
 // If not set, defaults to "dev" for local development builds
 var version = "dev"
 
+var sessionStatusDescriptions = map[metrics.SessionStatus]string{
+	metrics.StatusWorking: "Claude Code is actively processing",
+	metrics.StatusAsking:  "Waiting for a human response",
+	metrics.StatusReady:   "Waiting for the next prompt",
+	metrics.StatusActive:  "Recent user activity detected",
+	metrics.StatusError:   "Error or undefined session state",
+}
+
 func main() {
 	// Parse command-line flags
 	var (
@@ -670,13 +678,9 @@ func printHelp() {
 	fmt.Println("                        json-aggregated: Summary statistics (legacy)")
 	fmt.Println()
 	fmt.Println("KEYBOARD SHORTCUTS:")
-	fmt.Println("  q, Ctrl+C    Quit the dashboard")
-	fmt.Println("  r            Refresh metrics immediately")
-	fmt.Println("  h            Cycle through help panels")
-	fmt.Println("  l            Open token usage lookback picker")
-	fmt.Println("  1            Focus on System Resources panel")
-	fmt.Println("  2            Focus on Token Usage panel")
-	fmt.Println("  3            Focus on Sessions panel")
+	for _, shortcut := range ui.DashboardKeyboardShortcuts() {
+		fmt.Printf("  %-15s %s\n", shortcut.Keys, shortcut.Description)
+	}
 	fmt.Println()
 	fmt.Println("PANELS:")
 	fmt.Println("  System Resources  - CPU, memory, swap, disk I/O, and load averages")
@@ -700,11 +704,9 @@ func printHelp() {
 	fmt.Println("  Narrow (<120 cols)                - Panels stacked vertically")
 	fmt.Println()
 	fmt.Println("STATUS INDICATORS:")
-	fmt.Println("  🟢 WORKING   - Claude Code is actively processing")
-	fmt.Println("  🔴 READY     - Waiting for input at prompt")
-	fmt.Println("  🟡 ACTIVE    - Recent activity detected")
-	fmt.Println("  💤 IDLE      - No activity for >5 minutes")
-	fmt.Println("  ❌ STALLED  - Error or stale session detected")
+	for _, status := range metrics.SessionStatuses() {
+		fmt.Printf("  %s %-8s - %s\n", status.GetEmoji(), status, sessionStatusDescriptions[status])
+	}
 	fmt.Println()
 	fmt.Println("REQUIREMENTS:")
 	fmt.Println("  - Terminal size: minimum 80x24 characters")

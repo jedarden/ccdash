@@ -221,6 +221,109 @@ func (d *Dashboard) forceCheckForUpdates() tea.Cmd {
 	}
 }
 
+// KeyboardShortcut describes a dashboard key binding shown by the CLI help.
+type KeyboardShortcut struct {
+	Keys        string
+	Description string
+}
+
+type dashboardKeyBinding struct {
+	KeyboardShortcut
+	keys   []string
+	handle func(*Dashboard) tea.Cmd
+}
+
+var dashboardKeyBindings = []dashboardKeyBinding{
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "q, Ctrl+C", Description: "Quit the dashboard"},
+		keys:             []string{"q", "ctrl+c"},
+		handle:           func(*Dashboard) tea.Cmd { return tea.Quit },
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "r", Description: "Refresh metrics immediately"},
+		keys:             []string{"r"},
+		handle:           func(d *Dashboard) tea.Cmd { return d.collectMetrics() },
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "h", Description: "Cycle through help panels"},
+		keys:             []string{"h"},
+		handle: func(d *Dashboard) tea.Cmd {
+			d.helpMode = (d.helpMode + 1) % 4
+			return nil
+		},
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "w", Description: "Open the workers view"},
+		keys:             []string{"w"},
+		handle: func(d *Dashboard) tea.Cmd {
+			d.workerDetailMode = true
+			d.workerDetailOffset = 0
+			d.helpMode = 0
+			return nil
+		},
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "l, L", Description: "Open token usage lookback picker"},
+		keys:             []string{"l", "L"},
+		handle: func(d *Dashboard) tea.Cmd {
+			d.lookbackMode = true
+			d.helpMode = 0
+			return nil
+		},
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "Esc", Description: "Dismiss the update notice"},
+		keys:             []string{"esc"},
+		handle: func(d *Dashboard) tea.Cmd {
+			if d.updateNoticeVisible() && !d.updating {
+				d.updateDismissed = true
+			}
+			return nil
+		},
+	},
+	{
+		KeyboardShortcut: KeyboardShortcut{Keys: "u, U", Description: "Check for or install an update"},
+		keys:             []string{"u", "U"},
+		handle:           (*Dashboard).handleUpdateKey,
+	},
+}
+
+// DashboardKeyboardShortcuts returns the main dashboard bindings documented by --help.
+func DashboardKeyboardShortcuts() []KeyboardShortcut {
+	shortcuts := make([]KeyboardShortcut, len(dashboardKeyBindings))
+	for i, binding := range dashboardKeyBindings {
+		shortcuts[i] = binding.KeyboardShortcut
+	}
+	return shortcuts
+}
+
+func (d *Dashboard) handleDashboardKey(key string) (tea.Cmd, bool) {
+	for _, binding := range dashboardKeyBindings {
+		for _, boundKey := range binding.keys {
+			if key == boundKey {
+				return binding.handle(d), true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (d *Dashboard) handleUpdateKey() tea.Cmd {
+	// If an update is already known available, install it. Otherwise (or if the
+	// last check errored/found nothing), trigger a fresh check.
+	if d.updating || d.checkingUpdate {
+		return nil
+	}
+	if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
+		d.updating = true
+		d.updateStatus = "Downloading update..."
+		return d.performUpdate()
+	}
+	d.checkingUpdate = true
+	d.updateStatus = ""
+	return d.forceCheckForUpdates()
+}
+
 // Update handles messages
 func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -240,46 +343,8 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d.handleLookbackKey(msg)
 		}
 
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return d, tea.Quit
-		case "r":
-			return d, d.collectMetrics()
-		case "h":
-			// Cycle through help modes: 0 -> 1 -> 2 -> 3 -> 0
-			d.helpMode = (d.helpMode + 1) % 4
-			return d, nil
-		case "w":
-			d.workerDetailMode = true
-			d.workerDetailOffset = 0
-			d.helpMode = 0
-			return d, nil
-		case "l", "L":
-			// Open lookback picker
-			d.lookbackMode = true
-			d.helpMode = 0 // Close help if open
-			return d, nil
-		case "esc":
-			// Dismiss the update notice without affecting the opt-in update action.
-			if d.updateNoticeVisible() && !d.updating {
-				d.updateDismissed = true
-			}
-			return d, nil
-		case "u", "U":
-			// If an update is already known available, install it. Otherwise
-			// (or if the last check errored/found nothing), trigger a fresh
-			// check rather than waiting for the once-at-startup check.
-			if d.updating || d.checkingUpdate {
-				return d, nil
-			}
-			if d.updateInfo != nil && d.updateInfo.UpdateAvailable {
-				d.updating = true
-				d.updateStatus = "Downloading update..."
-				return d, d.performUpdate()
-			}
-			d.checkingUpdate = true
-			d.updateStatus = ""
-			return d, d.forceCheckForUpdates()
+		if cmd, handled := d.handleDashboardKey(msg.String()); handled {
+			return d, cmd
 		}
 
 	case tickMsg:

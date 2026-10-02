@@ -32,6 +32,19 @@ const (
 	StatusError SessionStatus = "ERROR"
 )
 
+var sessionStatuses = [...]SessionStatus{
+	StatusWorking,
+	StatusAsking,
+	StatusReady,
+	StatusActive,
+	StatusError,
+}
+
+// SessionStatuses returns the status values used by session collection and display.
+func SessionStatuses() []SessionStatus {
+	return append([]SessionStatus(nil), sessionStatuses[:]...)
+}
+
 // SessionType distinguishes background workers from interactive sessions.
 type SessionType string
 
