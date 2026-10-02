@@ -134,15 +134,16 @@ func containsImpl(s, substr string) bool {
 	return false
 }
 
-// NewTokenCache creates a new SQLite-based token cache in the .ccdash directory
+// NewTokenCache creates a new SQLite-based token cache in the user's .ccdash directory.
+// Keeping the cache under the home directory lets dashboard instances launched
+// from different working directories share the same token history and lease.
 func NewTokenCache() *TokenCache {
-	// Get directory where binary is invoked (current working directory)
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return &TokenCache{}
 	}
 
-	cacheDir := filepath.Join(cwd, cacheDirName)
+	cacheDir := filepath.Join(home, cacheDirName)
 	dbPath := filepath.Join(cacheDir, cacheDBName)
 
 	tc := &TokenCache{

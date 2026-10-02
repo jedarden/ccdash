@@ -4,7 +4,91 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestFollowerReadsTokenTotalsFromSharedHomeCache(t *testing.T) {
+	home := t.TempDir()
+	leaderDir := t.TempDir()
+	followerDir := t.TempDir()
+	t.Setenv("HOME", home)
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	if err := os.Chdir(leaderDir); err != nil {
+		t.Fatal(err)
+	}
+	leader := NewTokenCache()
+	t.Cleanup(func() { _ = leader.Close() })
+	if got, want := leader.GetDBPath(), filepath.Join(home, cacheDirName, cacheDBName); got != want {
+		t.Fatalf("leader cache path = %q, want shared home cache %q", got, want)
+	}
+
+	since := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := leader.InsertTokenEvent(time.Now(), "claude-sonnet-4-5-20250929", 100, 20, 30, 4, "session.jsonl", 1); err != nil {
+		t.Fatalf("insert token event: %v", err)
+	}
+	if !leader.TryAcquireLease("leader") {
+		t.Fatal("leader failed to acquire collector lease")
+	}
+
+	if err := os.Chdir(followerDir); err != nil {
+		t.Fatal(err)
+	}
+	follower := NewTokenCache()
+	t.Cleanup(func() { _ = follower.Close() })
+	if got, want := follower.GetDBPath(), leader.GetDBPath(); got != want {
+		t.Fatalf("follower cache path = %q, want leader cache path %q", got, want)
+	}
+	if follower.TryAcquireLease("follower") {
+		t.Fatal("follower unexpectedly acquired the leader's lease")
+	}
+
+	direct, err := follower.QueryTokensHybrid(since)
+	if err != nil {
+		t.Fatalf("direct hybrid query: %v", err)
+	}
+	collector := &TokenCollector{
+		sources:      []Source{NewClaudeSource()},
+		sourceDirs:   map[string][]string{"claude": {filepath.Join(home, ".claude", "projects")}},
+		lookbackFrom: since,
+		cache:        follower,
+	}
+	got, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("collect follower token metrics: %v", err)
+	}
+	wantTotal := direct.InputTokens + direct.OutputTokens + direct.CacheReadTokens + direct.CacheCreationTokens
+	if !got.Available || got.TotalTokens != wantTotal || got.Prompts != direct.EventCount {
+		t.Fatalf("follower metrics = available %t, tokens %d, prompts %d; direct query = tokens %d, events %d",
+			got.Available, got.TotalTokens, got.Prompts, wantTotal, direct.EventCount)
+	}
+	if got.TotalTokens == 0 || got.TotalCost <= 0 {
+		t.Fatalf("follower metrics should be non-zero, got %d tokens and $%.6f", got.TotalTokens, got.TotalCost)
+	}
+}
+
+func TestCollectMarksUninitializedTokenCacheUnavailable(t *testing.T) {
+	collector := &TokenCollector{
+		sourceDirs: map[string][]string{"claude": {"configured-transcript-directory"}},
+		cache:      &TokenCache{},
+	}
+	got, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("collect with unavailable cache: %v", err)
+	}
+	if got.Available || got.Error == "" {
+		t.Fatalf("metrics should report unavailable cache, got Available=%t Error=%q", got.Available, got.Error)
+	}
+}
 
 func TestExpandGlobPatterns(t *testing.T) {
 	// Create temporary directory structure for testing

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.24] - 2026-10-02
+
+### Fixed
+- **Token totals varied with the launch directory**: token collectors now use the documented `~/.ccdash/tokens.db` cache from every working directory, so followers and `--once` read the same token history. A missing cache is reported as unavailable instead of as zero usage.
+
 ## [1.1.23] - 2026-10-02
 
 ### Fixed

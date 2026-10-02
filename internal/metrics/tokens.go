@@ -355,6 +355,10 @@ func (tc *TokenCollector) Collect() (*TokenMetrics, error) {
 		metrics.Error = "No transcript directories configured"
 		return metrics, nil
 	}
+	if tc.cache == nil || tc.cache.GetDB() == nil {
+		metrics.Error = "Token cache unavailable"
+		return metrics, nil
+	}
 
 	// Query SQLite using hybrid approach (pre-aggregated + active events)
 	aggregated, err := tc.cache.QueryTokensHybrid(tc.lookbackFrom)
