@@ -54,6 +54,7 @@ func TestCalculateRequiredTokenWidthMatchesRenderColumns(t *testing.T) {
 			ModelUsages: []metrics.ModelUsage{
 				{Model: "claude-sonnet-4-6"}, // shortens to "Sonnet 4.6", 10 chars
 				{Model: "claude-opus-4-7"},   // shortens to "Opus 4.7", 8 chars
+				{Model: "<synthetic>"},       // a zero-use row must not size the panel
 			},
 		},
 	}
@@ -67,7 +68,7 @@ func TestCalculateRequiredTokenWidthMatchesRenderColumns(t *testing.T) {
 	}
 
 	d.tokenMetrics.ModelUsages = append(d.tokenMetrics.ModelUsages, metrics.ModelUsage{
-		Model: "claude-sonnet-4-12", // hypothetical double-digit minor version, 11 chars shortened
+		Model: "claude-sonnet-4-12", TotalTokens: 1, // hypothetical double-digit minor version, 11 chars shortened
 	})
 	if got, want := d.calculateRequiredTokenWidth(), 61; got != want {
 		t.Errorf("calculateRequiredTokenWidth() with an 11-char name = %d, want %d", got, want)

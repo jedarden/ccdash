@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +127,48 @@ func TestRenderSessionCellFitsCompactWidth(t *testing.T) {
 		t.Fatalf("compact cell width = %d, want <= 28: %q", got, cell)
 	}
 	if !strings.Contains(cell, "🤖 c-glm-alp…") {
-		t.Fatalf("compact cell should abbreviate the worker name: %q", cell)
+		t.Fatalf("compact cell should truncate the worker name only as needed for status: %q", cell)
+	}
+}
+
+func TestRenderSessionRowsPrioritizesWorkerNamesOverMetadata(t *testing.T) {
+	names := []string{
+		"glm-roam-01", "glm-roam-02", "glm-roam-03", "glm-roam-04",
+		"glm-roam-05", "glm-roam-06", "glm-roam-07", "glm-roam-08",
+	}
+	sessions := make([]metrics.TmuxSession, 0, len(names))
+	for _, name := range names {
+		sessions = append(sessions, metrics.TmuxSession{
+			Name:        name,
+			SessionType: metrics.SessionTypeWorker,
+			Status:      metrics.StatusWorking,
+			Worker: &metrics.WorkerMetadata{
+				Workspace:           "/home/coding/workspaces/very/long/nested/project/name",
+				Agent:               "claude-code",
+				Provider:            "anthropic",
+				Model:               "glm-4.7",
+				CurrentBead:         "ccdash-f0f62bea",
+				State:               "EXECUTING",
+				BeadStatusAvailable: true,
+			},
+		})
+	}
+
+	for _, width := range []int{28, 44, 72} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			rows := (&Dashboard{}).renderSessionRows(sessions, 1, width)
+			if len(rows) != len(names) {
+				t.Fatalf("rendered %d worker rows, want %d", len(rows), len(names))
+			}
+			for i, row := range rows {
+				if got := lipgloss.Width(row); got > width {
+					t.Errorf("row %d width = %d, want <= %d: %q", i, got, width, row)
+				}
+				if !strings.Contains(row, names[i]) {
+					t.Errorf("row %d lost worker name %q to metadata: %q", i, names[i], row)
+				}
+			}
+		})
 	}
 }
 
@@ -195,6 +237,25 @@ func TestRenderTmuxPanelOmitsEmptySections(t *testing.T) {
 				t.Fatalf("empty panel should report no active sessions:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestTmuxHelpExplainsTrackedSessionAndProcessCounts(t *testing.T) {
+	d := &Dashboard{
+		width:    200,
+		height:   30,
+		helpMode: 3,
+		tmuxMetrics: &metrics.TmuxMetrics{
+			Available:        true,
+			Total:            19,
+			RunningProcesses: 37,
+		},
+	}
+	view := d.renderHelpView()
+	for _, want := range []string{"N tracked", "M detected agent processes"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("sessions help should explain process counts with %q:\n%s", want, view)
+		}
 	}
 }
 

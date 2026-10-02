@@ -1340,7 +1340,8 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 
 	// Determine layout based on width
 	// For narrow panels, stack vertically; for wider panels, use side-by-side
-	modelCount := len(d.tokenMetrics.ModelUsages)
+	modelUsages := nonzeroModelUsages(d.tokenMetrics.ModelUsages)
+	modelCount := len(modelUsages)
 	useSideBySide := contentWidth >= 48 && modelCount > 0
 
 	// Calculate available width for model names based on layout
@@ -1355,7 +1356,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	var rightLines []string
 	if modelCount > 0 {
 		rightLines = append(rightLines, boldStyle.Render("Models:"))
-		for _, usage := range d.tokenMetrics.ModelUsages {
+		for _, usage := range modelUsages {
 			displayName := shortenModelName(usage.Model)
 			// Dynamically truncate based on available space
 			if len(displayName) > maxModelNameWidth {
@@ -1424,6 +1425,17 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 
 	content := strings.Join(lines, "\n")
 	return style.Width(width).Height(height).Render(content)
+}
+
+func nonzeroModelUsages(usages []metrics.ModelUsage) []metrics.ModelUsage {
+	visible := make([]metrics.ModelUsage, 0, len(usages))
+	for _, usage := range usages {
+		if usage.TotalTokens == 0 && usage.Cost == 0 {
+			continue
+		}
+		visible = append(visible, usage)
+	}
+	return visible
 }
 
 // legacyModelNames overrides shortenModelName's generic parse for model IDs
@@ -1534,7 +1546,7 @@ func (d *Dashboard) calculateRequiredTokenWidth() int {
 	maxNameLen := 10 // default floor, matches renderTokenPanel's minimum
 
 	if d.tokenMetrics != nil {
-		for _, usage := range d.tokenMetrics.ModelUsages {
+		for _, usage := range nonzeroModelUsages(d.tokenMetrics.ModelUsages) {
 			if n := len(shortenModelName(usage.Model)); n > maxNameLen {
 				maxNameLen = n
 			}
@@ -2009,16 +2021,22 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	}
 	iconWidth := lipgloss.Width(icon + " ")
 	suffixWidth := lipgloss.Width(suffix)
-	detailWidth := lipgloss.Width(workerDetails)
-	nameWidth := width - iconWidth - suffixWidth - detailWidth
-	if nameWidth < 1 && workerDetails != "" {
-		// Keep enough space for a recognizable worker name and status when a
-		// compact multi-column layout cannot fit the full metadata summary.
-		minNameWidth := min(8, max(width-iconWidth-suffixWidth, 0))
-		maxDetailWidth := max(width-iconWidth-suffixWidth-minNameWidth, 0)
-		workerDetails = truncateDisplayWidth(workerDetails, maxDetailWidth)
-		detailWidth = lipgloss.Width(workerDetails)
-		nameWidth = width - iconWidth - suffixWidth - detailWidth
+	nameWidth := width - iconWidth - suffixWidth
+	if isWorker {
+		// A worker's identity is more useful in the list than its workspace or
+		// executor context. Keep the abbreviated name intact where possible,
+		// and let the metadata shrink into whatever space remains.
+		nameWidth = max(nameWidth, 0)
+		if lipgloss.Width(name) > nameWidth {
+			name = truncateDisplayWidth(name, nameWidth)
+		}
+		metadataWidth := max(width-iconWidth-suffixWidth-lipgloss.Width(name), 0)
+		if metadataWidth >= lipgloss.Width(" · …") {
+			workerDetails = truncateDisplayWidth(workerDetails, metadataWidth)
+		} else {
+			workerDetails = ""
+		}
+		return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
 	}
 	if nameWidth < 1 {
 		return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
@@ -2368,6 +2386,7 @@ SQLite Cache: .ccdash/tokens.db
 
 Title: Shows total count + status summary
   Format: "📺 TMUX Sessions (N) 🟢2 🔴1"
+  When counts differ, "(N/M procs)" means N tracked sessions and M detected agent processes.
 
 Status (analyzes pane content):
   🟢 WORKING - Claude Code processing
