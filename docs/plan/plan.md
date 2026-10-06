@@ -195,6 +195,8 @@ dependencies; they serialize beads that edit the same file.
 | ccdash-078deb63 | No-op mouse capture removed so terminal text selection works |
 | ccdash-eec2c3a4 | No update nag on `dev` builds; update prompt shown once |
 | ccdash-e023a79b | `--help` matches the real key handlers and status set |
+| ccdash-6e67be66 | Current Claude models priced exactly; unpriced Codex/OpenCode models marked `?` instead of looking free |
+| ccdash-e47fa952 | Sessions panel uses every row it is given; stacked layouts keep the token Cost line visible |
 
 **Usability and agent API**
 
@@ -239,6 +241,15 @@ dependencies; they serialize beads that edit the same file.
   sizes with fixed metrics, not by eyeballing a terminal.
 - The three-panel layout stays locked (see Key Design Decisions); nothing in
   this phase adds a panel.
+
+**Verification pass (2026-10-06).** Every bead above was closed by fleet
+workers by 2026-10-02 (v1.1.22 to v1.1.29). Re-rendering v1.1.30 at 80x24,
+100x35, 199x14 and 240x30 and running `--once` confirmed most of them, and
+turned up three gaps: ccdash-9ebd82fd had been closed with its implementation
+left uncommitted in the shared checkout (reopened, committed in v1.1.30);
+current-model pricing and unmarked `$0` models (ccdash-6e67be66); and a
+Sessions-panel row budget that double-counted its borders (ccdash-e47fa952).
+The last two shipped in v1.1.31.
 
 **Candidates not admitted as beads** (ideas from the same review; they need an
 explicit go-ahead before becoming work): weekly spend projection and a budget
