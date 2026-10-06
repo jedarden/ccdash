@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Current Claude models were priced by guesswork**: `claude-opus-5-5` was costed at Opus 5's $5/$25 instead of $4/$20, `claude-fable-5-1` cache reads at $1.00 instead of $0.25, and `claude-sonnet-5-5` and `claude-haiku-4-5-20251001` fell back to family prices. All four now have exact entries.
 - **Unknown Codex and OpenCode models looked free**: a model missing from the price table (such as `gpt-6-luna` or `gpt-6-sol`) was counted at $0 with no marker. It is still counted at $0, since no price is invented, but is now marked `?` in the dashboard and `pricing_estimated: true` in JSON. Free OpenCode Zen models stay unmarked.
+- **Stacked layouts hid the token cost and wasted session rows**: the Sessions panel budgeted two rows for borders that are drawn outside its height, so it always left rows blank and showed `... +N more` with room to spare; the compact layout also reserved half the screen for it regardless of content. At 80x24 the token panel lost its Total and Cost lines. The Sessions panel now uses every row it is given, the compact layout hands unused rows to the token and system panels, and when the token panel is short it leads with Cost and Total.
 
 ### Added
 - **`pricing_estimated` in `--once --json`**: each `tokens.model_usages` entry reports whether its cost came from an exact price. This is an additive field; `schema_version` stays 1. The README documents `pricing.models` overrides in `~/.ccdash/config.yaml`.

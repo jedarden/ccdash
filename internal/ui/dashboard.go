@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jedarden/ccdash/internal/config"
 	"github.com/jedarden/ccdash/internal/metrics"
 	"github.com/jedarden/ccdash/internal/notify"
@@ -998,13 +999,19 @@ func (d *Dashboard) renderCompact() string {
 		available = 0
 	}
 
-	// Give tmux a bit more room — sessions need more lines than the other panels
+	// Give tmux a bit more room — sessions need more lines than the other
+	// panels — but hand rows it leaves blank to the token and system panels.
 	tmuxHeight := available / 2
+	tmuxPanel := d.renderTmuxPanel(panelWidth, tmuxHeight)
+	if used := usedInteriorRows(tmuxPanel); used < tmuxHeight {
+		tmuxHeight = used
+		tmuxPanel = d.renderTmuxPanel(panelWidth, tmuxHeight)
+	}
 	remaining := available - tmuxHeight
-	tokenHeight := remaining / 2
+	tokenHeight := (remaining + 1) / 2
 	systemHeight := remaining - tokenHeight
 
-	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(panelWidth, tmuxHeight), panelWidth, tmuxHeight)
+	tmuxPanel = fitPanelToSize(tmuxPanel, panelWidth, tmuxHeight)
 	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, tokenHeight), panelWidth, tokenHeight)
 	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, systemHeight), panelWidth, systemHeight)
 
@@ -1013,6 +1020,21 @@ func (d *Dashboard) renderCompact() string {
 		tokenPanel,
 		systemPanel,
 	)
+}
+
+// usedInteriorRows counts a bordered panel's interior rows up to its last
+// non-blank one.
+func usedInteriorRows(panel string) int {
+	lines := strings.Split(panel, "\n")
+	if len(lines) <= 2 {
+		return 0
+	}
+	interior := lines[1 : len(lines)-1]
+	used := len(interior)
+	for used > 0 && strings.Trim(ansi.Strip(interior[used-1]), "│ ") == "" {
+		used--
+	}
+	return used
 }
 
 // fitPanelToSize bounds the complete panel frame, including its border and
@@ -1315,7 +1337,8 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	if hasCacheCreate {
 		leftLines = append(leftLines, fmt.Sprintf("Create:%s", metrics.FormatTokensCompact(d.tokenMetrics.CacheCreationTokens)))
 	}
-	leftLines = append(leftLines, fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens))))
+	totalLine := fmt.Sprintf("Total: %s", boldStyle.Render(metrics.FormatTokensCompact(d.tokenMetrics.TotalTokens)))
+	leftLines = append(leftLines, totalLine)
 	leftLines = append(leftLines, fmt.Sprintf("Reqs:  %d", d.tokenMetrics.Prompts))
 
 	// Check cost threshold and apply warning color if exceeded
@@ -1324,7 +1347,8 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	if d.notifyConfig != nil && d.notifyConfig.Alerts.CostThresholdUSD > 0 && d.tokenMetrics.TotalCost >= d.notifyConfig.Alerts.CostThresholdUSD {
 		costDisplay = warningStyle.Render(costValue)
 	}
-	leftLines = append(leftLines, fmt.Sprintf("Cost:  %s", costDisplay))
+	costLine := fmt.Sprintf("Cost:  %s", costDisplay)
+	leftLines = append(leftLines, costLine)
 	// Trend sparkline is rendered as its own full-width row below both columns
 	// (see below) rather than appended here, so it can't overflow the fixed
 	// left column and wrap the Models column beside it.
@@ -1343,6 +1367,19 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	}
 	if hasAvg {
 		leftLines = append(leftLines, fmt.Sprintf("Avg:   %s", dimStyle.Render(metrics.FormatTokenRateCompact(d.tokenMetrics.SessionAvgRate))))
+	}
+
+	// Cost and Total are the headline numbers. When the panel is too short for
+	// every stat (one row goes to the header), lead with them so trimming drops
+	// the breakdown rows instead.
+	if 1+len(leftLines) > height {
+		prioritized := []string{costLine, totalLine}
+		for _, line := range leftLines {
+			if line != costLine && line != totalLine {
+				prioritized = append(prioritized, line)
+			}
+		}
+		leftLines = prioritized
 	}
 
 	// Determine layout based on width
@@ -1666,7 +1703,9 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	rowBudget := height - 3 // panel title and border rows
+	// height is the interior height: borders are drawn outside it, so only
+	// the panel title row comes off the budget.
+	rowBudget := height - 1
 	if rowBudget < 1 {
 		rowBudget = 1
 	}

@@ -298,8 +298,14 @@ func TestRenderTmuxPanelFitsDocumentedLayouts(t *testing.T) {
 		// sessions-panel sizes for representative 80x24, 160x40, and 240x30
 		// terminals. The final case is the documented 199x14 tmux panel.
 		{
+			// Eight interior rows hold the title, both section headers and
+			// all five sessions; the borders are outside the height.
 			name: "narrow 80x24", width: 78, height: 8,
-			wantVisible:  []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo"},
+			wantVisible: []string{"💻 alpha", "💻 delta", "🤖 worker-alpha", "🤖 worker-bravo", "🤖 worker-charlie"},
+		},
+		{
+			name: "tight 78x6", width: 78, height: 6,
+			wantVisible:  []string{"💻 alpha"},
 			wantOverflow: true,
 		},
 		{
@@ -533,5 +539,60 @@ func TestSessionVisibilityAccountsForSectionsAndOverflow(t *testing.T) {
 					tt.wantInteractive, tt.wantWorkers, tt.wantColumns, tt.wantMore)
 			}
 		})
+	}
+}
+
+func TestCompactLayoutKeepsTokenCostVisible(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for _, size := range []struct{ width, height int }{{80, 24}, {100, 35}} {
+		d := &Dashboard{
+			width:  size.width,
+			height: size.height,
+			tokenMetrics: &metrics.TokenMetrics{
+				Available:           true,
+				InputTokens:         32_200_000,
+				OutputTokens:        4_500_000,
+				CacheReadTokens:     580_800_000,
+				CacheCreationTokens: 10_100_000,
+				TotalTokens:         627_600_000,
+				Prompts:             6670,
+				TotalCost:           215.26,
+				SessionAvgRate:      331_500,
+				ModelUsages: []metrics.ModelUsage{
+					{Model: "claude-opus-5-5", TotalTokens: 146_300_000, Cost: 119.17},
+					{Model: "gpt-5.6-luna", TotalTokens: 249_200_000, Cost: 48.29},
+					{Model: "claude-sonnet-5", TotalTokens: 76_900_000, Cost: 23.69},
+				},
+			},
+			tmuxMetrics: &metrics.TmuxMetrics{
+				Available: true,
+				Total:     2,
+				Source:    "tmux",
+				Sessions: []metrics.TmuxSession{
+					{Name: "worker-alpha", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusWorking},
+					{Name: "worker-bravo", SessionType: metrics.SessionTypeWorker, Status: metrics.StatusReady},
+				},
+			},
+			version: "test",
+		}
+		d.updateLayout()
+
+		view := d.View()
+		if got := lipgloss.Height(view); got > size.height {
+			t.Fatalf("%dx%d: View() height = %d, want <= %d", size.width, size.height, got, size.height)
+		}
+		for _, want := range []string{"Cost:", "$215.26", "Total:"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("%dx%d: View() is missing %q:\n%s", size.width, size.height, want, view)
+			}
+		}
+	}
+}
+
+func TestUsedInteriorRowsIgnoresTrailingBlankRows(t *testing.T) {
+	panel := "╭────╮\n│ a  │\n│ b  │\n│    │\n│    │\n╰────╯"
+	if got := usedInteriorRows(panel); got != 2 {
+		t.Fatalf("usedInteriorRows = %d, want 2", got)
 	}
 }
