@@ -35,6 +35,8 @@ func main() {
 		exportFormat      = flag.String("export", "", "Export token cache to stdout (csv|json)")
 		runOnce           = flag.Bool("once", false, "Run a single collection cycle and exit")
 		jsonOutput        = flag.Bool("json", false, "Output metrics as JSON (use with --once)")
+		sinceValue        = flag.String("since", "", "Limit token data to monday, today, 24h, 7d, or an RFC3339 timestamp (use with --once or --export)")
+		attention         = flag.Bool("attention", false, "List ASKING sessions and exit 1 if any need a human (works alone or with --once)")
 	)
 
 	flag.Parse()
@@ -50,6 +52,24 @@ func main() {
 	if *showHelp {
 		printHelp()
 		os.Exit(0)
+	}
+
+	since := time.Time{}
+	if *sinceValue != "" {
+		var err error
+		since, err = parseSince(*sinceValue, time.Now())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(2)
+		}
+		if !*runOnce && *exportFormat == "" {
+			fmt.Fprintln(os.Stderr, "Error: --since requires --once or --export")
+			os.Exit(2)
+		}
+	}
+	if *attention && *exportFormat != "" {
+		fmt.Fprintln(os.Stderr, "Error: --attention cannot be combined with --export")
+		os.Exit(2)
 	}
 
 	// Handle --install-hooks
@@ -171,17 +191,17 @@ func main() {
 
 		switch strings.ToLower(*exportFormat) {
 		case "csv":
-			if err := exportCSV(cache); err != nil {
+			if err := exportCSVSince(cache, since); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting CSV: %v\n", err)
 				os.Exit(1)
 			}
 		case "json":
-			if err := exportJSON(cache); err != nil {
+			if err := exportJSONSince(cache, since); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting JSON: %v\n", err)
 				os.Exit(1)
 			}
 		case "json-aggregated":
-			if err := exportJSONAggregated(cache); err != nil {
+			if err := exportJSONAggregatedSince(cache, since); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting aggregated JSON: %v\n", err)
 				os.Exit(1)
 			}
@@ -194,7 +214,13 @@ func main() {
 
 	// Handle --once (single collection cycle, no TUI)
 	if *runOnce {
-		os.Exit(runOnceMode(*jsonOutput, *extraDirs))
+		os.Exit(runOnceModeWithOptions(*jsonOutput, *extraDirs, since, *attention))
+	}
+
+	// A standalone attention check only collects session state, keeping it cheap
+	// for scripts that need to poll for sessions waiting on a human.
+	if *attention {
+		os.Exit(runAttentionMode())
 	}
 
 	// Check if running in a terminal
@@ -503,9 +529,16 @@ func errorString(err error) *string {
 
 // runOnceMode runs a single collection cycle and outputs the result
 func runOnceMode(asJSON bool, extraDirs string) int {
+	return runOnceModeWithOptions(asJSON, extraDirs, time.Time{}, false)
+}
+
+func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, attention bool) int {
 	// Create collectors
 	systemCollector := metrics.NewSystemCollector()
 	tokenCollector := metrics.NewTokenCollector()
+	if !since.IsZero() {
+		tokenCollector.SetLookback(since)
+	}
 	tmuxCollector := metrics.NewTmuxCollector()
 
 	// Add extra directories if specified
@@ -641,6 +674,14 @@ func runOnceMode(asJSON bool, extraDirs string) int {
 		}
 	}
 
+	asking := askingSessions(snapshot.Sessions.Sessions)
+	if attention {
+		if code := attentionExitCode(snapshot.Sessions.Sessions); code != 0 {
+			printAttentionSessions(os.Stderr, asking)
+			return code
+		}
+	}
+
 	return 0
 }
 
@@ -686,17 +727,23 @@ func setupHooks() *metrics.HookSessionCollector {
 
 // exportCSV exports raw token event history to CSV format
 func exportCSV(cache *metrics.TokenCache) error {
-	// Export all token events from the database
-	events, err := cache.ExportAllTokenEvents()
+	return exportCSVSince(cache, time.Time{})
+}
+
+func exportCSVSince(cache *metrics.TokenCache, since time.Time) error {
+	// Export token events and cached file aggregates within the requested window.
+	events, err := cache.ExportTokenEventsSince(since)
 	if err != nil {
 		return fmt.Errorf("failed to export token events: %w", err)
 	}
+	events = tokenEventsSince(events, since)
 
-	// Also export file aggregates for complete files
+	// Also export cached file aggregates
 	aggregates, err := cache.ExportAllFileAggregates()
 	if err != nil {
 		return fmt.Errorf("failed to export file aggregates: %w", err)
 	}
+	aggregates = fileAggregatesSince(aggregates, since)
 
 	// Create CSV writer
 	writer := csv.NewWriter(os.Stdout)
@@ -747,8 +794,8 @@ func exportCSV(cache *metrics.TokenCache) error {
 			// No model breakdown, write aggregate as a single row
 			row := []string{
 				"aggregate",
-				agg.EarliestTimestamp.Format(time.RFC3339Nano),
-				fmt.Sprintf("%d", agg.EarliestTimestamp.Unix()),
+				agg.LatestTimestamp.Format(time.RFC3339Nano),
+				fmt.Sprintf("%d", agg.LatestTimestamp.Unix()),
 				"*", // wildcard for all models
 				agg.Source,
 				fmt.Sprintf("%d", agg.TotalInputTokens),
@@ -789,17 +836,23 @@ func exportCSV(cache *metrics.TokenCache) error {
 
 // exportJSON exports raw token event history to JSON format
 func exportJSON(cache *metrics.TokenCache) error {
-	// Export all token events from the database
-	events, err := cache.ExportAllTokenEvents()
+	return exportJSONSince(cache, time.Time{})
+}
+
+func exportJSONSince(cache *metrics.TokenCache, since time.Time) error {
+	// Export token events and cached file aggregates within the requested window.
+	events, err := cache.ExportTokenEventsSince(since)
 	if err != nil {
 		return fmt.Errorf("failed to export token events: %w", err)
 	}
+	events = tokenEventsSince(events, since)
 
-	// Also export file aggregates for complete files
+	// Also export cached file aggregates
 	aggregates, err := cache.ExportAllFileAggregates()
 	if err != nil {
 		return fmt.Errorf("failed to export file aggregates: %w", err)
 	}
+	aggregates = fileAggregatesSince(aggregates, since)
 
 	// Create export structure
 	type ExportData struct {
@@ -830,8 +883,14 @@ func exportJSON(cache *metrics.TokenCache) error {
 
 // exportJSONAggregated exports aggregated token data to JSON format (legacy format)
 func exportJSONAggregated(cache *metrics.TokenCache) error {
-	// Query aggregated data for the last 90 days
-	since := time.Now().AddDate(0, 0, -90)
+	return exportJSONAggregatedSince(cache, time.Time{})
+}
+
+func exportJSONAggregatedSince(cache *metrics.TokenCache, since time.Time) error {
+	// Keep the legacy 90-day default unless the caller selects a window.
+	if since.IsZero() {
+		since = time.Now().AddDate(0, 0, -90)
+	}
 	agg, err := cache.QueryTokensSince(since)
 	if err != nil {
 		return fmt.Errorf("failed to get token data: %w", err)
@@ -911,6 +970,8 @@ func printHelp() {
 	fmt.Println("  --test-notify         Test notification webhook configuration")
 	fmt.Println("  --once                Run a single collection cycle and exit (no TUI)")
 	fmt.Println("  --json                Output metrics as JSON (use with --once)")
+	fmt.Println("  --since=<window>      Token window: monday, today, 24h, 7d, or an RFC3339 timestamp; use with --once or --export")
+	fmt.Println("  --attention           List ASKING sessions and exit 1 if any need a human (also works with --once)")
 	fmt.Println("  --extra-dirs=<dirs>   Additional Claude project root directories to scan")
 	fmt.Println("                        Comma-separated list of paths")
 	fmt.Println("                        Also configurable via CCDASH_EXTRA_DIRS env var (colon-separated)")
@@ -964,6 +1025,8 @@ func printHelp() {
 	fmt.Println("  ccdash --help                             Show this help")
 	fmt.Println("  ccdash --once                            Single collection cycle (human-readable)")
 	fmt.Println("  ccdash --once --json                      Single collection cycle (JSON output)")
+	fmt.Println("  ccdash --once --json --since=7d           JSON snapshot using the last seven days")
+	fmt.Println("  ccdash --attention                        List sessions waiting for a human")
 	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
 	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
 	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")

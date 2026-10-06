@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.30] - 2026-10-06
+
+### Added
+- **`--since` and `--attention` for scripts**: `--since=monday|today|24h|7d|<RFC3339>` sets the token window for `--once` and every `--export` format, so a script can line its totals up with the dashboard or its own window. `--attention` lists sessions in `ASKING` and exits 1 when any need a human; on its own it collects only session state, and with `--once` the snapshot is still printed.
+
 ## [1.1.29] - 2026-10-02
 
 ### Changed

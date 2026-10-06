@@ -74,6 +74,8 @@ ccdash
 | `--uninstall-hooks` | Remove ccdash hooks from Claude Code and Codex. |
 | `--once` | Collect one metrics snapshot and exit without opening the dashboard. |
 | `--json` | Print the snapshot as JSON; use with `--once`. See the schema notes below. |
+| `--since=<window>` | Set the token lookback for `--once` or `--export`: `monday`, `today`, `24h`, `7d`, or an RFC3339 timestamp. |
+| `--attention` | List ASKING sessions and exit with status 1 if any need a human. Runs a session-only check by itself; also works with `--once`. |
 | `--export=<format>` | Write cached token data to standard output. Formats: `csv`, `json`, or `json-aggregated` (legacy summary). |
 | `--test-notify` | Send a test payload to the configured notification webhook and report whether it succeeded. |
 | `--extra-dirs=<paths>` | Also scan comma-separated Claude project roots. Paths may include glob patterns. `CCDASH_EXTRA_DIRS` provides the same setting with colon-separated paths. |
@@ -82,8 +84,24 @@ For example, collect one snapshot as JSON or export the raw cache data:
 
 ```bash
 ccdash --once --json
+ccdash --once --json --since=7d
 ccdash --export=csv
+ccdash --export=json --since=2026-10-01T09:00:00-04:00
+ccdash --attention
 ```
+
+`--since=monday` uses the same Monday at 9:00 AM local-time boundary as the
+dashboard's default token window. `today` starts at local midnight; `24h` and
+`7d` count back from the current time. RFC3339 values include an explicit time
+zone. Every export format uses the selected boundary; `json-aggregated` keeps
+its existing 90-day default when `--since` is omitted. CSV and JSON exports
+filter individual events and keep cached file aggregates whose latest event is
+in the window, matching the dashboard's aggregate lookback behavior.
+
+`--attention` checks session status without collecting system or token metrics.
+It prints the names of sessions in `ASKING` and exits 1 when there are any;
+otherwise it reports that no sessions need a human and exits 0. With `--once`,
+the snapshot is still emitted and the command exits 1 if any session is asking.
 
 ### One-shot JSON output
 
