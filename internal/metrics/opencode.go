@@ -94,7 +94,8 @@ func (s *OpenCodeSource) pricingDetailsForModel(model string) pricingDetails {
 			return getPricingDetailsForModel(id)
 		}
 	}
-	return pricingDetails{}
+	// Unknown paid model: $0 marked estimated, never presented as a price.
+	return pricingDetails{estimated: true}
 }
 
 // dbIngestSource is implemented by sources backed by a database rather than

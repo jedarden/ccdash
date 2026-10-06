@@ -124,6 +124,11 @@ available; it is distinct from a measured rate of zero. `tokens.session_avg_rate
 is an aggregate over the token session and remains numeric. `tokens.time_span`
 is encoded as a duration in nanoseconds.
 
+Each `tokens.model_usages` entry has `pricing_estimated`: `true` when the cost
+was not computed from a known price for that exact model (a family fallback,
+or an unknown model counted at `$0`). The dashboard marks these models with
+`?`. Set exact prices in `~/.ccdash/config.yaml` to clear the flag.
+
 ### Keyboard controls
 
 | Key | Action |
@@ -247,6 +252,28 @@ immediately; the command requires `notify.enabled: true` and a webhook URL.
 The `alerts.cost_threshold_usd` setting is independent of webhooks: a positive
 value highlights the dashboard's cost when the current lookback total reaches
 that USD amount. Zero or omission disables the highlight.
+
+### Model prices
+
+ccdash ships a price table for Claude, Codex (OpenAI), GLM, and OpenCode
+models. A model missing from it is priced from its family, or at `$0` when no
+family matches, and is marked `?` in the dashboard and
+`"pricing_estimated": true` in `--once --json`. Add exact per-million-token
+prices under `pricing.models`, keyed by the model id as it appears in the
+dashboard's JSON output; a configured price takes precedence over the table and
+is never marked estimated:
+
+```yaml
+pricing:
+  models:
+    gpt-6-sol:
+      input_per_million: 5.00
+      output_per_million: 30.00
+      cache_read_per_million: 0.50
+      cache_create_per_million: 6.25
+```
+
+The values above are placeholders; use your provider's published rates.
 
 ## Development
 

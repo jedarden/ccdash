@@ -177,13 +177,14 @@ func (s *CodexSource) pricingDetailsForModel(model string) pricingDetails {
 	}
 	// Codex may emit dated snapshots. Prefer the stable model family when a
 	// snapshot suffix is present; unknown models use zero pricing rather than
-	// accidentally applying a Claude rate.
+	// accidentally applying a Claude rate, marked estimated so the $0 is not
+	// read as a real price.
 	for prefix, pricing := range codexPricing {
 		if strings.HasPrefix(model, prefix+"-") {
 			return pricingDetails{pricing: pricing, estimated: true}
 		}
 	}
-	return pricingDetails{}
+	return pricingDetails{estimated: true}
 }
 
 func (s *CodexSource) HookInstaller() HookInstaller {

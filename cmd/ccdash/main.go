@@ -386,6 +386,7 @@ type snapshotModelUsage struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
 	Cost                float64 `json:"cost"`
+	PricingEstimated    bool    `json:"pricing_estimated"`
 }
 
 type snapshotSessionsMetrics struct {
@@ -481,6 +482,7 @@ func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetr
 				Model: usage.Model, Source: usage.Source, InputTokens: usage.InputTokens,
 				OutputTokens: usage.OutputTokens, CacheReadTokens: usage.CacheReadTokens,
 				CacheCreationTokens: usage.CacheCreationTokens, TotalTokens: usage.TotalTokens, Cost: usage.Cost,
+				PricingEstimated: usage.PricingEstimated,
 			}
 		}
 	}

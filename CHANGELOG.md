@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.31] - 2026-10-06
+
+### Fixed
+- **Current Claude models were priced by guesswork**: `claude-opus-5-5` was costed at Opus 5's $5/$25 instead of $4/$20, `claude-fable-5-1` cache reads at $1.00 instead of $0.25, and `claude-sonnet-5-5` and `claude-haiku-4-5-20251001` fell back to family prices. All four now have exact entries.
+- **Unknown Codex and OpenCode models looked free**: a model missing from the price table (such as `gpt-6-luna` or `gpt-6-sol`) was counted at $0 with no marker. It is still counted at $0, since no price is invented, but is now marked `?` in the dashboard and `pricing_estimated: true` in JSON. Free OpenCode Zen models stay unmarked.
+
+### Added
+- **`pricing_estimated` in `--once --json`**: each `tokens.model_usages` entry reports whether its cost came from an exact price. This is an additive field; `schema_version` stays 1. The README documents `pricing.models` overrides in `~/.ccdash/config.yaml`.
+
 ## [1.1.30] - 2026-10-06
 
 ### Added

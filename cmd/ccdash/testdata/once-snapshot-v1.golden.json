@@ -77,7 +77,8 @@
         "cache_read_tokens": 4,
         "cache_creation_tokens": 5,
         "total_tokens": 14,
-        "cost": 0.25
+        "cost": 0.25,
+        "pricing_estimated": false
       }
     ],
     "rate_history": [

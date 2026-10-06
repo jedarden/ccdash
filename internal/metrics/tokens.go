@@ -749,7 +749,15 @@ var claudeSonnet45Pricing = ModelPricing{
 	CacheCreatePerMillion: 3.75,
 }
 
-// Model pricing constants (as of 2026-08-28). Claude rates from the
+var claudeHaiku45Pricing = ModelPricing{
+	InputPerMillion:       1.0,
+	OutputPerMillion:      5.0,
+	CacheReadPerMillion:   0.10,
+	CacheCreatePerMillion: 1.25,
+}
+
+// Model pricing constants (as of 2026-08-28; Claude 5.5-generation entries
+// 2026-10-06). Claude rates from the
 // claude-api skill's live-cached pricing table; GLM rates from
 // https://docs.z.ai/guides/overview/pricing unless noted otherwise. Cache
 // rates for Claude models follow Anthropic's standard 5-minute-cache ratio
@@ -761,6 +769,14 @@ var modelPricing = map[string]ModelPricing{
 	"claude-opus-4-7":          claudeOpusPricing,
 	"claude-opus-4-8":          claudeOpusPricing,
 	"claude-opus-5":            claudeOpusPricing,
+	// Opus 5.5 dropped to $4/$20 with $0.20 cache reads (claude-api skill
+	// pricing table, cached 2026-09-25).
+	"claude-opus-5-5": {
+		InputPerMillion:       4.0,
+		OutputPerMillion:      20.0,
+		CacheReadPerMillion:   0.20,
+		CacheCreatePerMillion: 5.0,
+	},
 	// Claude Sonnet
 	"claude-sonnet-4-5-20250929": claudeSonnet45Pricing,
 	"claude-sonnet-4-6":          claudeSonnet45Pricing,
@@ -770,18 +786,30 @@ var modelPricing = map[string]ModelPricing{
 		CacheReadPerMillion:   0.20,
 		CacheCreatePerMillion: 2.50,
 	},
-	// Claude Haiku 4.5 pricing
-	"claude-haiku-4-5-20250929": {
-		InputPerMillion:       1.0,
-		OutputPerMillion:      5.0,
-		CacheReadPerMillion:   0.10,
-		CacheCreatePerMillion: 1.25,
+	// Sonnet 5.5 keeps Sonnet 5's prices.
+	"claude-sonnet-5-5": {
+		InputPerMillion:       2.0,
+		OutputPerMillion:      10.0,
+		CacheReadPerMillion:   0.20,
+		CacheCreatePerMillion: 2.50,
 	},
+	// Claude Haiku 4.5 pricing. The dated id Claude Code reports is
+	// claude-haiku-4-5-20251001; the -20250929 key is kept for older logs.
+	"claude-haiku-4-5":          claudeHaiku45Pricing,
+	"claude-haiku-4-5-20251001": claudeHaiku45Pricing,
+	"claude-haiku-4-5-20250929": claudeHaiku45Pricing,
 	// Claude Fable 5 pricing
 	"claude-fable-5": {
 		InputPerMillion:       10.0,
 		OutputPerMillion:      50.0,
 		CacheReadPerMillion:   1.00,
+		CacheCreatePerMillion: 12.50,
+	},
+	// Fable 5.1 keeps Fable 5's input/output prices but cache reads are $0.25.
+	"claude-fable-5-1": {
+		InputPerMillion:       10.0,
+		OutputPerMillion:      50.0,
+		CacheReadPerMillion:   0.25,
 		CacheCreatePerMillion: 12.50,
 	},
 	// GLM-5.x pricing (Zhipu AI) — 5.1/5.2/5.3 all price identically per

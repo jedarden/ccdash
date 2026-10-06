@@ -130,3 +130,39 @@ func TestEstimatedPricingIsFlaggedInJSON(t *testing.T) {
 		t.Fatalf("JSON = %s, want pricing_estimated=true", raw)
 	}
 }
+
+func TestCurrentClaudeModelsHaveExactPricing(t *testing.T) {
+	cases := map[string]ModelPricing{
+		"claude-opus-5-5":           {InputPerMillion: 4, OutputPerMillion: 20, CacheReadPerMillion: 0.20, CacheCreatePerMillion: 5},
+		"claude-sonnet-5-5":         {InputPerMillion: 2, OutputPerMillion: 10, CacheReadPerMillion: 0.20, CacheCreatePerMillion: 2.50},
+		"claude-haiku-4-5":          {InputPerMillion: 1, OutputPerMillion: 5, CacheReadPerMillion: 0.10, CacheCreatePerMillion: 1.25},
+		"claude-haiku-4-5-20251001": {InputPerMillion: 1, OutputPerMillion: 5, CacheReadPerMillion: 0.10, CacheCreatePerMillion: 1.25},
+		"claude-fable-5-1":          {InputPerMillion: 10, OutputPerMillion: 50, CacheReadPerMillion: 0.25, CacheCreatePerMillion: 12.50},
+	}
+	for model, want := range cases {
+		got := getPricingDetailsForModel(model)
+		if got.estimated {
+			t.Errorf("%s: priced by fallback, want an exact table entry", model)
+		}
+		if got.pricing != want {
+			t.Errorf("%s: pricing = %+v, want %+v", model, got.pricing, want)
+		}
+	}
+}
+
+func TestUnknownPaidModelsAreMarkedEstimated(t *testing.T) {
+	codex := NewCodexSource().pricingDetailsForModel("gpt-6-luna")
+	if !codex.estimated || codex.pricing != (ModelPricing{}) {
+		t.Errorf("unknown Codex model = %+v, want zero pricing marked estimated", codex)
+	}
+
+	opencode := (&OpenCodeSource{}).pricingDetailsForModel("provider/unknown-paid-model")
+	if !opencode.estimated {
+		t.Errorf("unknown OpenCode model = %+v, want marked estimated", opencode)
+	}
+
+	free := (&OpenCodeSource{}).pricingDetailsForModel("opencode/space-bunny-free")
+	if free.estimated || free.pricing != (ModelPricing{}) {
+		t.Errorf("free OpenCode model = %+v, want exact zero pricing", free)
+	}
+}
