@@ -238,3 +238,18 @@ func TestHelpDocumentsHeadlessFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestAttentionShowsDecisionAndExcludesTaskLifecycle(t *testing.T) {
+	sessions := []metrics.TmuxSession{
+		{Name: "ci", Status: metrics.StatusWaitingExternal},
+		{Name: "done", Status: metrics.StatusComplete},
+		{Name: "continue", Status: metrics.StatusResumable},
+		{Name: "pause", Status: metrics.StatusPaused},
+		{Name: "choice", Status: metrics.StatusAsking, AttentionReason: "Which region?\nRecommended: iad"},
+	}
+	var output bytes.Buffer
+	printAttentionSessions(&output, askingSessions(sessions))
+	if got, want := output.String(), "Sessions asking for human input:\n  - choice: Which region? Recommended: iad\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

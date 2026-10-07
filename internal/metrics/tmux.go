@@ -23,7 +23,11 @@ const (
 	// StatusWorking indicates Claude Code is currently processing
 	StatusWorking SessionStatus = "WORKING"
 	// StatusAsking indicates the harness is waiting for a human response.
-	StatusAsking SessionStatus = "ASKING"
+	StatusAsking          SessionStatus = "ASKING"
+	StatusWaitingExternal SessionStatus = "WAITING"
+	StatusComplete        SessionStatus = "COMPLETE"
+	StatusResumable       SessionStatus = "RESUMABLE"
+	StatusPaused          SessionStatus = "PAUSED"
 	// StatusReady indicates the harness is idle and ready for the next prompt.
 	StatusReady SessionStatus = "READY"
 	// StatusActive indicates user is actively in the tmux session
@@ -35,6 +39,10 @@ const (
 var sessionStatuses = [...]SessionStatus{
 	StatusAsking,
 	StatusWorking,
+	StatusWaitingExternal,
+	StatusResumable,
+	StatusComplete,
+	StatusPaused,
 	StatusReady,
 	StatusActive,
 	StatusError,
@@ -60,7 +68,7 @@ func (s SessionStatus) GetColor() string {
 		return "\033[32m" // Green
 	case StatusAsking:
 		return "\033[95m" // Bright magenta: blocked on a human
-	case StatusReady:
+	case StatusReady, StatusWaitingExternal, StatusComplete, StatusResumable, StatusPaused:
 		return "\033[90m" // Gray: idle and low urgency
 	case StatusActive:
 		return "\033[33m" // Yellow
@@ -75,9 +83,17 @@ func (s SessionStatus) GetColor() string {
 func (s SessionStatus) Description() string {
 	switch s {
 	case StatusWorking:
-		return "Claude Code is actively processing"
+		return "Agent is actively processing"
 	case StatusAsking:
 		return "Waiting for a human response"
+	case StatusWaitingExternal:
+		return "Waiting for an external dependency"
+	case StatusComplete:
+		return "Task reported complete"
+	case StatusResumable:
+		return "Authorized work remains and can resume"
+	case StatusPaused:
+		return "Task paused"
 	case StatusReady:
 		return "Idle and waiting for the next prompt"
 	case StatusActive:
@@ -97,7 +113,7 @@ func (s SessionStatus) GetEmoji() string {
 		return "🟢" // U+1F7E2 - Green circle
 	case StatusAsking:
 		return "🟣" // U+1F7E3 - Purple circle
-	case StatusReady:
+	case StatusReady, StatusWaitingExternal, StatusComplete, StatusResumable, StatusPaused:
 		return "⚪" // U+26AA - White circle (idle/low urgency)
 	case StatusActive:
 		return "🟡" // U+1F7E1 - Yellow circle
@@ -122,6 +138,13 @@ type TmuxSession struct {
 	LastLines         []string        `json:"last_lines,omitempty"`
 	Source            string          `json:"source,omitempty"`  // "tmux" or "hooks"
 	Harness           string          `json:"harness,omitempty"` // "claude" or "codex" when hook-tracked
+
+	TaskState       string `json:"task_state,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
+	TaskSummary     string `json:"task_summary,omitempty"`
+	TaskNextAction  string `json:"task_next_action,omitempty"`
+	TaskDecision    string `json:"task_decision,omitempty"`
+	AttentionReason string `json:"attention_reason,omitempty"`
 
 	// agentUI records that the pane showed agent prompt or working markers.
 	agentUI bool
@@ -208,7 +231,11 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		if err == nil {
 			for _, hs := range hookSessions {
 				session := hs.ToTmuxSession()
-				hookSessionMap[session.Name] = session
+				// Collection is newest first. An older session in the same pane
+				// must not replace its current task or pending question.
+				if _, exists := hookSessionMap[session.Name]; !exists {
+					hookSessionMap[session.Name] = session
+				}
 			}
 		}
 	}
@@ -283,7 +310,7 @@ func (tc *TmuxCollector) Collect() *TmuxMetrics {
 		// Hooks are authoritative for working/stopped state (Stop hook fires when
 		// Claude finishes). Tmux pane content is a secondary signal — use it to
 		// confirm working, but never to downgrade hook status.
-		if tmuxSession.Status == StatusWorking {
+		if tmuxSession.Status == StatusWorking && session.Status != StatusAsking && session.TaskState == "" {
 			// Tmux sees interrupt hints — Claude is definitely working
 			session.Status = StatusWorking
 			session.Source = "hybrid"

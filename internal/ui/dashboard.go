@@ -2064,14 +2064,6 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 
-	// Flag stale sessions: READY sessions idle > 5min get bold + clock emoji.
-	staleIndicator := ""
-	isStale := session.Status == metrics.StatusReady && session.IdleDuration > 5*time.Minute
-	if isStale {
-		staleIndicator = "⏰"                 // Clock emoji indicates long wait
-		statusStyle = statusStyle.Bold(true) // Make stale sessions stand out
-	}
-
 	statusText := compactSessionStatus(session.Status)
 	idleStr := ""
 	if session.IdleDuration > 0 {
@@ -2079,9 +2071,6 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	}
 	status := statusStyle.Render(statusText)
 	suffix := fmt.Sprintf(" %s %s %s", session.Status.GetEmoji(), status, idleStr)
-	if staleIndicator != "" {
-		suffix = " " + staleIndicator + suffix
-	}
 	if session.Attached {
 		suffix += " 📎"
 	}
@@ -2117,6 +2106,11 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	}
 	if nameWidth < 1 {
 		return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
+	}
+	if session.AttentionReason != "" {
+		name += " · " + strings.Join(strings.Fields(session.AttentionReason), " ")
+	} else if session.TaskSummary != "" {
+		name += " · " + strings.Join(strings.Fields(session.TaskSummary), " ")
 	}
 	name = truncateDisplayWidth(name, nameWidth)
 	return truncateDisplayWidth(icon+" "+name+workerDetails+suffix, width)
@@ -2178,6 +2172,14 @@ func compactSessionStatus(status metrics.SessionStatus) string {
 		return "WORK"
 	case metrics.StatusAsking:
 		return "ASK"
+	case metrics.StatusWaitingExternal:
+		return "WAIT"
+	case metrics.StatusComplete:
+		return "DONE"
+	case metrics.StatusResumable:
+		return "RESUME"
+	case metrics.StatusPaused:
+		return "PAUSE"
 	case metrics.StatusReady:
 		return "READY"
 	case metrics.StatusActive:

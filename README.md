@@ -21,7 +21,11 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 | Status | Indicator | Meaning |
 |--------|-----------|---------|
 | ASKING | 🟣 | Waiting for a human response |
-| WORKING | 🟢 | Claude Code is actively processing |
+| WORKING | 🟢 | Agent is actively processing |
+| WAITING | ⚪ | Waiting for an external dependency |
+| RESUMABLE | ⚪ | Authorized work remains and can resume |
+| COMPLETE | ⚪ | Task reports completion with acceptance evidence |
+| PAUSED | ⚪ | Task paused |
 | READY | ⚪ | Idle and waiting for the next prompt |
 | ACTIVE | 🟡 | Recent user activity detected |
 | ERROR | ❌ | Error or undefined session state |
@@ -99,7 +103,7 @@ filter individual events and keep cached file aggregates whose latest event is
 in the window, matching the dashboard's aggregate lookback behavior.
 
 `--attention` checks session status without collecting system or token metrics.
-It prints the names of sessions in `ASKING` and exits 1 when there are any;
+It prints the names and decision reasons of sessions in `ASKING` and exits 1 when there are any;
 otherwise it reports that no sessions need a human and exits 0. With `--once`,
 the snapshot is still emitted and the command exits 1 if any session is asking.
 
@@ -216,6 +220,45 @@ data.
 
 ---
 
+## Explicit task state
+
+An idle harness turn does not establish task completion or a need for approval.
+Agents or a task supervisor can publish these optional fields into the matching
+`~/.ccdash/sessions/<session-id>.json` record:
+
+```json
+{
+  "task_id": "application-bead-id",
+  "task_state": "waiting_external",
+  "task_summary": "Release checks are running",
+  "task_next_action": "Inspect the workflow result",
+  "task_decision": ""
+}
+```
+
+`task_state` accepts `working`, `waiting_external`, `needs_decision`, `complete`,
+`resumable`, and `paused`. A decision report puts the precise question and the
+recommended choice in `task_decision`. These fields are additive in hook records
+and `--once --json` snapshots; old records continue to show ordinary idle state.
+CCDash displays the state and routes only `needs_decision` or native permission
+and question events to `--attention` and webhook notifications. Explicit external
+waits, completion, pause, resumable work, and Claude idle notifications do not
+enter the human attention queue. Notifications include an optional `reason` and
+`task_id`; raw tool arguments and commands are never copied into a permission
+reason.
+
+Publish with an atomic rename while holding the shared advisory flock on
+`~/.ccdash/sessions/.session.lock`, preserving unrelated fields. Stop and repeated
+SessionStart events preserve reports. UserPromptSubmit and subsequent ordinary
+PreToolUse events clear old report text (except an unresolved decision) and set enrolled tasks to working while
+keeping `task_id` for continuity. PostToolUse preserves a report written by that
+tool, so a report followed by Stop remains visible. An enrolled task still marked
+working at Stop becomes resumable; this alone never authorizes continuation.
+Native requests override task metadata. A matching completed tool resolves a
+synchronous question or permission; asynchronous questions survive independent
+tools and Stop until actual user input. CCDash observes
+state; a separate supervisor owns authorization, continuation, and event wakeups.
+
 ## Configuration and notifications
 
 Create `~/.ccdash/config.yaml` to enable webhook notifications or set a cost
@@ -231,7 +274,7 @@ alerts:
 ```
 
 `notify.enabled` defaults to `false`. When enabled, ccdash sends a webhook when
-a hook-tracked session enters a waiting/asking state and remains there for 15
+a hook-tracked session needs a human decision or permission and remains there for 15
 seconds. Only the lease-holding dashboard instance sends it, once per waiting
 episode. Delivery failures do not stop the dashboard.
 

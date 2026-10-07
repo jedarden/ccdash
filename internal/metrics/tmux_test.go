@@ -4,7 +4,7 @@ import "testing"
 
 func TestSessionStatusesPutAskingFirst(t *testing.T) {
 	statuses := SessionStatuses()
-	want := []SessionStatus{StatusAsking, StatusWorking, StatusReady, StatusActive, StatusError}
+	want := []SessionStatus{StatusAsking, StatusWorking, StatusWaitingExternal, StatusResumable, StatusComplete, StatusPaused, StatusReady, StatusActive, StatusError}
 	if len(statuses) != len(want) {
 		t.Fatalf("SessionStatuses() has %d entries, want %d", len(statuses), len(want))
 	}

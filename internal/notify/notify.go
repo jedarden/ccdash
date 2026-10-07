@@ -34,6 +34,8 @@ type Payload struct {
 	// Timestamp is retained for source compatibility with the initial CLI
 	// diagnostic payload, but is intentionally omitted from webhook JSON.
 	Timestamp time.Time `json:"-"`
+	Reason    string    `json:"reason,omitempty"`
+	TaskID    string    `json:"task_id,omitempty"`
 }
 
 // SessionTransition describes a status change for callers that want to make
@@ -218,7 +220,10 @@ func (t *Tracker) Update(sessions []metrics.HookSession) []Payload {
 		}
 		seen[key] = struct{}{}
 
-		status := strings.ToLower(strings.TrimSpace(session.Status))
+		status := "active"
+		if session.EffectiveStatus() == metrics.StatusAsking {
+			status = "asking"
+		}
 		previous, hadPrevious := t.previous[key]
 		waiting := isWaitingStatus(status)
 
@@ -246,6 +251,7 @@ func (t *Tracker) Update(sessions []metrics.HookSession) []Payload {
 					SessionName:  sessionName(session),
 					ProjectDir:   session.ProjectDir,
 					IdleDuration: idleDuration,
+					Reason:       session.HumanAttentionReason(), TaskID: session.TaskID,
 				})
 				t.notified[key] = true
 			}
@@ -269,7 +275,7 @@ func (t *Tracker) Update(sessions []metrics.HookSession) []Payload {
 }
 
 func isWaitingStatus(status string) bool {
-	return status == "waiting" || status == "asking"
+	return status == "waiting" || status == "asking" || status == "needs_decision"
 }
 
 func sessionKey(session metrics.HookSession) string {

@@ -87,7 +87,7 @@ func TestCodexStatusHookErrorIsLoggedAndTempIsRemoved(t *testing.T) {
 		t.Fatalf("error log should identify the hook without recording its input: %s", logData)
 	}
 	for _, dir := range []string{sessionsDir, outsideTemp} {
-		matches, err := filepath.Glob(filepath.Join(dir, ".codex-session.????????"))
+		matches, err := filepath.Glob(filepath.Join(dir, ".session.????????"))
 		if err != nil || len(matches) != 0 {
 			t.Fatalf("temporary session files remain in %s: %v, %v", dir, matches, err)
 		}

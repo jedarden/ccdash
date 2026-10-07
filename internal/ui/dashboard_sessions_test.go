@@ -653,3 +653,27 @@ func TestWideLayoutKeepsTokenModelsBesideStats(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskRowsDistinguishOutcomesAndShowActualDecision(t *testing.T) {
+	d := &Dashboard{}
+	for _, tc := range []struct {
+		status metrics.SessionStatus
+		label  string
+	}{
+		{metrics.StatusWaitingExternal, "WAIT"}, {metrics.StatusComplete, "DONE"},
+		{metrics.StatusResumable, "RESUME"}, {metrics.StatusPaused, "PAUSE"},
+	} {
+		got := d.renderSessionCell(metrics.TmuxSession{Name: "project", Status: tc.status}, 100)
+		if !strings.Contains(got, tc.label) {
+			t.Fatalf("%s row missing %s: %s", tc.status, tc.label, got)
+		}
+	}
+	got := d.renderSessionCell(metrics.TmuxSession{Name: "project", Status: metrics.StatusAsking, AttentionReason: "Which region?"}, 100)
+	if !strings.Contains(got, "Which region?") {
+		t.Fatalf("question missing: %s", got)
+	}
+	got = d.renderSessionCell(metrics.TmuxSession{Name: "idle", Status: metrics.StatusReady, IdleDuration: time.Hour}, 100)
+	if strings.Contains(got, "⏰") {
+		t.Fatalf("idle session was promoted to attention: %s", got)
+	}
+}

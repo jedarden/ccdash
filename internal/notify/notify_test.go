@@ -347,3 +347,35 @@ func TestTrackerResetsAfterWaitingStateEnds(t *testing.T) {
 		t.Fatalf("re-escalated session produced %d notifications, want 1", len(got))
 	}
 }
+
+func TestOnlyGenuineTaskDecisionsNotify(t *testing.T) {
+	now := time.Now()
+	tracker := NewTracker(time.Second)
+	tracker.now = func() time.Time { return now }
+	for _, state := range []string{"waiting_external", "complete", "resumable", "paused", "working", ""} {
+		hs := metrics.HookSession{SessionID: "task", Status: "stopped", TaskState: state, LastActivity: now.Add(-time.Hour)}
+		if got := tracker.Update([]metrics.HookSession{hs}); len(got) != 0 {
+			t.Fatalf("%s notified: %+v", state, got)
+		}
+	}
+	hs := metrics.HookSession{SessionID: "task", Status: "stopped", TaskState: "needs_decision", TaskID: "bead-1", TaskDecision: "Which region?", LastActivity: now}
+	tracker.Update([]metrics.HookSession{hs})
+	now = now.Add(time.Second)
+	got := tracker.Update([]metrics.HookSession{hs})
+	if len(got) != 1 || got[0].Reason != "Which region?" || got[0].TaskID != "bead-1" {
+		t.Fatalf("decision missing: %+v", got)
+	}
+	if got := tracker.Update([]metrics.HookSession{hs}); len(got) != 0 {
+		t.Fatal("duplicate decision notification")
+	}
+	hs.TaskState = "complete"
+	tracker.Update([]metrics.HookSession{hs})
+	hs.Status = "waiting"
+	hs.AttentionReason = "Permission required: Bash"
+	tracker.Update([]metrics.HookSession{hs})
+	now = now.Add(time.Second)
+	got = tracker.Update([]metrics.HookSession{hs})
+	if len(got) != 1 || got[0].Reason != hs.AttentionReason {
+		t.Fatalf("native request hidden by completion: %+v", got)
+	}
+}

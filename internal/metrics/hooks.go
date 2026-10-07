@@ -36,7 +36,13 @@ type HookSession struct {
 	LastActivity    time.Time `json:"last_activity"`
 	LastStop        time.Time `json:"last_stop,omitempty"`
 	PID             int       `json:"pid,omitempty"`
-	Status          string    `json:"status"` // "active", "stopped", "working", "waiting"
+	Status          string    `json:"status"` // Harness lifecycle, independent of task completion.
+	TaskState       string    `json:"task_state,omitempty"`
+	TaskID          string    `json:"task_id,omitempty"`
+	TaskSummary     string    `json:"task_summary,omitempty"`
+	TaskNextAction  string    `json:"task_next_action,omitempty"`
+	TaskDecision    string    `json:"task_decision,omitempty"`
+	AttentionReason string    `json:"attention_reason,omitempty"`
 }
 
 // HookSessionCollector reads session data from hook-generated files
@@ -127,9 +133,9 @@ func (h *HookSessionCollector) CollectSessions() ([]HookSession, error) {
 		}
 
 		// Check if session is stale (no activity for StaleSessionThreshold).
-		// Skip "working" sessions — the Stop hook is authoritative for completion;
-		// long-running tasks should not be demoted to stale mid-execution.
-		if session.Status != "working" && now.Sub(session.LastActivity) > StaleSessionThreshold {
+		// Work and unresolved native requests stay authoritative across long
+		// tool execution or user absence; age does not resolve a human decision.
+		if session.Status != "working" && session.Status != "waiting" && session.Status != "asking" && now.Sub(session.LastActivity) > StaleSessionThreshold {
 			session.Status = "stale"
 		}
 
@@ -280,17 +286,7 @@ func (h *HookSessionCollector) getActiveTmuxSessions() map[string]bool {
 
 // ToTmuxSession converts a HookSession to TmuxSession for UI compatibility
 func (hs *HookSession) ToTmuxSession() TmuxSession {
-	status := StatusActive
-	switch hs.Status {
-	case "working":
-		status = StatusWorking
-	case "waiting", "asking":
-		status = StatusAsking
-	case "stopped", "ready", "stale":
-		// Stale sessions (idle > 5min) are just waiting for input, not errors.
-		// READY covers a completed turn or a session with no current request.
-		status = StatusReady
-	}
+	status := hs.EffectiveStatus()
 
 	// Use tmux session name if available, otherwise fall back to project dir basename
 	name := hs.TmuxSessionName
@@ -306,16 +302,71 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 	}
 
 	return TmuxSession{
-		Name:         name,
-		Windows:      1,
-		Attached:     hs.Status == "working" || hs.Status == "active",
-		Created:      hs.StartedAt,
-		Status:       status,
-		IdleDuration: time.Since(hs.LastActivity),
-		LastLines:    []string{fmt.Sprintf("Session: %s", truncateSessionID(hs.SessionID))},
-		Source:       "hooks", // Mark as hook-sourced
-		Harness:      source,
+		Name:            name,
+		Windows:         1,
+		Attached:        hs.Status == "working" || hs.Status == "active",
+		Created:         hs.StartedAt,
+		Status:          status,
+		IdleDuration:    time.Since(hs.LastActivity),
+		LastLines:       []string{fmt.Sprintf("Session: %s", truncateSessionID(hs.SessionID))},
+		Source:          "hooks", // Mark as hook-sourced
+		Harness:         source,
+		TaskState:       hs.TaskState,
+		TaskID:          hs.TaskID,
+		TaskSummary:     hs.TaskSummary,
+		TaskNextAction:  hs.TaskNextAction,
+		TaskDecision:    hs.TaskDecision,
+		AttentionReason: hs.HumanAttentionReason(),
 	}
+}
+
+// EffectiveStatus keeps explicit task outcomes separate from harness turn lifecycle.
+// A native permission or question always wins over task metadata.
+func (hs HookSession) EffectiveStatus() SessionStatus {
+	if hs.Status == "waiting" || hs.Status == "asking" {
+		return StatusAsking
+	}
+	switch hs.TaskState {
+	case "working":
+		return StatusWorking
+	case "waiting_external":
+		return StatusWaitingExternal
+	case "needs_decision":
+		return StatusAsking
+	case "complete":
+		return StatusComplete
+	case "resumable":
+		return StatusResumable
+	case "paused":
+		return StatusPaused
+	}
+	switch hs.Status {
+	case "working":
+		return StatusWorking
+	case "stopped", "ready", "stale":
+		return StatusReady
+	default:
+		return StatusActive
+	}
+}
+
+func (hs HookSession) HumanAttentionReason() string {
+	if hs.EffectiveStatus() != StatusAsking {
+		return ""
+	}
+	if hs.Status == "waiting" || hs.Status == "asking" {
+		if hs.AttentionReason != "" {
+			return hs.AttentionReason
+		}
+		return "Permission or user response required"
+	}
+	if hs.TaskDecision != "" {
+		return hs.TaskDecision
+	}
+	if hs.TaskSummary != "" {
+		return hs.TaskSummary
+	}
+	return "Task needs a human decision"
 }
 
 func truncateSessionID(sessionID string) string {
@@ -326,293 +377,7 @@ func truncateSessionID(sessionID string) string {
 }
 
 // HookScripts contains the shell scripts to be installed as Claude Code hooks
-var HookScripts = map[string]string{
-	"session-start.sh": `#!/usr/bin/env bash
-# Claude Code SessionStart hook - registers session with ccdash
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-# Read hook input from stdin
-INPUT=$(cat)
-
-# Extract session info
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-# Get tmux session name if running inside tmux
-TMUX_SESSION=""
-if [ -n "$TMUX" ]; then
-    TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
-fi
-
-# Find the actual Claude Code process PID by walking up the process tree
-# The hook runs as a child of Claude Code, so find the first "claude" process
-CLAUDE_PID=""
-CURRENT_PID=$PPID
-while [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "1" ]; do
-    PROC_NAME=$(ps -p "$CURRENT_PID" -o comm= 2>/dev/null || echo "")
-    if [ "$PROC_NAME" = "claude" ]; then
-        CLAUDE_PID="$CURRENT_PID"
-        break
-    fi
-    # Move up to parent
-    CURRENT_PID=$(ps -p "$CURRENT_PID" -o ppid= 2>/dev/null | tr -d ' ' || echo "")
-done
-
-# Fallback to PPID if we couldn't find claude process
-if [ -z "$CLAUDE_PID" ]; then
-    CLAUDE_PID=$PPID
-fi
-
-# Ensure directories exist
-mkdir -p "$SESSIONS_DIR"
-
-# Clean up old session files for the same tmux session if they exist
-# This handles the case where Claude Code restarted in the same tmux window
-if [ -n "$TMUX_SESSION" ]; then
-    for old_file in "$SESSIONS_DIR"/*.json; do
-        if [ -f "$old_file" ] && [ "$old_file" != "$SESSIONS_DIR/${SESSION_ID}.json" ]; then
-            OLD_TMUX=$(jq -r '.tmux_session_name // empty' "$old_file" 2>/dev/null || echo "")
-            if [ "$OLD_TMUX" = "$TMUX_SESSION" ]; then
-                rm -f "$old_file"
-            fi
-        fi
-    done
-fi
-
-# Write session file
-cat > "$SESSIONS_DIR/${SESSION_ID}.json" << EOF
-{
-  "session_id": "$SESSION_ID",
-  "source": "claude",
-  "project_dir": "$CWD",
-  "tmux_session_name": "$TMUX_SESSION",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "last_activity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "pid": $CLAUDE_PID,
-  "status": "active"
-}
-EOF
-
-exit 0
-`,
-
-	"session-end.sh": `#!/usr/bin/env bash
-# Claude Code SessionEnd hook - unregisters session from ccdash
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-# Read hook input from stdin
-INPUT=$(cat)
-
-# Extract session ID
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-# Remove session file
-rm -f "$SESSIONS_DIR/${SESSION_ID}.json"
-
-exit 0
-`,
-
-	"stop.sh": `#!/usr/bin/env bash
-# Claude Code Stop hook - marks session as stopped (waiting for input)
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-# Read hook input from stdin
-INPUT=$(cat)
-
-# Extract session info
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-# Update status to stopped (waiting for input)
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .last_stop = $now | .status = "stopped"' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-
-	"pre-tool-use.sh": `#!/usr/bin/env bash
-# Claude Code PreToolUse hook - refreshes last_activity during tool execution
-# Prevents long-running tasks from being marked stale mid-execution
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-
-	"post-tool-use.sh": `#!/usr/bin/env bash
-# Claude Code PostToolUse hook - marks session as working again
-# Fires after any tool finishes, including ones that were gated on a
-# permission prompt, AskUserQuestion, or ExitPlanMode approval — this is
-# the earliest signal we get that Claude has resumed after human input.
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .status = "working"' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-
-	"notification.sh": `#!/usr/bin/env bash
-# Claude Code Notification hook - marks session as waiting for human input
-# Fires when Claude needs permission or has been idle 60s awaiting a reply.
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .status = "waiting"' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-
-	"permission-request.sh": `#!/usr/bin/env bash
-# Claude Code PermissionRequest hook - marks session as waiting for human input
-# Fires when the user is shown a permission dialog (tool approval, plan
-# approval via ExitPlanMode, AskUserQuestion, etc.).
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       '.last_activity = $now | .status = "waiting"' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-
-	"prompt-submit.sh": `#!/usr/bin/env bash
-# Claude Code UserPromptSubmit hook - marks session as working
-set -e
-
-CCDASH_DIR="$HOME/.ccdash"
-SESSIONS_DIR="$CCDASH_DIR/sessions"
-
-# Read hook input from stdin
-INPUT=$(cat)
-
-# Extract session info
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
-
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.json"
-
-# Find the actual Claude Code process PID
-CLAUDE_PID=""
-CURRENT_PID=$PPID
-while [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "1" ]; do
-    PROC_NAME=$(ps -p "$CURRENT_PID" -o comm= 2>/dev/null || echo "")
-    if [ "$PROC_NAME" = "claude" ]; then
-        CLAUDE_PID="$CURRENT_PID"
-        break
-    fi
-    CURRENT_PID=$(ps -p "$CURRENT_PID" -o ppid= 2>/dev/null | tr -d ' ' || echo "")
-done
-if [ -z "$CLAUDE_PID" ]; then
-    CLAUDE_PID=$PPID
-fi
-
-# Update status to working and refresh PID
-if [ -f "$SESSION_FILE" ]; then
-    TMP_FILE=$(mktemp)
-    jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-       --argjson pid "$CLAUDE_PID" \
-       '.last_activity = $now | .status = "working" | .pid = $pid' \
-       "$SESSION_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$SESSION_FILE"
-fi
-
-exit 0
-`,
-}
+var HookScripts = makeSessionHookScripts("claude")
 
 // ClaudeHooksConfig represents the hooks section of Claude settings
 type ClaudeHooksConfig struct {

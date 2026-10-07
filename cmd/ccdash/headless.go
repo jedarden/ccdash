@@ -92,7 +92,11 @@ func attentionExitCode(sessions []metrics.TmuxSession) int {
 func printAttentionSessions(w io.Writer, sessions []metrics.TmuxSession) {
 	fmt.Fprintln(w, "Sessions asking for human input:")
 	for _, session := range sessions {
-		fmt.Fprintf(w, "  - %s\n", session.Name)
+		fmt.Fprintf(w, "  - %s", session.Name)
+		if session.AttentionReason != "" {
+			fmt.Fprintf(w, ": %s", strings.Join(strings.Fields(session.AttentionReason), " "))
+		}
+		fmt.Fprintln(w)
 	}
 }
 

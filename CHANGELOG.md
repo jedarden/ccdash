@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.37] - 2026-10-07
+
+### Added
+- Explicit task reports distinguish external waits, resumable work, completion, and pauses from idle turns. The attention command and debounced notifications show genuine decision reasons, and snapshots carry optional task continuity metadata.
+
+### Fixed
+- Claude idle notifications no longer request human attention. Native permission requests and questions remain visible through Stop and long idle periods and take precedence over task metadata and stale terminal output.
+- Claude and Codex hooks share atomic, locked session updates; new work clears stale reports while task identity survives, and reports written by tools survive Stop and compaction.
+
 ## [1.1.35] - 2026-10-07
 
 ### Fixed

@@ -67,10 +67,11 @@ func TestHookSessionCollectorMapsClaudeAndCodexEvents(t *testing.T) {
 			assertCollectedHookStatus(t, collector, StatusWorking, harness.name)
 
 			if harness.notification != "" {
-				runHarnessHook(t, harness.name, home, harness.notification, input)
+				runHarnessHook(t, harness.name, home, harness.notification, `{"session_id":"hook-state-test","notification_type":"permission_prompt"}`)
 				assertCollectedHookStatus(t, collector, StatusAsking, harness.name)
 			}
 
+			runHarnessHook(t, harness.name, home, harness.postTool, input)
 			runHarnessHook(t, harness.name, home, harness.stop, input)
 			assertCollectedHookStatus(t, collector, StatusReady, harness.name)
 
@@ -115,7 +116,7 @@ func TestHookSessionCollectorHandlesStaleAndMalformedFiles(t *testing.T) {
 	want := map[string]SessionStatus{
 		"old-working": StatusWorking,
 		"old-stopped": StatusReady,
-		"old-waiting": StatusReady,
+		"old-waiting": StatusAsking,
 	}
 	for id, status := range want {
 		if got[id] != status {
@@ -128,7 +129,7 @@ func TestHookSessionStateTakesPrecedenceOverTmuxInspection(t *testing.T) {
 	binDir := t.TempDir()
 	fakeTmux := "#!/bin/sh\ncase \"$1\" in\n" +
 		"  list-sessions) printf 'project:1:0:1780000000\\n' ;;\n" +
-		"  capture-pane) printf 'Claude Code\\n❯\\n' ;;\n" +
+		"  capture-pane) printf 'Claude Code\\nesc to interrupt\\n' ;;\n" +
 		"  *) exit 2 ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(fakeTmux), 0755); err != nil {
 		t.Fatal(err)
@@ -152,8 +153,8 @@ func TestHookSessionStateTakesPrecedenceOverTmuxInspection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect fake tmux session: %v", err)
 	}
-	if len(tmuxSessions) != 1 || tmuxSessions[0].Status != StatusActive {
-		t.Fatalf("fake tmux should report ACTIVE, got %+v", tmuxSessions)
+	if len(tmuxSessions) != 1 || tmuxSessions[0].Status != StatusWorking {
+		t.Fatalf("fake tmux should report WORKING, got %+v", tmuxSessions)
 	}
 
 	metrics := tmuxCollector.Collect()
@@ -162,6 +163,14 @@ func TestHookSessionStateTakesPrecedenceOverTmuxInspection(t *testing.T) {
 	}
 	if metrics.Sessions[0].Status != StatusAsking || metrics.Sessions[0].Harness != "codex" {
 		t.Fatalf("hook state was replaced by tmux inspection: got %+v, want Codex ASKING", metrics.Sessions[0])
+	}
+
+	for state, want := range map[string]SessionStatus{"complete": StatusComplete, "waiting_external": StatusWaitingExternal, "resumable": StatusResumable, "needs_decision": StatusAsking} {
+		writeHookSessionFixture(t, hookCollector, HookSession{SessionID: "asking-session", Source: "codex", ProjectDir: "/tmp/project", TmuxSessionName: "project", LastActivity: time.Now(), Status: "stopped", TaskState: state})
+		collected := tmuxCollector.Collect()
+		if len(collected.Sessions) != 1 || collected.Sessions[0].Status != want {
+			t.Fatalf("terminal content overrode %s: %+v", state, collected.Sessions)
+		}
 	}
 }
 
