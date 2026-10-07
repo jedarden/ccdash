@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-07
+
+### Added
+- **`--doctor` checks for `jq`**: installed hooks need `jq` to write session state; without it they fail silently, so the doctor now reports it as a problem.
+- **Reproducible demo screenshot**: `scripts/demo-env.sh` builds a synthetic environment (generated transcripts, hook records and agent sessions on a private tmux server) and `vhs docs/images/ccdash.tape` records the README screenshot from it.
+
+### Changed
+- **`make release` is now `make cross-build`**, without checksum files: releases are built and published by CI only.
+- **Documentation**: README quick start, accurate release badge and a real screenshot; `docs/architecture.md` covers the token cache, costs and headless modes; ADR-0006/0007 marked Accepted; historical research labelled; `docs/notes/release-pipeline.md` describes CI. The test suite now runs in CI before any release is tagged.
+
 ## [1.2.2] - 2026-10-07
 
 ### Fixed
