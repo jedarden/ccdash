@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jedarden/ccdash/internal/config"
 	"github.com/jedarden/ccdash/internal/metrics"
 )
 
@@ -683,5 +684,39 @@ func TestTaskRowsDistinguishOutcomesAndShowActualDecision(t *testing.T) {
 	got = d.renderSessionCell(metrics.TmuxSession{Name: "idle", Status: metrics.StatusReady, IdleDuration: time.Hour}, 100)
 	if strings.Contains(got, "⏰") {
 		t.Fatalf("idle session was promoted to attention: %s", got)
+	}
+}
+
+func TestTokenPanelShowsWeekProjectionAndBudget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	monday := time.Date(2026, 10, 5, 9, 0, 0, 0, time.Local)
+	now := monday.Add(52 * time.Hour) // Wednesday 13:00
+	panelNow = func() time.Time { return now }
+	t.Cleanup(func() { panelNow = time.Now })
+
+	d := &Dashboard{
+		width:  214,
+		height: 30,
+		tokenMetrics: &metrics.TokenMetrics{
+			Available: true, TotalTokens: 1000, Prompts: 5, TotalCost: 200,
+			LookbackFrom: monday,
+			ModelUsages:  []metrics.ModelUsage{{Model: "claude-opus-5-5", TotalTokens: 1000, Cost: 200}},
+		},
+		notifyConfig: &config.Config{Alerts: config.AlertsConfig{CostThresholdUSD: 400}},
+	}
+	panel := d.renderTokenPanel(70, 20)
+	for _, want := range []string{"Proj:", "/wk", "Budget", "50%"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("token panel is missing %q:\n%s", want, panel)
+		}
+	}
+
+	d.tokenMetrics.LookbackFrom = now.Add(-24 * time.Hour) // "last 24h": no week to project
+	d.notifyConfig = nil
+	panel = d.renderTokenPanel(70, 20)
+	for _, unwanted := range []string{"Proj:", "Budget"} {
+		if strings.Contains(panel, unwanted) {
+			t.Errorf("token panel shows %q without a week window or budget:\n%s", unwanted, panel)
+		}
 	}
 }

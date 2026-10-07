@@ -121,7 +121,7 @@ func TestSnapshotJSONMatchesVersionOneGolden(t *testing.T) {
 		HooksAvailable: true, HooksInstalled: true, Source: "hooks",
 	}
 
-	got, err := json.MarshalIndent(makeSnapshot(timestamp, "test", system, tokens, sessions), "", "  ")
+	got, err := json.MarshalIndent(makeSnapshot(timestamp, "test", system, tokens, sessions, 0), "", "  ")
 	if err != nil {
 		t.Fatalf("marshal snapshot: %v", err)
 	}

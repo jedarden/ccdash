@@ -25,6 +25,9 @@ const (
 	LayoutUltraWide                   // >=140 cols: three panels side by side
 )
 
+// panelNow is the clock for time-dependent panel content; tests replace it.
+var panelNow = time.Now
+
 // tickMsg is sent every 2 seconds to trigger refresh
 type tickMsg time.Time
 
@@ -1312,6 +1315,20 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	}
 	costLine := fmt.Sprintf("Cost:  %s", costDisplay)
 	leftLines = append(leftLines, costLine)
+	// headline rows are kept first when the panel is too short for every
+	// stat: cost, then the week projection and budget that qualify it.
+	headline := []string{costLine}
+	if proj, ok := metrics.ProjectWeekCost(d.tokenMetrics.LookbackFrom, panelNow(), d.tokenMetrics.TotalCost); ok {
+		projLine := fmt.Sprintf("Proj:  %s", dimStyle.Render(metrics.FormatCost(proj.Cost)+"/wk"))
+		leftLines = append(leftLines, projLine)
+		headline = append(headline, projLine)
+	}
+	if d.notifyConfig != nil && d.notifyConfig.Alerts.CostThresholdUSD > 0 {
+		used := d.tokenMetrics.TotalCost / d.notifyConfig.Alerts.CostThresholdUSD * 100
+		budgetLine := "Budget " + d.renderMiniBar(used, 14)
+		leftLines = append(leftLines, budgetLine)
+		headline = append(headline, budgetLine)
+	}
 	// Trend sparkline is rendered as its own full-width row below both columns
 	// (see below) rather than appended here, so it can't overflow the fixed
 	// left column and wrap the Models column beside it.
@@ -1336,9 +1353,13 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	// every stat (one row goes to the header), lead with them so trimming drops
 	// the breakdown rows instead.
 	if 1+len(leftLines) > height {
-		prioritized := []string{costLine, totalLine}
+		prioritized := append(append([]string{}, headline...), totalLine)
+		keep := make(map[string]bool, len(prioritized))
+		for _, line := range prioritized {
+			keep[line] = true
+		}
 		for _, line := range leftLines {
-			if line != costLine && line != totalLine {
+			if !keep[line] {
 				prioritized = append(prioritized, line)
 			}
 		}

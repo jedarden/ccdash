@@ -14,7 +14,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## What it shows
 
-**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects`, Codex rollout logs in `~/.codex/sessions/YYYY/MM/DD`, and OpenCode's session store at `~/.local/share/opencode/opencode.db` (read-only; override with `OPENCODE_DB`). OpenCode models appear as `<provider>/<model>`, for example NEEDLE's `opencode/space-bunny-free` workers; free Zen models (`-free`) are priced at zero. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown, color-coded and sorted by spend.
+**Token panel** — aggregates usage from Claude Code's JSONL logs in `~/.claude/projects`, Codex rollout logs in `~/.codex/sessions/YYYY/MM/DD`, and OpenCode's session store at `~/.local/share/opencode/opencode.db` (read-only; override with `OPENCODE_DB`). OpenCode models appear as `<provider>/<model>`, for example NEEDLE's `opencode/space-bunny-free` workers; free Zen models (`-free`) are priced at zero. Displays input, output, and cache tokens; total cost; tokens/min rate; and a per-model cost breakdown, color-coded and sorted by spend. In the default Monday-9am window, once a full day has passed, a `Proj:` line extrapolates the week's spend linearly (cost so far x 7 days / time elapsed). When `alerts.cost_threshold_usd` is set, a `Budget` bar shows spend as a share of it.
 
 **Session panel** — shows active Claude Code and Codex agent sessions and their current state. Hook-tracked sessions carry a Claude 🤖 or Codex 💻 badge:
 
@@ -128,7 +128,9 @@ and `system.net_io` byte-per-second fields, each interface's byte-per-second
 fields, and `tokens.rate`. A `null` value means no current rate sample is
 available; it is distinct from a measured rate of zero. `tokens.session_avg_rate`
 is an aggregate over the token session and remains numeric. `tokens.time_span`
-is encoded as a duration in nanoseconds. `sessions.running_processes` counts
+is encoded as a duration in nanoseconds. `tokens.projected_week_cost`,
+`tokens.budget_usd` and `tokens.budget_used_percent` carry the same projection
+and budget as the token panel, and are `null` when they do not apply. `sessions.running_processes` counts
 every process named `claude` on the host (subagents and sessions outside tmux
 included, Codex and OpenCode excluded), so it is not comparable with
 `sessions.total`.

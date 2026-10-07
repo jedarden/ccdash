@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jedarden/ccdash/internal/config"
 	"github.com/jedarden/ccdash/internal/metrics"
 	"github.com/jedarden/ccdash/internal/ui"
 	"golang.org/x/term"
@@ -361,25 +362,32 @@ type snapshotNetIOMetrics struct {
 }
 
 type snapshotTokenMetrics struct {
-	InputTokens         int64                `json:"input_tokens"`
-	OutputTokens        int64                `json:"output_tokens"`
-	CacheReadTokens     int64                `json:"cache_read_tokens"`
-	CacheCreationTokens int64                `json:"cache_creation_tokens"`
-	TotalTokens         int64                `json:"total_tokens"`
-	Prompts             int64                `json:"prompts"`
-	TotalCost           float64              `json:"total_cost"`
-	Rate                *float64             `json:"rate"`
-	SessionAvgRate      float64              `json:"session_avg_rate"`
-	TimeSpan            time.Duration        `json:"time_span"`
-	EarliestTimestamp   time.Time            `json:"earliest_timestamp"`
-	LatestTimestamp     time.Time            `json:"latest_timestamp"`
-	LookbackFrom        time.Time            `json:"lookback_from"`
-	Models              []string             `json:"models"`
-	ModelUsages         []snapshotModelUsage `json:"model_usages"`
-	RateHistory         []int64              `json:"rate_history"`
-	Available           bool                 `json:"available"`
-	Error               string               `json:"error,omitempty"`
-	LastUpdate          time.Time            `json:"last_update"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	Prompts             int64   `json:"prompts"`
+	TotalCost           float64 `json:"total_cost"`
+	// ProjectedWeekCost extrapolates total_cost to the end of a Monday-09:00
+	// window (null for other windows or before a day has passed);
+	// BudgetUSD / BudgetUsedPercent come from alerts.cost_threshold_usd
+	// (null when unset).
+	ProjectedWeekCost *float64             `json:"projected_week_cost"`
+	BudgetUSD         *float64             `json:"budget_usd"`
+	BudgetUsedPercent *float64             `json:"budget_used_percent"`
+	Rate              *float64             `json:"rate"`
+	SessionAvgRate    float64              `json:"session_avg_rate"`
+	TimeSpan          time.Duration        `json:"time_span"`
+	EarliestTimestamp time.Time            `json:"earliest_timestamp"`
+	LatestTimestamp   time.Time            `json:"latest_timestamp"`
+	LookbackFrom      time.Time            `json:"lookback_from"`
+	Models            []string             `json:"models"`
+	ModelUsages       []snapshotModelUsage `json:"model_usages"`
+	RateHistory       []int64              `json:"rate_history"`
+	Available         bool                 `json:"available"`
+	Error             string               `json:"error,omitempty"`
+	LastUpdate        time.Time            `json:"last_update"`
 }
 
 type snapshotModelUsage struct {
@@ -434,7 +442,7 @@ type snapshotWorkerMetadata struct {
 	BeadsCompleted      uint64 `json:"beads_completed,omitempty"`
 }
 
-func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetrics, tokens *metrics.TokenMetrics, sessions *metrics.TmuxMetrics) Snapshot {
+func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetrics, tokens *metrics.TokenMetrics, sessions *metrics.TmuxMetrics, budget float64) Snapshot {
 	result := Snapshot{
 		SchemaVersion: snapshotSchemaVersion,
 		Timestamp:     timestamp,
@@ -480,6 +488,13 @@ func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetr
 			LookbackFrom: tokens.LookbackFrom, Models: tokens.Models,
 			RateHistory: tokens.RateHistory, Available: tokens.Available, Error: tokens.Error,
 			LastUpdate: tokens.LastUpdate,
+		}
+		if proj, ok := metrics.ProjectWeekCost(tokens.LookbackFrom, timestamp, tokens.TotalCost); ok {
+			result.Tokens.ProjectedWeekCost = &proj.Cost
+		}
+		if budget > 0 {
+			used := tokens.TotalCost / budget * 100
+			result.Tokens.BudgetUSD, result.Tokens.BudgetUsedPercent = &budget, &used
 		}
 		result.Tokens.ModelUsages = make([]snapshotModelUsage, len(tokens.ModelUsages))
 		for i, usage := range tokens.ModelUsages {
@@ -537,6 +552,16 @@ func errorString(err error) *string {
 // runOnceMode runs a single collection cycle and outputs the result
 func runOnceMode(asJSON bool, extraDirs string) int {
 	return runOnceModeWithOptions(asJSON, extraDirs, time.Time{}, false)
+}
+
+// onceBudget is alerts.cost_threshold_usd for the snapshot's budget fields;
+// 0 (no budget) when unset or when the config cannot be read.
+func onceBudget() float64 {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return 0
+	}
+	return cfg.Alerts.CostThresholdUSD
 }
 
 // onceSessionSampleGap matches the dashboard's refresh interval, so a
@@ -607,7 +632,7 @@ func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, atte
 	if asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(makeSnapshot(snapshot.Timestamp, version, snapshot.System, snapshot.Tokens, snapshot.Sessions)); err != nil {
+		if err := encoder.Encode(makeSnapshot(snapshot.Timestamp, version, snapshot.System, snapshot.Tokens, snapshot.Sessions, onceBudget())); err != nil {
 			fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 			return 1
 		}
