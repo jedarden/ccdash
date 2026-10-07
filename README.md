@@ -81,6 +81,8 @@ ccdash
 | `--since=<window>` | Set the token lookback for `--once` or `--export`: `monday`, `today`, `24h`, `7d`, or an RFC3339 timestamp. |
 | `--attention` | List ASKING sessions and exit with status 1 if any need a human. Runs a session-only check by itself; also works with `--once`. |
 | `--export=<format>` | Write cached token data to standard output. Formats: `csv`, `json`, or `json-aggregated` (legacy summary). |
+| `--watch` | With `--json`, write one snapshot per `--interval` as a JSON line until interrupted. Same schema as `--once --json`, but disk/network I/O and `tokens.rate` are measured instead of `null`. |
+| `--interval=<duration>` | Time between `--watch` snapshots. Default `2s`, minimum `1s`. |
 | `--doctor` | Check token sources, the cache, the dashboard lease, config, notifications, hooks and tmux; prints OK/WARN/FAIL per check and exits 1 on a problem. Add `--json` for a machine-readable report. |
 | `--test-notify` | Send a test payload to the configured notification webhook and report whether it succeeded. |
 | `--extra-dirs=<paths>` | Also scan comma-separated Claude project roots. Paths may include glob patterns. `CCDASH_EXTRA_DIRS` provides the same setting with colon-separated paths. |
@@ -94,6 +96,7 @@ ccdash --export=csv
 ccdash --export=json --since=2026-10-01T09:00:00-04:00
 ccdash --attention
 ccdash --doctor
+ccdash --watch --json --interval=10s | jq -c '{t: .timestamp, cost: .tokens.total_cost}'
 ```
 
 `--since=monday` uses the same Monday at 9:00 AM local-time boundary as the

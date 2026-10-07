@@ -39,6 +39,8 @@ func main() {
 		sinceValue        = flag.String("since", "", "Limit token data to monday, today, 24h, 7d, or an RFC3339 timestamp (use with --once or --export)")
 		attention         = flag.Bool("attention", false, "List ASKING sessions and exit 1 if any need a human (works alone or with --once)")
 		doctor            = flag.Bool("doctor", false, "Check data sources, cache, config and hooks; exit 1 on a problem (add --json for JSON)")
+		watch             = flag.Bool("watch", false, "Stream a --once snapshot as one JSON line per --interval until interrupted (requires --json)")
+		watchInterval     = flag.Duration("interval", 2*time.Second, "Time between --watch snapshots (minimum 1s)")
 	)
 
 	flag.Parse()
@@ -68,8 +70,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(2)
 		}
-		if !*runOnce && *exportFormat == "" {
-			fmt.Fprintln(os.Stderr, "Error: --since requires --once or --export")
+		if !*runOnce && !*watch && *exportFormat == "" {
+			fmt.Fprintln(os.Stderr, "Error: --since requires --once, --watch or --export")
 			os.Exit(2)
 		}
 	}
@@ -216,6 +218,23 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+
+	if *watch {
+		switch {
+		case !*jsonOutput:
+			fmt.Fprintln(os.Stderr, "Error: --watch requires --json")
+			os.Exit(2)
+		case *runOnce || *exportFormat != "" || *attention:
+			fmt.Fprintln(os.Stderr, "Error: --watch cannot be combined with --once, --export or --attention")
+			os.Exit(2)
+		case *watchInterval < time.Second:
+			fmt.Fprintln(os.Stderr, "Error: --interval must be at least 1s")
+			os.Exit(2)
+		}
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		os.Exit(runWatch(*extraDirs, since, *watchInterval, os.Stdout, stop))
 	}
 
 	// Handle --once (single collection cycle, no TUI)
@@ -569,8 +588,8 @@ func onceBudget() float64 {
 // content changed between two samples.
 const onceSessionSampleGap = 2 * time.Second
 
-func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, attention bool) int {
-	// Create collectors
+// newHeadlessCollectors builds the collectors --once and --watch share.
+func newHeadlessCollectors(extraDirs string, since time.Time) (*metrics.SystemCollector, *metrics.TokenCollector, *metrics.TmuxCollector) {
 	systemCollector := metrics.NewSystemCollector()
 	tokenCollector := metrics.NewTokenCollector()
 	if !since.IsZero() {
@@ -593,6 +612,11 @@ func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, atte
 			}
 		}
 	}
+	return systemCollector, tokenCollector, tmuxCollector
+}
+
+func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, attention bool) int {
+	systemCollector, tokenCollector, tmuxCollector := newHeadlessCollectors(extraDirs, since)
 
 	// Session status compares each pane with an earlier sample, so take a
 	// baseline now and the real sample after the slower collectors below,
@@ -1015,6 +1039,8 @@ func printHelp() {
 	fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
 	fmt.Println("  --test-notify         Test notification webhook configuration")
 	fmt.Println("  --doctor              Check data sources, cache, config and hooks; exit 1 on a problem")
+	fmt.Println("  --watch               Stream snapshots as JSON lines until interrupted (with --json)")
+	fmt.Println("  --interval=<dur>      Time between --watch snapshots (default 2s, minimum 1s)")
 	fmt.Println("  --once                Run a single collection cycle and exit (no TUI)")
 	fmt.Println("  --json                Output metrics as JSON (use with --once)")
 	fmt.Println("  --since=<window>      Token window: monday, today, 24h, 7d, or an RFC3339 timestamp; use with --once or --export")
@@ -1074,6 +1100,7 @@ func printHelp() {
 	fmt.Println("  ccdash --once --json --since=7d           JSON snapshot using the last seven days")
 	fmt.Println("  ccdash --attention                        List sessions waiting for a human")
 	fmt.Println("  ccdash --doctor                           Diagnose missing data, hooks or config")
+	fmt.Println("  ccdash --watch --json --interval=10s      Stream a snapshot every 10 seconds")
 	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
 	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
 	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")
