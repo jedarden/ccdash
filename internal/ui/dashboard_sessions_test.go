@@ -720,3 +720,25 @@ func TestTokenPanelShowsWeekProjectionAndBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionCellShowsAttributedCostOnly(t *testing.T) {
+	d := &Dashboard{}
+	cost := 12.34
+	withCost := d.renderSessionCell(metrics.TmuxSession{
+		Name: "ccdash", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusWorking,
+		Source: "hooks", SessionID: "0c5f0e3a-1111-2222-3333-444455556666", Cost: &cost,
+	}, 40)
+	if !strings.Contains(withCost, "$12.34") {
+		t.Errorf("cell should show the attributed cost: %q", withCost)
+	}
+	if got := lipgloss.Width(withCost); got > 40 {
+		t.Errorf("cell width = %d, want <= 40: %q", got, withCost)
+	}
+
+	without := d.renderSessionCell(metrics.TmuxSession{
+		Name: "build", SessionType: metrics.SessionTypeInteractive, Status: metrics.StatusReady, Source: "tmux",
+	}, 40)
+	if strings.Contains(without, "$") {
+		t.Errorf("a session without an attributable transcript should show no cost: %q", without)
+	}
+}

@@ -30,6 +30,7 @@ func runWatch(extraDirs string, since time.Time, interval time.Duration, out io.
 			tokens = nil
 		}
 		sessions := tmuxCollector.Collect()
+		metrics.AttachSessionCosts(tokenCollector, sessions)
 		return withMeasuredRates(makeSnapshot(now, version, system, tokens, sessions, budget), system, tokens)
 	})
 }

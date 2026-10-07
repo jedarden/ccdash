@@ -30,6 +30,8 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 | ACTIVE | 🟡 | Recent user activity detected |
 | ERROR | ❌ | Error or undefined session state |
 
+Hook-tracked sessions also show their own spend in the token window (for example `$12.34`), worked out from the transcript named after the session ID (`<session-id>.jsonl` for Claude Code, `rollout-…-<session-id>.jsonl` for Codex). Sessions without an identifiable transcript, such as tmux-only rows and NEEDLE registry workers, show no cost rather than an estimate. `--once --json` carries the same figure as `sessions.sessions[].cost`, with `session_id`.
+
 Session tracking has two modes: tmux pane inspection (automatic) and hook-based tracking (more accurate). Install Claude hooks with `ccdash --install-hooks` or Codex hooks with `ccdash --install-codex-hooks`.
 
 **System panel** — CPU, memory, swap, disk, network I/O, and load average via [gopsutil](https://github.com/shirou/gopsutil).

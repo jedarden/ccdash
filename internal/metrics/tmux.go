@@ -146,6 +146,12 @@ type TmuxSession struct {
 	TaskDecision    string `json:"task_decision,omitempty"`
 	AttentionReason string `json:"attention_reason,omitempty"`
 
+	// SessionID is the harness session ID for hook-tracked sessions; Cost is
+	// that session's spend in the token lookback window, set only when its
+	// transcript is in the token cache (see TokenCollector.SessionCosts).
+	SessionID string   `json:"session_id,omitempty"`
+	Cost      *float64 `json:"cost,omitempty"`
+
 	// agentUI records that the pane showed agent prompt or working markers.
 	agentUI bool
 }

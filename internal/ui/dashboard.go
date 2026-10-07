@@ -751,6 +751,7 @@ func (d *Dashboard) collectMetrics() tea.Cmd {
 			}
 		}
 
+		metrics.AttachSessionCosts(d.tokenCollector, tmux)
 		return metricsMsg{
 			system:                system,
 			tokens:                tokens,
@@ -2043,6 +2044,9 @@ func (d *Dashboard) renderSessionCell(session metrics.TmuxSession, width int) st
 	}
 	status := statusStyle.Render(statusText)
 	suffix := fmt.Sprintf(" %s %s %s", session.Status.GetEmoji(), status, idleStr)
+	if session.Cost != nil {
+		suffix += " " + costStyle.Render(metrics.FormatCost(*session.Cost))
+	}
 	if session.Attached {
 		suffix += " 📎"
 	}

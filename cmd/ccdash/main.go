@@ -446,6 +446,10 @@ type snapshotSession struct {
 	LastLines         []string                `json:"last_lines,omitempty"`
 	Source            string                  `json:"source,omitempty"`
 	Harness           string                  `json:"harness,omitempty"`
+	SessionID         string                  `json:"session_id,omitempty"`
+	// Cost is the session's spend in the token window; absent when its
+	// transcript cannot be identified.
+	Cost *float64 `json:"cost,omitempty"`
 }
 
 type snapshotWorkerMetadata struct {
@@ -540,6 +544,7 @@ func makeSnapshot(timestamp time.Time, version string, system metrics.SystemMetr
 				Created: session.Created, LastContentChange: session.LastContentChange,
 				IdleDuration: session.IdleDuration, LastLines: session.LastLines,
 				Source: session.Source, Harness: session.Harness,
+				SessionID: session.SessionID, Cost: session.Cost,
 			}
 			if session.Worker != nil {
 				worker := session.Worker
@@ -648,6 +653,7 @@ func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, atte
 		time.Sleep(wait)
 	}
 	snapshot.Sessions = tmuxCollector.Collect()
+	metrics.AttachSessionCosts(tokenCollector, snapshot.Sessions)
 
 	// Stop background ingestion for token collector
 	tokenCollector.StopBackgroundIngestion()

@@ -317,6 +317,7 @@ func (hs *HookSession) ToTmuxSession() TmuxSession {
 		TaskNextAction:  hs.TaskNextAction,
 		TaskDecision:    hs.TaskDecision,
 		AttentionReason: hs.HumanAttentionReason(),
+		SessionID:       hs.SessionID,
 	}
 }
 
