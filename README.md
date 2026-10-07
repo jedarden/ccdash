@@ -1,14 +1,31 @@
 # ccdash
 
-[![iad-ci](https://img.shields.io/github/checks-status/jedarden/ccdash/main?label=iad-ci)](docs/notes/bf-2t2-ci-migration.md)
+[![release](https://img.shields.io/github/v/release/jedarden/ccdash)](https://github.com/jedarden/ccdash/releases)
 
-A lightweight terminal dashboard for Claude Code and Codex CLI — shows token usage, cost, agent session status, and system resources in real time.
+A lightweight terminal dashboard for Claude Code, Codex CLI and OpenCode — shows token usage, cost, agent session status, and system resources in real time.
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-![ccdash dashboard](docs/images/ccdash.gif)
+![ccdash dashboard: system resources, token usage by model with a weekly projection, and agent sessions with one waiting for a human](docs/images/ccdash.png)
 
-*Recorded with an isolated home directory and no sample session or token data.*
+*Synthetic demo data from [`scripts/demo-env.sh`](scripts/demo-env.sh); regenerate with `vhs docs/images/ccdash.tape`.*
+
+## Quick start
+
+```bash
+# 1. Install (or download a binary from the releases page)
+go install github.com/jedarden/ccdash/cmd/ccdash@latest
+
+# 2. Optional: hooks give exact WORKING/ASKING status and per-session cost
+ccdash --install-hooks          # Claude Code
+ccdash --install-codex-hooks    # Codex CLI
+
+# 3. Run it
+ccdash
+```
+
+If a panel is empty or a status looks wrong, run `ccdash --doctor`: it checks
+each data source, the cache, your config and the hooks, and says what to fix.
 
 ---
 
@@ -350,8 +367,12 @@ Run the checks and formatting tools with:
 make test        # Run the Go test suite
 make fmt         # Format Go source
 make vet         # Run go vet ./...
+make cross-build # Cross-compile linux/darwin x amd64/arm64 into bin/ (local testing)
 go mod download  # Download dependencies
 ```
+
+Releases are built and published by CI, not locally; see
+[`docs/notes/release-pipeline.md`](docs/notes/release-pipeline.md).
 
 The entry point and CLI are in `cmd/ccdash`; `internal/metrics` collects
 system, token, tmux, and hook data; `internal/notify` sends optional webhooks;
@@ -363,7 +384,8 @@ local build artifacts.
 ## Requirements
 
 - Go 1.24.0 or newer for installation from source.
-- Claude Code and/or Codex CLI data for token usage and hook tracking.
+- Claude Code, Codex CLI and/or OpenCode data for token usage.
+- `jq`, if you install hooks: the hook scripts use it to write session state.
 - tmux (optional, for pane-based session tracking).
 
 ---

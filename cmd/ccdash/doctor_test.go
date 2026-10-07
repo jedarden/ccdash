@@ -104,6 +104,25 @@ func TestDoctorWarnsOnMissingHooksAndTmux(t *testing.T) {
 	}
 }
 
+func TestDoctorFailsWhenHooksAreInstalledWithoutJq(t *testing.T) {
+	env := doctorTestEnv(t)
+	env.LookPath = func(name string) (string, error) {
+		if name == "jq" {
+			return "", os.ErrNotExist
+		}
+		return "/usr/bin/" + name, nil
+	}
+	if c, ok := findCheck(buildDoctorReport(env), "jq"); !ok || c.Status != doctorFail {
+		t.Fatalf("jq check = %+v, want fail when hooks are installed", c)
+	}
+
+	env.ClaudeHooks = func() bool { return false }
+	env.CodexHooks = func() bool { return false }
+	if c, ok := findCheck(buildDoctorReport(env), "jq"); ok {
+		t.Fatalf("jq check = %+v, want none without hooks", c)
+	}
+}
+
 func TestFormatCount(t *testing.T) {
 	for n, want := range map[int]string{0: "0", 999: "999", 1000: "1,000", 35550: "35,550", 1234567: "1,234,567"} {
 		if got := formatCount(n); got != want {

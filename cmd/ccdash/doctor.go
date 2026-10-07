@@ -215,6 +215,12 @@ func checkDoctorCache(r *doctorReport, env doctorEnv) {
 }
 
 func checkDoctorHooks(r *doctorReport, env doctorEnv) {
+	installed := (env.ClaudeHooks != nil && env.ClaudeHooks()) || (env.CodexHooks != nil && env.CodexHooks())
+	if installed {
+		if _, err := env.LookPath("jq"); err != nil {
+			r.add("jq", doctorFail, "hooks are installed but jq is not on PATH - the hook scripts need it, so session state is not being written")
+		}
+	}
 	if env.ClaudeHooks != nil {
 		if env.ClaudeHooks() {
 			r.add("claude hooks", doctorOK, "installed")
