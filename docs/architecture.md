@@ -117,6 +117,15 @@ The CLI reuses the collectors without Bubble Tea (`cmd/ccdash`):
 golden-tested in `cmd/ccdash/testdata`). Fields are only ever added within a
 version.
 
+## UI code map
+
+`internal/ui`: `dashboard.go` holds the model, `Update`, `View` and metrics
+collection; `layout.go` allocates width and height and draws the compact and
+wide layouts; `panel_system.go`, `panel_tokens.go` and `panel_sessions.go`
+render the three panels; `keys.go` holds key bindings and handlers;
+`overlays.go` (lookback picker, help), `worker_detail.go` and `statusbar.go`
+render the rest; `text.go` and `styles.go` are shared helpers.
+
 ## Render loop
 
 `Dashboard.Init` starts an immediate collection and a two-second Bubble Tea

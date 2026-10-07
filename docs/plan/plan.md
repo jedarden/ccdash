@@ -40,7 +40,10 @@ ccdash/
 │   ├── config/          # ~/.ccdash/config.yaml
 │   ├── notify/          # Webhook notifications (ADR-0006)
 │   ├── ui/              # Bubble Tea UI components
-│   │   ├── dashboard.go # Main TUI model and layout logic
+│   │   ├── dashboard.go # Model, Update/View, metrics collection
+│   │   ├── layout.go    # Width/height allocation, compact and wide layouts
+│   │   ├── panel_*.go   # System, token and sessions panels
+│   │   ├── keys.go, overlays.go, worker_detail.go, statusbar.go, text.go
 │   │   └── styles.go    # Terminal styling
 │   └── updater/         # Self-update functionality
 │       └── updater.go   # GitHub releases integration
@@ -285,7 +288,13 @@ holds 1,447 events that overlap completed-file summaries (822 duplicates,
 625 after a summary), so `QueryTokensHybrid` double-counts them; <0.02% of the
 current week, 110M tokens all-time.
 
-Still a candidate, not admitted: splitting `internal/ui/dashboard.go` by panel.
+Third pass (2026-10-07, all admitted): CI runs the test suite before tagging
+(ccdash-a10cd0f0); the token cache no longer counts usage twice or loses it,
+with a schema-5 repair (ccdash-47ce158f, v1.2.2); README, docs and agent
+instructions brought up to date with a reproducible synthetic screenshot
+(ccdash-54e2b5ca, ccdash-4c1219b9, ccdash-0b035975); `make cross-build`
+replaces `make release` (ccdash-5aecf3d5); `internal/ui/dashboard.go` split
+by concern (ccdash-fd20fb77).
 
 ## Key Design Decisions
 

@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/jedarden/ccdash/internal/metrics"
 )
