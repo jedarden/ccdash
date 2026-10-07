@@ -1,10 +1,5 @@
-# CCDash Release Instructions
+# ccdash
 
-Follow [AGENTS.md](AGENTS.md) and the workspace guide at
-`/home/coding/AGENTS.md` for repository work.
-
-For every release, use the version explicitly requested or bump the patch
-version from the latest tag. Update `VERSION` and `CHANGELOG.md`, commit and
-push `main` to Forgejo `origin`, then follow the Argo CI/CD workflow through
-tagging, build, and published release assets. Do not stop at the local commit
-or tag.
+Follow [AGENTS.md](AGENTS.md); it is the single source of instructions for
+agents working in this repository, and the workspace guide at
+`/home/coding/AGENTS.md` also applies.
