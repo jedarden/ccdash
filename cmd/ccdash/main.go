@@ -37,6 +37,7 @@ func main() {
 		jsonOutput        = flag.Bool("json", false, "Output metrics as JSON (use with --once)")
 		sinceValue        = flag.String("since", "", "Limit token data to monday, today, 24h, 7d, or an RFC3339 timestamp (use with --once or --export)")
 		attention         = flag.Bool("attention", false, "List ASKING sessions and exit 1 if any need a human (works alone or with --once)")
+		doctor            = flag.Bool("doctor", false, "Check data sources, cache, config and hooks; exit 1 on a problem (add --json for JSON)")
 	)
 
 	flag.Parse()
@@ -52,6 +53,10 @@ func main() {
 	if *showHelp {
 		printHelp()
 		os.Exit(0)
+	}
+
+	if *doctor {
+		os.Exit(runDoctor(*jsonOutput, *extraDirs))
 	}
 
 	since := time.Time{}
@@ -984,6 +989,7 @@ func printHelp() {
 	fmt.Println("  --check-hooks         Check Claude Code and Codex hooks")
 	fmt.Println("  --uninstall-hooks     Remove ccdash hooks from both harnesses")
 	fmt.Println("  --test-notify         Test notification webhook configuration")
+	fmt.Println("  --doctor              Check data sources, cache, config and hooks; exit 1 on a problem")
 	fmt.Println("  --once                Run a single collection cycle and exit (no TUI)")
 	fmt.Println("  --json                Output metrics as JSON (use with --once)")
 	fmt.Println("  --since=<window>      Token window: monday, today, 24h, 7d, or an RFC3339 timestamp; use with --once or --export")
@@ -1042,6 +1048,7 @@ func printHelp() {
 	fmt.Println("  ccdash --once --json                      Single collection cycle (JSON output)")
 	fmt.Println("  ccdash --once --json --since=7d           JSON snapshot using the last seven days")
 	fmt.Println("  ccdash --attention                        List sessions waiting for a human")
+	fmt.Println("  ccdash --doctor                           Diagnose missing data, hooks or config")
 	fmt.Println("  ccdash --extra-dirs=/alt/path             Scan additional project directory")
 	fmt.Println("  ccdash --extra-dirs=/path1,/path2         Scan multiple extra directories")
 	fmt.Println("  CCDASH_EXTRA_DIRS=/path1:/path2 ccdash    Use env var for extra directories")

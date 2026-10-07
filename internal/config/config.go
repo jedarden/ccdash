@@ -81,8 +81,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	configPath := filepath.Join(homeDir, ".ccdash", "config.yaml")
+	return LoadFrom(filepath.Join(homeDir, ".ccdash", "config.yaml"))
+}
 
+// LoadFrom reads the configuration at configPath. A missing file yields the
+// defaults.
+func LoadFrom(configPath string) (*Config, error) {
 	// Default configuration if file doesn't exist
 	defaults := &Config{
 		Notify: NotifyConfig{

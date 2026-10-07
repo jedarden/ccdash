@@ -34,13 +34,19 @@ type OpenCodeSource struct {
 // NewOpenCodeSource returns a source for the default OpenCode store. OPENCODE_DB
 // overrides the path.
 func NewOpenCodeSource() *OpenCodeSource {
-	path := os.Getenv("OPENCODE_DB")
-	if path == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, ".local", "share", "opencode", "opencode.db")
-		}
+	return &OpenCodeSource{dbPath: OpenCodeDBPath()}
+}
+
+// OpenCodeDBPath is the OpenCode store ccdash reads: OPENCODE_DB, else
+// ~/.local/share/opencode/opencode.db.
+func OpenCodeDBPath() string {
+	if path := os.Getenv("OPENCODE_DB"); path != "" {
+		return path
 	}
-	return &OpenCodeSource{dbPath: path}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	}
+	return ""
 }
 
 // NewOpenCodeSourceWithDB returns a source for a specific store (for testing).
