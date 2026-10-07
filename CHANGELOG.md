@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.35] - 2026-10-07
+
+### Fixed
+- **Token models list pushed below the stats in short wide terminals**: at 214x18 a busy Sessions panel took the width the token panel needed for its two-column layout, so the models list stacked under the stats and most of it was cut off. When the terminal is too short to stack them, the token panel now keeps the width it needs for the side-by-side layout, and the Sessions panel gives way first by truncating names and re-flowing its columns. Tall terminals are unchanged.
+- **120-139 column terminals cramped the token panel**: three panels side by side left it 23-33 columns wide with its header wrapping. Terminals narrower than 140 columns now use the stacked layout. The README and `--help` described a two-over-one layout for 120-239 columns that the dashboard never used; they now describe the two layouts that exist.
+
 ## [1.1.34] - 2026-10-07
 
 ### Fixed

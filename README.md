@@ -156,9 +156,9 @@ Press `l` to change how far back the token panel looks:
 
 ccdash automatically adjusts to your terminal width:
 
-- **Narrow** (< 120 cols): panels stacked vertically
-- **Wide** (120–239 cols): two panels on top, one below
-- **Ultra-wide** (≥ 240 cols): three panels side by side
+- **Narrow** (< 140 cols): panels stacked vertically, sessions first
+- **Wide** (≥ 140 cols): three panels side by side; the token panel keeps its
+  models list beside the stats when the terminal is too short to stack them
 
 ---
 

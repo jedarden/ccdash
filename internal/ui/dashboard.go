@@ -596,7 +596,10 @@ func (d *Dashboard) View() string {
 
 // updateLayout determines the current layout mode based on terminal size
 func (d *Dashboard) updateLayout() {
-	if d.width < 120 {
+	// Below 140 columns three panels cannot fit side by side: the fixed
+	// 56-column system panel leaves the token panel too narrow for its own
+	// header (verified at 120-139 columns), so stack them instead.
+	if d.width < 140 {
 		// Compact stacked layout: tmux top, tokens middle, system bottom
 		d.layoutMode = LayoutCompact
 	} else {
@@ -855,7 +858,13 @@ func (d *Dashboard) renderUltraWide() string {
 	systemWidth := systemPanelMinContentWidth + tokenPanelBorderPadding
 
 	// Step 2: Calculate minimum and ideal widths for both panels
+	// A token panel narrower than tokenSideBySideMinWidth stacks the models
+	// below the stats. That is fine when the panel is tall enough to show
+	// them; only when it is not does the token panel claim the wider minimum.
 	minTokenWidth := 46
+	if usedInteriorRows(d.renderTokenPanel(minTokenWidth, 0)) > panelHeight {
+		minTokenWidth = tokenSideBySideMinWidth
+	}
 	minTmuxWidth := d.calculateTmuxPanelWidth(panelHeight)
 
 	// Ideal token width: side-by-side layout with comfortable model display,
@@ -902,14 +911,11 @@ func (d *Dashboard) renderUltraWide() string {
 			tmuxWidth = minTmuxWidth + remainingAfterMins - remainingAfterMins/2
 		}
 	} else if remainingAfterMins < 0 {
-		// Not enough space for both minimums - compress proportionally
-		deficit := -remainingAfterMins
-		totalMin := minTokenWidth + minTmuxWidth
-		// Reduce each panel proportionally to its minimum
-		tokenReduction := deficit * minTokenWidth / totalMin
-		tmuxReduction := deficit - tokenReduction
-		tokenWidth = minTokenWidth - tokenReduction
-		tmuxWidth = minTmuxWidth - tmuxReduction
+		// Not enough space for both minimums. The sessions panel gives way
+		// first: it truncates names and re-flows its columns, whereas a token
+		// panel below its side-by-side width drops the models list.
+		tmuxWidth = availableWidth - minTokenWidth
+		tokenWidth = minTokenWidth
 		// Enforce absolute minimums
 		if tokenWidth < 30 {
 			tokenWidth = 30
@@ -1247,7 +1253,12 @@ func (d *Dashboard) renderSystemPanel(width, height int) string {
 // place so the panel's sizing can't drift out of sync with what it renders,
 // which is what let model names silently start truncating.
 const (
-	tokenPanelBorderPadding = 4  // panelStyle border(2) + padding(2)
+	tokenPanelBorderPadding = 4 // panelStyle border(2) + padding(2)
+	// tokenSideBySideMinWidth is the narrowest token panel that keeps the
+	// models column beside the stats with 10-column model names. Narrower
+	// panels stack the models below the stats, where a short terminal cuts
+	// them off.
+	tokenSideBySideMinWidth = tokenLeftColWidth + tokenColSeparatorWidth + 10 + tokenRightColReserve + tokenPanelBorderPadding
 	tokenLeftColWidth       = 22 // fixed stats column ("Total:", "Cost:", ...)
 	tokenColSeparatorWidth  = 2  // "│ " between columns
 	tokenRightColReserve    = 22 // worst-case " $XXX.XX (XXX.XB)" cost+token suffix per model line
@@ -1386,7 +1397,7 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	// For narrow panels, stack vertically; for wider panels, use side-by-side
 	modelUsages := nonzeroModelUsages(d.tokenMetrics.ModelUsages)
 	modelCount := len(modelUsages)
-	useSideBySide := contentWidth >= 48 && modelCount > 0
+	useSideBySide := width >= tokenSideBySideMinWidth && modelCount > 0
 
 	// Calculate available width for model names based on layout
 	leftWidth := tokenLeftColWidth

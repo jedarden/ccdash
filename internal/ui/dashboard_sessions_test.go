@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -594,5 +595,61 @@ func TestUsedInteriorRowsIgnoresTrailingBlankRows(t *testing.T) {
 	panel := "╭────╮\n│ a  │\n│ b  │\n│    │\n│    │\n╰────╯"
 	if got := usedInteriorRows(panel); got != 2 {
 		t.Fatalf("usedInteriorRows = %d, want 2", got)
+	}
+}
+
+func TestWideLayoutKeepsTokenModelsBesideStats(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// 214x18 with a full fleet: the sessions panel wants three columns, and
+	// before the fix squeezed the token panel below its side-by-side width,
+	// stacking the models list under the stats where it was cut off.
+	var sessions []metrics.TmuxSession
+	for i := 0; i < 33; i++ {
+		sessions = append(sessions, metrics.TmuxSession{
+			Name: fmt.Sprintf("glm-front-worker-%02d", i), SessionType: metrics.SessionTypeWorker, Status: metrics.StatusReady,
+		})
+	}
+	d := &Dashboard{
+		width:  214,
+		height: 18,
+		tokenMetrics: &metrics.TokenMetrics{
+			Available: true, InputTokens: 267_700_000, OutputTokens: 33_500_000,
+			CacheReadTokens: 4_100_000_000, CacheCreationTokens: 19_300_000,
+			TotalTokens: 4_400_000_000, Prompts: 53669, TotalCost: 840.38, SessionAvgRate: 1_600_000,
+			ModelUsages: []metrics.ModelUsage{
+				{Model: "gpt-6-astra", TotalTokens: 158_500_000, Cost: 260.07},
+				{Model: "gpt-6-sol", TotalTokens: 638_200_000, Cost: 171.71},
+				{Model: "claude-opus-5-5", TotalTokens: 194_500_000, Cost: 90.83},
+				{Model: "gpt-5.6-luna", TotalTokens: 249_200_000, Cost: 48.29},
+				{Model: "claude-sonnet-5-5", TotalTokens: 27_400_000, Cost: 11.89},
+			},
+		},
+		tmuxMetrics: &metrics.TmuxMetrics{Available: true, Total: len(sessions), Source: "tmux", Sessions: sessions},
+		version:     "test",
+	}
+	d.updateLayout()
+
+	view := d.View()
+	if got := lipgloss.Height(view); got > d.height {
+		t.Fatalf("View() height = %d, want <= %d", got, d.height)
+	}
+	lines := strings.Split(view, "\n")
+	modelsRow, statsRow := -1, -1
+	for i, line := range lines {
+		if modelsRow < 0 && strings.Contains(line, "Models") {
+			modelsRow = i
+		}
+		if statsRow < 0 && strings.Contains(line, "In:") {
+			statsRow = i
+		}
+	}
+	if modelsRow < 0 || modelsRow != statsRow {
+		t.Fatalf("models header on row %d, stats start on row %d; want them side by side:\n%s", modelsRow, statsRow, view)
+	}
+	for _, want := range []string{"$260.07", "$171.71", "$90.83", "$48.29", "$11.89", "Cost:"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("View() is missing %q:\n%s", want, view)
+		}
 	}
 }

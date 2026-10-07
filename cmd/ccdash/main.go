@@ -1004,9 +1004,8 @@ func printHelp() {
 	fmt.Println("     Requires Claude Code to run in tmux sessions")
 	fmt.Println()
 	fmt.Println("LAYOUT MODES:")
-	fmt.Println("  Ultra-wide (>=240 cols)           - 3 panels side-by-side")
-	fmt.Println("  Wide (120-239 cols, >=30 lines)   - 2 panels top, 1 bottom")
-	fmt.Println("  Narrow (<120 cols)                - Panels stacked vertically")
+	fmt.Println("  Wide (>=140 cols)                 - 3 panels side-by-side")
+	fmt.Println("  Narrow (<140 cols)                - Panels stacked vertically")
 	fmt.Println()
 	fmt.Println("STATUS INDICATORS:")
 	for _, status := range metrics.SessionStatuses() {
