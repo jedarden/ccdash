@@ -266,14 +266,15 @@ is never marked estimated:
 ```yaml
 pricing:
   models:
-    gpt-6-sol:
-      input_per_million: 5.00
-      output_per_million: 30.00
-      cache_read_per_million: 0.50
-      cache_create_per_million: 6.25
+    my-provider/custom-model:
+      input_per_million: 1.00
+      output_per_million: 5.00
+      cache_read_per_million: 0.10
+      cache_create_per_million: 1.25
 ```
 
-The values above are placeholders; use your provider's published rates.
+The model id and values above are placeholders; use your provider's published
+rates.
 
 ## Development
 
