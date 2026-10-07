@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-07
+
+### Added
+- **`ccdash --doctor`**: checks token sources (Claude transcripts, Codex rollout logs, OpenCode store), the token cache and which dashboard holds the collector lease, `config.yaml`, notifications (webhook shown as host only), Claude/Codex hooks and recent hook errors, and tmux. Prints OK/WARN/FAIL per check, exits 1 on a problem, `--json` for a machine-readable report.
+- **`--watch --json`**: streams one snapshot per `--interval` (default 2s) as a JSON line until interrupted. Unlike `--once`, disk/network I/O and `tokens.rate` are measured rather than `null`.
+- **Weekly spend projection and budget bar**: in the default Monday-9am window, after the first day, the token panel shows `Proj: $X/wk` (spend so far x 7 days / elapsed). With `alerts.cost_threshold_usd` set it also shows a `Budget` bar. `--once --json` gains `tokens.projected_week_cost`, `budget_usd` and `budget_used_percent`.
+- **Per-session cost**: hook-tracked Claude Code and Codex sessions show their own spend in the token window, from the transcript named after the session ID. Sessions without an identifiable transcript show no cost rather than an estimate. In JSON as `sessions.sessions[].cost` with `session_id`.
+
 ## [1.1.40] - 2026-10-07
 
 ### Changed
