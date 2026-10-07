@@ -1373,10 +1373,15 @@ func (d *Dashboard) renderTokenPanel(width, height int) string {
 	modelCount := len(modelUsages)
 	useSideBySide := width >= tokenSideBySideMinWidth && modelCount > 0
 
-	// Calculate available width for model names based on layout
+	// Calculate available width for model names based on layout: the names
+	// get whatever the widest actual " $cost (tokens)" suffix leaves, not a
+	// fixed worst case, so they are not truncated while the column has room.
 	leftWidth := tokenLeftColWidth
 	rightWidth := contentWidth - leftWidth - tokenColSeparatorWidth
-	maxModelNameWidth := rightWidth - tokenRightColReserve
+	if !useSideBySide {
+		rightWidth = contentWidth
+	}
+	maxModelNameWidth := rightWidth - modelSuffixWidth(modelUsages)
 	if maxModelNameWidth < 10 {
 		maxModelNameWidth = 10 // Minimum display width
 	}
@@ -1591,7 +1596,7 @@ func modelVersionNear(tokens []string, familyIdx int) string {
 // calculateRequiredTokenWidth returns the token panel width needed to show
 // the longest current model name in the Models column without truncation.
 // It mirrors the column math in renderTokenPanel exactly (via the shared
-// tokenLeftColWidth/tokenColSeparatorWidth/tokenRightColReserve constants)
+// tokenLeftColWidth/tokenColSeparatorWidth constants and modelSuffixWidth)
 // so the two can't drift apart the way the old hand-maintained "60" ideal
 // width did once model IDs grew past what it assumed.
 func (d *Dashboard) calculateRequiredTokenWidth() int {
@@ -1609,8 +1614,26 @@ func (d *Dashboard) calculateRequiredTokenWidth() int {
 		}
 	}
 
-	rightWidth := maxNameLen + tokenRightColReserve
-	return tokenLeftColWidth + tokenColSeparatorWidth + rightWidth + tokenPanelBorderPadding
+	rightWidth := maxNameLen
+	if d.tokenMetrics != nil {
+		rightWidth += modelSuffixWidth(nonzeroModelUsages(d.tokenMetrics.ModelUsages))
+	}
+	// Never ask for less than the side-by-side layout needs: renderUltraWide
+	// caps the panel at this width, and below the minimum the models list
+	// stacks under the stats.
+	return max(tokenLeftColWidth+tokenColSeparatorWidth+rightWidth+tokenPanelBorderPadding, tokenSideBySideMinWidth)
+}
+
+// modelSuffixWidth is the width of the widest " $cost (tokens)" suffix in a
+// models list, capped at tokenRightColReserve (the worst case the side-by-side
+// minimum width is built on).
+func modelSuffixWidth(usages []metrics.ModelUsage) int {
+	widest := 0
+	for _, usage := range usages {
+		w := lipgloss.Width(" " + metrics.FormatCost(usage.Cost) + " (" + metrics.FormatTokensCompact(usage.TotalTokens) + ")")
+		widest = max(widest, w)
+	}
+	return min(widest, tokenRightColReserve)
 }
 
 // renderTmuxPanel renders the tmux sessions panel

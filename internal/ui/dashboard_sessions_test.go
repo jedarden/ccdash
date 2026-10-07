@@ -742,3 +742,41 @@ func TestSessionCellShowsAttributedCostOnly(t *testing.T) {
 		t.Errorf("a session without an attributable transcript should show no cost: %q", without)
 	}
 }
+
+func TestTokenModelNamesUseTheColumnSpace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var sessions []metrics.TmuxSession
+	for i := 0; i < 41; i++ {
+		sessions = append(sessions, metrics.TmuxSession{
+			Name: fmt.Sprintf("codex-luna-worker-%02d", i), SessionType: metrics.SessionTypeWorker, Status: metrics.StatusReady,
+		})
+	}
+	usages := []metrics.ModelUsage{
+		{Model: "gpt-6-astra", TotalTokens: 318_000_000, Cost: 485.75},
+		{Model: "gpt-6-sol", TotalTokens: 773_100_000, Cost: 205.86},
+		{Model: "claude-opus-5-5", TotalTokens: 445_400_000, Cost: 136.19},
+		{Model: "gpt-6.1-sol", TotalTokens: 431_200_000, Cost: 97.75},
+		{Model: "gpt-5.6-luna", TotalTokens: 2_400_000_000, Cost: 85.08},
+		{Model: "gpt-5.6-sol", TotalTokens: 98_700_000, Cost: 52.91},
+	}
+	for _, size := range []struct{ width, height int }{{231, 18}, {214, 18}} {
+		d := &Dashboard{
+			width: size.width, height: size.height,
+			tokenMetrics: &metrics.TokenMetrics{Available: true, TotalTokens: 5_500_000_000, Prompts: 61276, TotalCost: 1173.67, ModelUsages: usages},
+			tmuxMetrics:  &metrics.TmuxMetrics{Available: true, Total: len(sessions), Source: "tmux", Sessions: sessions},
+			version:      "test",
+		}
+		d.updateLayout()
+		view := d.View()
+		for _, name := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-luna", "gpt-5.6-sol"} {
+			if !strings.Contains(view, name+" $") {
+				t.Errorf("%dx%d: model name %q is truncated:\n%s", size.width, size.height, name, view)
+			}
+		}
+		for i, line := range strings.Split(view, "\n") {
+			if w := lipgloss.Width(line); w > size.width {
+				t.Errorf("%dx%d: line %d is %d wide", size.width, size.height, i+1, w)
+			}
+		}
+	}
+}

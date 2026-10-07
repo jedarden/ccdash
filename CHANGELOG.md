@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-07
+
+### Fixed
+- **Model names truncated with space to spare**: the token panel sized model names against a fixed 22-column worst case for the cost and token text, so `gpt-6-astra`, `gpt-6.1-sol` and `gpt-5.6-luna` were cut to 10 characters while the models column had room. Names now get the width the actual cost and token text leaves, and the panel's preferred width uses the same measure, never below what the side-by-side layout needs.
+
 ## [1.2.0] - 2026-10-07
 
 ### Added

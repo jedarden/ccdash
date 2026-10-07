@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/charmbracelet/lipgloss"
 	"testing"
 
 	"github.com/jedarden/ccdash/internal/metrics"
@@ -69,10 +70,16 @@ func TestCalculateRequiredTokenWidthMatchesRenderColumns(t *testing.T) {
 		t.Errorf("calculateRequiredTokenWidth() = %d, want %d", got, want)
 	}
 
-	d.tokenMetrics.ModelUsages = append(d.tokenMetrics.ModelUsages, metrics.ModelUsage{
-		Model: "claude-sonnet-4-12", TotalTokens: 1, // hypothetical double-digit minor version, 11 chars shortened
-	})
-	if got, want := d.calculateRequiredTokenWidth(), 61; got != want {
-		t.Errorf("calculateRequiredTokenWidth() with an 11-char name = %d, want %d", got, want)
+	// The panel grows only once a name plus its actual cost/token text no
+	// longer fits the side-by-side minimum.
+	long := metrics.ModelUsage{Model: "gpt-6-astra-preview", Cost: 1234.56, TotalTokens: 3_200_000_000}
+	d.tokenMetrics.ModelUsages = append(d.tokenMetrics.ModelUsages, long)
+	suffix := lipgloss.Width(" " + metrics.FormatCost(long.Cost) + " (" + metrics.FormatTokensCompact(long.TotalTokens) + ")")
+	want := tokenLeftColWidth + tokenColSeparatorWidth + len(shortenModelName(long.Model)) + suffix + tokenPanelBorderPadding
+	if want <= tokenSideBySideMinWidth {
+		t.Fatalf("fixture too short to exercise growth: %d", want)
+	}
+	if got := d.calculateRequiredTokenWidth(); got != want {
+		t.Errorf("calculateRequiredTokenWidth() with a %d-char name = %d, want %d", len(long.Model), got, want)
 	}
 }
