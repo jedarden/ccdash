@@ -534,6 +534,11 @@ func runOnceMode(asJSON bool, extraDirs string) int {
 	return runOnceModeWithOptions(asJSON, extraDirs, time.Time{}, false)
 }
 
+// onceSessionSampleGap matches the dashboard's refresh interval, so a
+// one-shot run calls a pane WORKING on the same evidence the TUI uses: its
+// content changed between two samples.
+const onceSessionSampleGap = 2 * time.Second
+
 func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, attention bool) int {
 	// Create collectors
 	systemCollector := metrics.NewSystemCollector()
@@ -559,6 +564,12 @@ func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, atte
 		}
 	}
 
+	// Session status compares each pane with an earlier sample, so take a
+	// baseline now and the real sample after the slower collectors below,
+	// at least one dashboard refresh interval later.
+	tmuxCollector.Collect()
+	sessionBaselineAt := time.Now()
+
 	// Collect metrics
 	snapshot := struct {
 		Timestamp time.Time
@@ -579,6 +590,9 @@ func runOnceModeWithOptions(asJSON bool, extraDirs string, since time.Time, atte
 	}
 
 	// Collect session metrics
+	if wait := onceSessionSampleGap - time.Since(sessionBaselineAt); wait > 0 {
+		time.Sleep(wait)
+	}
 	snapshot.Sessions = tmuxCollector.Collect()
 
 	// Stop background ingestion for token collector

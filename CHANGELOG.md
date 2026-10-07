@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.39] - 2026-10-07
+
+### Fixed
+- **`--once` reported every tmux session as WORKING**: a session's first sample had nothing to compare against and was counted as fresh activity, so one-shot snapshots (and the dashboard's first frame) showed idle sessions as WORKING. A first sample is now the baseline, and `--once` takes a second session sample one refresh interval (2s) later, so WORKING means the pane actually changed. `--once` takes about a second longer.
+
 ## [1.1.38] - 2026-10-07
 
 ### Changed

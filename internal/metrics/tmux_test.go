@@ -1,6 +1,9 @@
 package metrics
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSessionStatusesPutAskingFirst(t *testing.T) {
 	statuses := SessionStatuses()
@@ -49,5 +52,29 @@ func TestSortSessionsByAttention(t *testing.T) {
 		if sessions[i].Name != name {
 			t.Errorf("sessions[%d] = %q, want %q", i, sessions[i].Name, name)
 		}
+	}
+}
+
+func TestFirstPaneSampleIsBaselineNotActivity(t *testing.T) {
+	tc := &TmuxCollector{
+		sessionActivityMap:  make(map[string]time.Time),
+		sessionContentCache: make(map[string]string),
+	}
+	now := time.Now()
+	session := TmuxSession{Name: "build", Created: now.Add(-time.Hour)}
+
+	first := tc.statusFromContent(session, "make: compiling 1/10\n", now)
+	if first.Status == StatusWorking {
+		t.Fatalf("first sample status = %s, want not WORKING: there is nothing to compare it with", first.Status)
+	}
+
+	unchanged := tc.statusFromContent(session, "make: compiling 1/10\n", now.Add(2*time.Second))
+	if unchanged.Status == StatusWorking {
+		t.Fatalf("unchanged second sample status = %s, want not WORKING", unchanged.Status)
+	}
+
+	changed := tc.statusFromContent(session, "make: compiling 2/10\n", now.Add(4*time.Second))
+	if changed.Status != StatusWorking {
+		t.Fatalf("changed sample status = %s, want WORKING", changed.Status)
 	}
 }

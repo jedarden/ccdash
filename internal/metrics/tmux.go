@@ -547,10 +547,20 @@ func (tc *TmuxCollector) determineStatus(session TmuxSession) TmuxSession {
 		session.Status = tc.fallbackStatus(session, now)
 		return session
 	}
+	return tc.statusFromContent(session, content, now)
+}
 
-	// Check if content has changed (indicates activity)
+// statusFromContent classifies a session from its captured pane content,
+// comparing it with the previous sample of the same session.
+func (tc *TmuxCollector) statusFromContent(session TmuxSession, content string, now time.Time) TmuxSession {
+	// A first sample has nothing to compare against, so it is the baseline,
+	// not a change. Counting it as one made every session WORKING on a
+	// collector's first pass, which is every `ccdash --once`.
 	lastContent, hasCache := tc.sessionContentCache[session.Name]
-	contentChanged := !hasCache || lastContent != content
+	contentChanged := hasCache && lastContent != content
+	if !hasCache {
+		tc.sessionContentCache[session.Name] = content
+	}
 
 	if contentChanged {
 		tc.sessionActivityMap[session.Name] = now
