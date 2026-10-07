@@ -23,6 +23,20 @@ func runWatch(extraDirs string, since time.Time, interval time.Duration, out io.
 	systemCollector.Collect()
 	tmuxCollector.Collect()
 
+	return watchLoop(interval, stop, out, func(now time.Time) Snapshot {
+		system := systemCollector.Collect()
+		tokens, err := tokenCollector.Collect()
+		if err != nil {
+			tokens = nil
+		}
+		sessions := tmuxCollector.Collect()
+		return withMeasuredRates(makeSnapshot(now, version, system, tokens, sessions, budget), system, tokens)
+	})
+}
+
+// watchLoop writes collect's snapshot as a JSON line every interval until
+// stop fires or a write fails.
+func watchLoop(interval time.Duration, stop <-chan os.Signal, out io.Writer, collect func(time.Time) Snapshot) int {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	encoder := json.NewEncoder(out)
@@ -32,15 +46,14 @@ func runWatch(extraDirs string, since time.Time, interval time.Duration, out io.
 			return 0
 		case <-ticker.C:
 		}
-		now := time.Now()
-		system := systemCollector.Collect()
-		tokens, err := tokenCollector.Collect()
-		if err != nil {
-			tokens = nil
+		// select picks at random when a tick and a stop are both pending,
+		// and a collection can take seconds; honour a stop first.
+		select {
+		case <-stop:
+			return 0
+		default:
 		}
-		sessions := tmuxCollector.Collect()
-		snapshot := withMeasuredRates(makeSnapshot(now, version, system, tokens, sessions, budget), system, tokens)
-		if err := encoder.Encode(snapshot); err != nil {
+		if err := encoder.Encode(collect(time.Now())); err != nil {
 			return 0
 		}
 	}

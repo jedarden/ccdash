@@ -50,19 +50,26 @@ func TestWithMeasuredRatesFillsOneShotNulls(t *testing.T) {
 	}
 }
 
-func TestRunWatchStreamsJSONLinesUntilStopped(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+func TestWatchLoopStreamsJSONLinesUntilStopped(t *testing.T) {
 	out := &lockedBuffer{}
 	stop := make(chan os.Signal, 1)
 	done := make(chan int, 1)
-	go func() { done <- runWatch("", time.Time{}, 100*time.Millisecond, out, stop) }()
+	var calls int
+	collect := func(now time.Time) Snapshot {
+		calls++
+		read := float64(calls)
+		s := Snapshot{SchemaVersion: snapshotSchemaVersion, Timestamp: now}
+		s.System.DiskIO.ReadBytesPerSec = &read
+		return s
+	}
+	go func() { done <- watchLoop(20*time.Millisecond, stop, out, collect) }()
 
-	deadline := time.Now().Add(15 * time.Second)
-	for bytes.Count([]byte(out.String()), []byte("\n")) < 2 {
+	deadline := time.Now().Add(5 * time.Second)
+	for bytes.Count([]byte(out.String()), []byte("\n")) < 3 {
 		if time.Now().After(deadline) {
-			t.Fatalf("watch produced fewer than 2 lines in 15s: %q", out.String())
+			t.Fatalf("watch produced fewer than 3 lines: %q", out.String())
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	stop <- os.Interrupt
 	select {
@@ -70,12 +77,11 @@ func TestRunWatchStreamsJSONLinesUntilStopped(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0", code)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("watch did not stop after the signal")
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader([]byte(out.String())))
-	scanner.Buffer(make([]byte, 1<<20), 1<<24)
 	for scanner.Scan() {
 		var line struct {
 			SchemaVersion int `json:"schema_version"`
@@ -88,11 +94,30 @@ func TestRunWatchStreamsJSONLinesUntilStopped(t *testing.T) {
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
 			t.Fatalf("line is not JSON: %v: %q", err, scanner.Text())
 		}
-		if line.SchemaVersion != snapshotSchemaVersion {
-			t.Errorf("schema_version = %d", line.SchemaVersion)
-		}
-		if line.System.DiskIO.ReadBytesPerSec == nil {
-			t.Error("watch lines should carry measured disk I/O rates, got null")
+		if line.SchemaVersion != snapshotSchemaVersion || line.System.DiskIO.ReadBytesPerSec == nil {
+			t.Errorf("unexpected line: %q", scanner.Text())
 		}
 	}
 }
+
+func TestWatchLoopStopsWhenTheReaderGoesAway(t *testing.T) {
+	stop := make(chan os.Signal)
+	done := make(chan int, 1)
+	go func() {
+		done <- watchLoop(10*time.Millisecond, stop, failingWriter{}, func(now time.Time) Snapshot {
+			return Snapshot{SchemaVersion: snapshotSchemaVersion}
+		})
+	}()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch kept running after a failed write")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
