@@ -261,22 +261,30 @@ func TestRenderTmuxPanelOmitsEmptySections(t *testing.T) {
 	}
 }
 
-func TestTmuxHelpExplainsTrackedSessionAndProcessCounts(t *testing.T) {
+func TestSessionsHeaderShowsOnlyTheSessionCount(t *testing.T) {
+	// RunningProcesses counts host-wide "claude" processes, not the sessions
+	// listed, so the header must not present it as a comparable count
+	// (it once read "37/36 procs").
 	d := &Dashboard{
-		width:    200,
-		height:   30,
-		helpMode: 3,
+		width:  200,
+		height: 30,
 		tmuxMetrics: &metrics.TmuxMetrics{
 			Available:        true,
-			Total:            19,
-			RunningProcesses: 37,
+			Total:            37,
+			RunningProcesses: 36,
 		},
 	}
-	view := d.renderHelpView()
-	for _, want := range []string{"N tracked", "M detected agent processes"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("sessions help should explain process counts with %q:\n%s", want, view)
-		}
+	panel := d.renderTmuxPanel(80, 10)
+	if !strings.Contains(panel, "Sessions (37)") {
+		t.Errorf("header should read \"Sessions (37)\":\n%s", panel)
+	}
+	if strings.Contains(panel, "procs") {
+		t.Errorf("header should not show a process count:\n%s", panel)
+	}
+
+	d.helpMode = 3
+	if help := d.renderHelpView(); strings.Contains(help, "procs") {
+		t.Errorf("sessions help still describes the removed process count:\n%s", help)
 	}
 }
 

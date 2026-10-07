@@ -126,7 +126,10 @@ and `system.net_io` byte-per-second fields, each interface's byte-per-second
 fields, and `tokens.rate`. A `null` value means no current rate sample is
 available; it is distinct from a measured rate of zero. `tokens.session_avg_rate`
 is an aggregate over the token session and remains numeric. `tokens.time_span`
-is encoded as a duration in nanoseconds.
+is encoded as a duration in nanoseconds. `sessions.running_processes` counts
+every process named `claude` on the host (subagents and sessions outside tmux
+included, Codex and OpenCode excluded), so it is not comparable with
+`sessions.total`.
 
 Each `tokens.model_usages` entry has `pricing_estimated`: `true` when the cost
 was not computed from a known price for that exact model (a family fallback,

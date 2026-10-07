@@ -1630,12 +1630,11 @@ func (d *Dashboard) renderTmuxPanel(width, height int) string {
 		// Hooks installed but no hook sessions, falling back to tmux
 		sourceLabel = "Sessions (tmux)"
 	}
-	// Show process count if different from tracked sessions (indicates detection gap)
-	countStr := fmt.Sprintf("%d", d.tmuxMetrics.Total)
-	if d.tmuxMetrics.RunningProcesses > 0 && d.tmuxMetrics.RunningProcesses != d.tmuxMetrics.Total {
-		countStr = fmt.Sprintf("%d/%d procs", d.tmuxMetrics.Total, d.tmuxMetrics.RunningProcesses)
-	}
-	title := successStyle.Render(fmt.Sprintf("%s %s (%s)", sourceIcon, sourceLabel, countStr))
+	// Only the session count. RunningProcesses counts every process named
+	// "claude" on the host - subagents and sessions outside tmux included,
+	// Codex/OpenCode/NEEDLE excluded - so "sessions/procs" compared two
+	// different things and could read 37/36. It stays in the JSON snapshot.
+	title := successStyle.Render(fmt.Sprintf("%s %s (%d)", sourceIcon, sourceLabel, d.tmuxMetrics.Total))
 	if askingCount := statusCounts[metrics.StatusAsking]; askingCount > 0 {
 		title += " " + askingStyle.Render(fmt.Sprintf("needs you (%d)", askingCount))
 	}
@@ -2417,7 +2416,6 @@ SQLite Cache: .ccdash/tokens.db
 
 Title: Shows total count + status summary
   Format: "📺 TMUX Sessions (N) needs you (N) 🟣2 ⚪1"
-  When counts differ, "(N/M procs)" means N tracked sessions and M detected agent processes.
 
 Status (analyzes pane content):
 ` + sessionStatusHelpText() + `
