@@ -176,9 +176,9 @@ below) for context and alternatives considered.
 
 **Related ADR:** ADR-0007
 
-### Phase 8: Review Backlog (2026-10) - IN PROGRESS
+### Phase 8: Review Backlog (2026-10) - COMPLETE
 
-**Status:** 🔄 In Progress
+**Status:** ✅ Complete (2026-10-07; one held proposal, see below)
 
 A review on 2026-09-25, re-verified against HEAD `91678f2` on 2026-10-02 by
 rendering the dashboard at 240x30, 100x35 and 199x14 and running `--once`,
@@ -251,11 +251,41 @@ current-model pricing and unmarked `$0` models (ccdash-6e67be66); and a
 Sessions-panel row budget that double-counted its borders (ccdash-e47fa952).
 The last two shipped in v1.1.31.
 
-**Candidates not admitted as beads** (ideas from the same review; they need an
-explicit go-ahead before becoming work): weekly spend projection and a budget
-bar against `alerts.cost_threshold_usd`; `ccdash doctor`; `--watch --json`
-line-delimited stream; per-session cost in the Sessions panel; splitting
-`internal/ui/dashboard.go` by panel.
+**Second pass (2026-10-07).** The user admitted the remaining review items and
+the four candidate features ("go through all of them"):
+
+| Bead | Outcome | Shipped |
+|------|---------|---------|
+| ccdash-9b8c43a8 | ccdash-ci runs each pipeline in one pod (no Cinder attach per step), skips releases for tracking-only pushes, retries the GitHub publish (declarative-config 457dd6f, ffcdb83, c00869b) | release runs ~4 min, was 20-30 |
+| ccdash-e9975e9e | `--once` no longer reports every tmux session WORKING | v1.1.39 |
+| ccdash-58c8e4e5 | Sessions header shows only the session count | v1.1.40 |
+| ccdash-a4f3b0d1 | Unreachable layout renderers removed | v1.1.38/39 |
+| ccdash-a1adcb63 | Unsourced legacy Codex prices removed | v1.1.40 |
+| ccdash-cf10594c | CHANGELOG entries for the empty v1.1.32/v1.1.36 | v1.1.38 |
+| ccdash-eef1fdda | `ccdash --doctor` | v1.2.0 |
+| ccdash-c0afecb9 | Weekly spend projection and budget bar | v1.2.0 |
+| ccdash-57bb3ecc | `--watch --json` NDJSON stream | v1.2.0 |
+| ccdash-30faf207 | Per-session cost for hook-tracked sessions | v1.2.0 |
+
+Decisions taken in this pass:
+
+- *Projection is linear over the elapsed week* (cost x 7d / elapsed), shown only
+  for the Monday-09:00 window and only after 24h. A recent-rate projection was
+  rejected: fleet load swings by an order of magnitude within a day.
+- *Per-session cost is attributed only by transcript name* (session ID in the
+  file name). Sessions without one show no number; NEEDLE workers are not
+  attributed by workspace because interactive sessions share those project
+  directories.
+- *`--watch` requires `--json`*; a text stream would duplicate the TUI.
+- *Releases happen only when binary inputs change*: pushes touching only
+  `.beads/`, `docs/`, `notes/` or Markdown no longer publish.
+
+Held proposal (needs the user's admission): ccdash-47ce158f - the token cache
+holds 1,447 events that overlap completed-file summaries (822 duplicates,
+625 after a summary), so `QueryTokensHybrid` double-counts them; <0.02% of the
+current week, 110M tokens all-time.
+
+Still a candidate, not admitted: splitting `internal/ui/dashboard.go` by panel.
 
 ## Key Design Decisions
 
