@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.38] - 2026-10-07
+
+### Changed
+- Removed two layout renderers that no terminal size could reach (a two-over-one layout and an older stacked layout). They are why the README described a layout the dashboard never drew. No visible change.
+- Releases are now built by a single-pod CI pipeline, and pushes that change only tracking or documentation files no longer publish an empty release. See v1.1.32 and v1.1.36 below.
+
 ## [1.1.37] - 2026-10-07
 
 ### Added
@@ -15,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Claude idle notifications no longer request human attention. Native permission requests and questions remain visible through Stop and long idle periods and take precedence over task metadata and stale terminal output.
 - Claude and Codex hooks share atomic, locked session updates; new work clears stale reports while task identity survives, and reports written by tools survive Stop and compaction.
+
+## [1.1.36] - 2026-10-07
+
+No changes to the binary. Published automatically for a push that only updated bead tracking files; the CI pipeline now skips such releases.
 
 ## [1.1.35] - 2026-10-07
 
@@ -31,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Codex costs were wrong in both directions**: the OpenAI price table had `gpt-5.6-luna` at five times its published rate ($1.00/$6.00 per 1M tokens instead of $0.20/$1.20), with `gpt-5.6-sol` and `gpt-5.6-terra` also overstated, while `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol` and `gpt-6-astra` had no entry and counted as $0. All rows now match OpenAI's published standard-tier, short-context rates (checked 2026-10-07). On this workspace's last 7 days the Codex total moved from $1,597 to $917. Requests above 272K input tokens are billed at a higher long-context rate that ccdash does not model, so those are slightly understated.
+
+## [1.1.32] - 2026-10-07
+
+No changes to the binary. Published automatically for a push that only updated the plan and bead tracking files; the CI pipeline now skips such releases.
 
 ## [1.1.31] - 2026-10-06
 

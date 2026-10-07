@@ -21,10 +21,8 @@ import (
 type LayoutMode int
 
 const (
-	LayoutNarrow    LayoutMode = iota // <120 cols
-	LayoutWide                        // 120-239 cols, >=30 lines
-	LayoutUltraWide                   // >=240 cols
-	LayoutCompact                     // <120 cols: tmux top, tokens middle, system bottom
+	LayoutCompact   LayoutMode = iota // <140 cols: tmux top, tokens middle, system bottom
+	LayoutUltraWide                   // >=140 cols: three panels side by side
 )
 
 // tickMsg is sent every 2 seconds to trigger refresh
@@ -559,15 +557,10 @@ func (d *Dashboard) View() string {
 		// Check if in help mode
 		content = d.renderHelpView()
 	} else {
-		switch d.layoutMode {
-		case LayoutUltraWide:
+		if d.layoutMode == LayoutUltraWide {
 			content = d.renderUltraWide()
-		case LayoutWide:
-			content = d.renderWide()
-		case LayoutCompact:
+		} else {
 			content = d.renderCompact()
-		default:
-			content = d.renderNarrow()
 		}
 	}
 
@@ -948,47 +941,6 @@ func (d *Dashboard) renderUltraWide() string {
 
 	// Join horizontally with top alignment
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		systemPanel,
-		tokenPanel,
-		tmuxPanel,
-	)
-}
-
-// renderWide renders 2 panels on top, 1 on bottom
-func (d *Dashboard) renderWide() string {
-	panelWidth := (d.width - 9) / 2      // Two panel frames, their gap, and 8 frame columns
-	availablePanelHeight := d.height - 5 // Two border rows per panel row and one status row
-	if availablePanelHeight < 0 {
-		availablePanelHeight = 0
-	}
-	topHeight := availablePanelHeight / 2
-	bottomHeight := availablePanelHeight - topHeight
-	panelWidth = max(panelWidth, 1)
-
-	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, topHeight), panelWidth, topHeight)
-	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, topHeight), panelWidth, topHeight)
-	tmuxWidth := max(d.width-4, 1)
-	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(tmuxWidth, bottomHeight), tmuxWidth, bottomHeight)
-
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, systemPanel, " ", tokenPanel)
-
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, tmuxPanel)
-}
-
-// renderNarrow renders panels stacked vertically
-func (d *Dashboard) renderNarrow() string {
-	panelWidth := max(d.width-4, 1)
-	availablePanelHeight := d.height - 7 // Three panel frames and a one-row status bar
-	if availablePanelHeight < 0 {
-		availablePanelHeight = 0
-	}
-	panelHeight := availablePanelHeight / 3
-
-	systemPanel := fitPanelToSize(d.renderSystemPanel(panelWidth, panelHeight), panelWidth, panelHeight)
-	tokenPanel := fitPanelToSize(d.renderTokenPanel(panelWidth, panelHeight), panelWidth, panelHeight)
-	tmuxPanel := fitPanelToSize(d.renderTmuxPanel(panelWidth, panelHeight), panelWidth, panelHeight)
-
-	return lipgloss.JoinVertical(lipgloss.Left,
 		systemPanel,
 		tokenPanel,
 		tmuxPanel,
