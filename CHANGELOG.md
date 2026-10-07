@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-07
+
+### Fixed
+- **Token totals could count usage twice, or lose it**: three cache defects. A transcript that was summarised, resumed and summarised again had its earlier lines replaced, not merged, and lost them; while it was active again its earlier lines were left out of the totals; and a second ccdash process (or a rewritten transcript) could store lines that were already in a summary, so they counted twice. Summaries now merge, record which lines they cover so those lines are never stored again, count while their file is active, and are dropped when a file is rewritten.
+- **Existing caches are repaired on upgrade** (schema 5): events that exactly duplicate their file's summary are removed, and other overlap is rebuilt from the transcript when it still exists. On the maintainer's cache this removed 649 duplicate events (about 25M tokens) in 2 seconds; overlap for two deleted transcripts that cannot be proven is left unchanged.
+
 ## [1.2.1] - 2026-10-07
 
 ### Fixed

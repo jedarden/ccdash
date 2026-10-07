@@ -43,10 +43,10 @@ func TestSessionCostsAttributeByTranscriptWithoutDoubleCounting(t *testing.T) {
 	if err := cache.MarkFileComplete(claudeFile); err != nil {
 		t.Fatal(err)
 	}
-	// Overlap the double-count bead describes: a duplicate of a summarised
-	// line, plus a resumed line after the summary (0.5M input = $1).
+	// A late re-insert of the summarised line (another process) is skipped
+	// by covered_lines; a resumed line after the summary (0.5M = $1) counts.
 	if err := cache.InsertTokenEventBatch([]TokenEvent{
-		event(claudeFile, "claude", "claude-sonnet-5", base, 1_000_000, 101),
+		event(claudeFile, "claude", "claude-sonnet-5", base, 1_000_000, 1),
 		event(claudeFile, "claude", "claude-sonnet-5", base.Add(time.Hour), 500_000, 102),
 		// Codex rollout: 1M input on gpt-6-sol ($2/M), still active.
 		event(codexFile, "codex", "gpt-6-sol", base, 1_000_000, 1),

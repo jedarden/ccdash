@@ -65,9 +65,9 @@ func usageCost(p ModelPricing, input, output, cacheRead, cacheCreate int64) floa
 // (tmux-only rows, NEEDLE registry workers) are simply absent from the result
 // rather than given an estimate.
 //
-// A completed transcript is counted from its summary, as the token panel
-// counts it, plus only those events newer than the summary, so events that
-// also appear in the summary are not counted twice.
+// A transcript counts as its summary (lines already summarised) plus its
+// remaining events, exactly as the token panel counts it; the cache never
+// holds the same line in both (covered_lines).
 func (tc *TokenCollector) SessionCosts(sessionIDs []string) (map[string]float64, error) {
 	costs := make(map[string]float64)
 	if tc == nil || tc.cache == nil || len(sessionIDs) == 0 {
@@ -85,16 +85,14 @@ func (tc *TokenCollector) SessionCosts(sessionIDs []string) (map[string]float64,
 		since = tc.lookbackFrom.Unix()
 	}
 
-	summarisedUntil := make(map[string]int64)
-	rows, err := db.Query(`SELECT source_file, source, latest_timestamp, model_breakdown
-		FROM file_aggregates WHERE is_complete = 1 AND latest_timestamp >= ?`, since)
+	rows, err := db.Query(`SELECT source_file, source, model_breakdown
+		FROM file_aggregates WHERE latest_timestamp >= ?`, since)
 	if err != nil {
 		return costs, err
 	}
 	for rows.Next() {
 		var file, source, breakdown string
-		var latest int64
-		if err := rows.Scan(&file, &source, &latest, &breakdown); err != nil {
+		if err := rows.Scan(&file, &source, &breakdown); err != nil {
 			rows.Close()
 			return costs, err
 		}
@@ -102,7 +100,6 @@ func (tc *TokenCollector) SessionCosts(sessionIDs []string) (map[string]float64,
 		if !ok || !want[id] {
 			continue
 		}
-		summarisedUntil[file] = latest
 		var models map[string]*ModelAggregation
 		if err := json.Unmarshal([]byte(breakdown), &models); err != nil {
 			continue
@@ -136,9 +133,6 @@ func (tc *TokenCollector) SessionCosts(sessionIDs []string) (map[string]float64,
 		}
 		id, ok := transcriptSessionID(file)
 		if !ok || !want[id] {
-			continue
-		}
-		if latest, summarised := summarisedUntil[file]; summarised && ts <= latest {
 			continue
 		}
 		pricing, _ := tc.pricingForModel(source, model)

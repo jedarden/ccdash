@@ -43,7 +43,7 @@ type TokenCache struct {
 const (
 	cacheDirName  = ".ccdash"
 	cacheDBName   = "tokens.db"
-	schemaVersion = 4
+	schemaVersion = 5
 
 	// Threshold for marking a file as complete (no longer being written to)
 	fileCompleteThreshold = 30 * time.Minute
@@ -270,7 +270,10 @@ func (tc *TokenCache) initDB() error {
 		event_count INTEGER DEFAULT 0,
 		earliest_timestamp INTEGER DEFAULT 0,
 		latest_timestamp INTEGER DEFAULT 0,
-		model_breakdown TEXT DEFAULT '{}'
+		model_breakdown TEXT DEFAULT '{}',
+		-- Lines 1..covered_lines of the file are in this summary; event
+		-- inserts skip them so a summarised line is never stored twice.
+		covered_lines INTEGER DEFAULT 0
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_file_aggregates_complete ON file_aggregates(is_complete);
@@ -291,16 +294,125 @@ func (tc *TokenCache) initDB() error {
 		return err
 	}
 
+	if err := tc.addColumnIfMissing("file_aggregates", "covered_lines", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// Check/set schema version
 	var version int
 	err = tc.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
 	if err == sql.ErrNoRows {
 		_, err = tc.db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
 	} else if err == nil && version < schemaVersion {
+		if version < 5 {
+			if err := tc.repairSummaryOverlap(); err != nil {
+				return err
+			}
+		}
 		_, err = tc.db.Exec("UPDATE schema_version SET version = ?", schemaVersion)
 	}
 
 	return err
+}
+
+func (tc *TokenCache) addColumnIfMissing(table, column, definition string) error {
+	rows, err := tc.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == column
+	}
+	rows.Close()
+	if found {
+		return nil
+	}
+	_, err = tc.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
+}
+
+// repairSummaryOverlap fixes caches written before schema 5, where a file
+// could have both a summary and events for the same lines (counted twice):
+//   - events that exactly reproduce their file's summary (same count and
+//     token sums) are provably duplicates and are deleted;
+//   - a summary whose file has no events left covers every line read so far,
+//     so covered_lines is taken from file_state;
+//   - any other overlap is rebuilt from the transcript when it still exists;
+//     when it does not, the rows are left as they are rather than guessed at.
+func (tc *TokenCache) repairSummaryOverlap() error {
+	tx, err := tc.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		DELETE FROM token_events WHERE source_file IN (
+			SELECT f.source_file FROM file_aggregates f
+			JOIN (SELECT source_file, COUNT(*) n, SUM(input_tokens) i, SUM(output_tokens) o,
+			             SUM(cache_read_tokens) r, SUM(cache_creation_tokens) c
+			      FROM token_events GROUP BY source_file) e ON e.source_file = f.source_file
+			WHERE e.n = f.event_count AND e.i = f.total_input_tokens AND e.o = f.total_output_tokens
+			  AND e.r = f.total_cache_read_tokens AND e.c = f.total_cache_creation_tokens)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		UPDATE file_aggregates SET covered_lines = COALESCE(
+			(SELECT last_line FROM file_state s WHERE s.source_file = file_aggregates.source_file), 0)
+		WHERE is_complete = 1 AND event_count > 0
+		  AND source_file NOT IN (SELECT DISTINCT source_file FROM token_events)`); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(`SELECT DISTINCT f.source_file FROM file_aggregates f
+		JOIN token_events e ON e.source_file = f.source_file WHERE f.event_count > 0`)
+	if err != nil {
+		return err
+	}
+	var rebuild []string
+	for rows.Next() {
+		var file string
+		if err := rows.Scan(&file); err != nil {
+			rows.Close()
+			return err
+		}
+		if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() {
+			rebuild = append(rebuild, file)
+		}
+	}
+	rows.Close()
+	for _, file := range rebuild {
+		for _, stmt := range []string{
+			"DELETE FROM token_events WHERE source_file = ?",
+			"DELETE FROM file_aggregates WHERE source_file = ?",
+			"DELETE FROM file_state WHERE source_file = ?",
+		} {
+			if _, err := tx.Exec(stmt, file); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// coveredLines is how many leading lines of a file its summary already holds.
+func coveredLines(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, sourceFile string) (int64, error) {
+	var covered int64
+	err := q.QueryRowContext(ctx, "SELECT COALESCE(covered_lines, 0) FROM file_aggregates WHERE source_file = ?", sourceFile).Scan(&covered)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return covered, err
 }
 
 func (tc *TokenCache) migrateSourceColumns() error {
@@ -383,7 +495,14 @@ func (tc *TokenCache) insertTokenEventContextWithSource(ctx context.Context, tim
 	defer cancel()
 
 	return withRetryNoResult(ctx, func() error {
-		_, err := tc.db.ExecContext(ctx, `
+		covered, err := coveredLines(ctx, tc.db, sourceFile)
+		if err != nil {
+			return err
+		}
+		if lineNumber <= covered {
+			return nil
+		}
+		_, err = tc.db.ExecContext(ctx, `
 				INSERT OR IGNORE INTO token_events
 				(timestamp, timestamp_unix, model, source, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, source_file, line_number)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -426,7 +545,20 @@ func (tc *TokenCache) InsertTokenEventBatchContext(ctx context.Context, events [
 		}
 		defer stmt.Close()
 
+		covered := make(map[string]int64)
 		for _, e := range events {
+			c, seen := covered[e.SourceFile]
+			if !seen {
+				if c, err = coveredLines(ctx, tx, e.SourceFile); err != nil {
+					return err
+				}
+				covered[e.SourceFile] = c
+			}
+			// Another process may have summarised these lines since they
+			// were read; storing them again would count them twice.
+			if e.LineNumber <= c {
+				continue
+			}
 			source := e.Source
 			if source == "" {
 				source = "claude"
@@ -684,76 +816,106 @@ func (tc *TokenCache) MarkFileComplete(sourceFile string) error {
 	defer cancel()
 
 	return withRetryNoResult(ctx, func() error {
-		// Aggregate all events for this file
-		var totalInput, totalOutput, totalCacheRead, totalCacheCreate int64
-		var eventCount int64
-		var minTS, maxTS sql.NullInt64
-		var source string
-
-		err := tc.db.QueryRowContext(ctx, `
-				SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-				       COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0),
-				       COUNT(*), MIN(timestamp_unix), MAX(timestamp_unix), COALESCE(MAX(source), 'claude')
-				FROM token_events WHERE source_file = ?
-			`, sourceFile).Scan(&totalInput, &totalOutput, &totalCacheRead, &totalCacheCreate,
-			&eventCount, &minTS, &maxTS, &source)
+		// One transaction (the connection uses _txlock=immediate, so this
+		// holds SQLite's write lock from the start): another process cannot
+		// insert events or replace the summary between the read, the merge
+		// and the delete below.
+		tx, err := tc.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
+		defer tx.Rollback()
 
-		// Get per-model breakdown
-		modelBreakdown := make(map[string]*ModelAggregation)
-		rows, err := tc.db.QueryContext(ctx, `
-			SELECT model, SUM(input_tokens), SUM(output_tokens),
-			       SUM(cache_read_tokens), SUM(cache_creation_tokens)
-			FROM token_events WHERE source_file = ?
-			GROUP BY model
-		`, sourceFile)
+		agg := FileAggregate{SourceFile: sourceFile, ModelBreakdown: make(map[string]*ModelAggregation)}
+		var earliest, latest, covered int64
+		var breakdown string
+		err = tx.QueryRowContext(ctx, `
+			SELECT source, total_input_tokens, total_output_tokens, total_cache_read_tokens,
+			       total_cache_creation_tokens, event_count, earliest_timestamp, latest_timestamp,
+			       model_breakdown, COALESCE(covered_lines, 0)
+			FROM file_aggregates WHERE source_file = ?`, sourceFile).Scan(
+			&agg.Source, &agg.TotalInputTokens, &agg.TotalOutputTokens, &agg.TotalCacheRead,
+			&agg.TotalCacheCreation, &agg.EventCount, &earliest, &latest, &breakdown, &covered)
+		switch {
+		case err == sql.ErrNoRows:
+			// First summary for this file.
+		case err != nil:
+			return err
+		default:
+			_ = json.Unmarshal([]byte(breakdown), &agg.ModelBreakdown)
+			if agg.ModelBreakdown == nil {
+				agg.ModelBreakdown = make(map[string]*ModelAggregation)
+			}
+		}
+
+		// Merge the file's events into its summary. A file that was
+		// summarised, grew (MarkFileActive) and is now complete again keeps
+		// its earlier lines: replacing the summary used to drop them.
+		rows, err := tx.QueryContext(ctx, `
+			SELECT model, source, SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
+			       SUM(cache_creation_tokens), COUNT(*), MIN(timestamp_unix), MAX(timestamp_unix),
+			       MAX(line_number)
+			FROM token_events WHERE source_file = ? GROUP BY model, source`, sourceFile)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-
 		for rows.Next() {
-			var model string
-			var input, output, cacheRead, cacheCreate int64
-			if err := rows.Scan(&model, &input, &output, &cacheRead, &cacheCreate); err != nil {
-				continue
+			var model, source string
+			var input, output, cacheRead, cacheCreate, n, minTS, maxTS, maxLine int64
+			if err := rows.Scan(&model, &source, &input, &output, &cacheRead, &cacheCreate, &n, &minTS, &maxTS, &maxLine); err != nil {
+				rows.Close()
+				return err
 			}
-			modelBreakdown[model] = &ModelAggregation{
-				InputTokens:         input,
-				OutputTokens:        output,
-				CacheReadTokens:     cacheRead,
-				CacheCreationTokens: cacheCreate,
+			if agg.Source == "" {
+				agg.Source = source
 			}
+			m := agg.ModelBreakdown[model]
+			if m == nil {
+				m = &ModelAggregation{Source: source}
+				agg.ModelBreakdown[model] = m
+			}
+			m.InputTokens += input
+			m.OutputTokens += output
+			m.CacheReadTokens += cacheRead
+			m.CacheCreationTokens += cacheCreate
+			agg.TotalInputTokens += input
+			agg.TotalOutputTokens += output
+			agg.TotalCacheRead += cacheRead
+			agg.TotalCacheCreation += cacheCreate
+			agg.EventCount += n
+			if earliest == 0 || minTS < earliest {
+				earliest = minTS
+			}
+			latest = max(latest, maxTS)
+			covered = max(covered, maxLine)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if agg.Source == "" {
+			agg.Source = "claude"
 		}
 
-		modelJSON, _ := json.Marshal(modelBreakdown)
-
-		var earliest, latest int64
-		if minTS.Valid {
-			earliest = minTS.Int64
-		}
-		if maxTS.Valid {
-			latest = maxTS.Int64
-		}
-
-		// Insert or update the aggregate
-		_, err = tc.db.ExecContext(ctx, `
+		modelJSON, _ := json.Marshal(agg.ModelBreakdown)
+		if _, err := tx.ExecContext(ctx, `
 			INSERT OR REPLACE INTO file_aggregates
 				(source_file, source, is_complete, completed_at, total_input_tokens, total_output_tokens,
 				 total_cache_read_tokens, total_cache_creation_tokens, event_count,
-				 earliest_timestamp, latest_timestamp, model_breakdown)
-				VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`, sourceFile, source, time.Now().Unix(), totalInput, totalOutput, totalCacheRead, totalCacheCreate,
-			eventCount, earliest, latest, string(modelJSON))
-		if err != nil {
+				 earliest_timestamp, latest_timestamp, model_breakdown, covered_lines)
+			VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sourceFile, agg.Source, time.Now().Unix(), agg.TotalInputTokens, agg.TotalOutputTokens,
+			agg.TotalCacheRead, agg.TotalCacheCreation, agg.EventCount, earliest, latest,
+			string(modelJSON), covered); err != nil {
 			return err
 		}
 
-		// Delete individual events for this file to save space
-		_, err = tc.db.ExecContext(ctx, `DELETE FROM token_events WHERE source_file = ?`, sourceFile)
-		return err
+		// The events are in the summary now.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM token_events WHERE source_file = ?`, sourceFile); err != nil {
+			return err
+		}
+		return tx.Commit()
 	})
 }
 
@@ -817,7 +979,7 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 			       COALESCE(SUM(total_cache_read_tokens), 0), COALESCE(SUM(total_cache_creation_tokens), 0),
 			       COALESCE(SUM(event_count), 0), MIN(earliest_timestamp), MAX(latest_timestamp)
 			FROM file_aggregates
-			WHERE is_complete = 1 AND latest_timestamp >= ?
+			WHERE latest_timestamp >= ?
 		`
 
 		var aggInput, aggOutput, aggCacheRead, aggCacheCreate, aggCount int64
@@ -834,7 +996,7 @@ func (tc *TokenCache) QueryTokensHybridContext(ctx context.Context, since time.T
 		// Get model breakdown from complete files
 		aggModelQuery := `
 				SELECT source, model_breakdown FROM file_aggregates
-			WHERE is_complete = 1 AND latest_timestamp >= ?
+			WHERE latest_timestamp >= ?
 		`
 		aggModelRows, err := tc.db.QueryContext(ctx, aggModelQuery, sinceUnix)
 		if err != nil && err != sql.ErrNoRows {
@@ -1194,14 +1356,16 @@ func (tc *TokenCache) InvalidateFileContext(ctx context.Context, sourceFile stri
 		}
 		defer tx.Rollback()
 
-		_, err = tx.ExecContext(ctx, "DELETE FROM token_events WHERE source_file = ?", sourceFile)
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.ExecContext(ctx, "DELETE FROM file_state WHERE source_file = ?", sourceFile)
-		if err != nil {
-			return err
+		// A rewritten file is re-read from line 1, so its summary must go
+		// with its events or the re-read lines are counted on top of it.
+		for _, stmt := range []string{
+			"DELETE FROM token_events WHERE source_file = ?",
+			"DELETE FROM file_aggregates WHERE source_file = ?",
+			"DELETE FROM file_state WHERE source_file = ?",
+		} {
+			if _, err = tx.ExecContext(ctx, stmt, sourceFile); err != nil {
+				return err
+			}
 		}
 
 		return tx.Commit()
