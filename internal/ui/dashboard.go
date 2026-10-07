@@ -1527,6 +1527,9 @@ var legacyModelNames = map[string]string{
 // correctly without a code change; see legacyModelNames for the IDs that
 // don't fit the pattern.
 func shortenModelName(name string) string {
+	if base, long := strings.CutSuffix(name, metrics.CodexLongContextSuffix); long {
+		return shortenModelName(base) + " >272K"
+	}
 	if short, ok := legacyModelNames[name]; ok {
 		return short
 	}

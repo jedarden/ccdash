@@ -256,7 +256,11 @@ that USD amount. Zero or omission disables the highlight.
 ### Model prices
 
 ccdash ships a price table for Claude, Codex (OpenAI), GLM, and OpenCode
-models. A model missing from it is priced from its family, or at `$0` when no
+models. OpenAI bills a request whose prompt exceeds 272K input tokens (cached input
+included) at a higher long-context rate. Codex logs each request's prompt size,
+so ccdash prices those requests at the long-context rate and lists them as a
+separate model row (for example `gpt-6-sol >272K`, or
+`gpt-6-sol:long-context` in JSON). A model missing from it is priced from its family, or at `$0` when no
 family matches, and is marked `?` in the dashboard and
 `"pricing_estimated": true` in `--once --json`. Add exact per-million-token
 prices under `pricing.models`, keyed by the model id as it appears in the

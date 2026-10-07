@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,5 +91,60 @@ func TestCodexHookInstallerLifecycle(t *testing.T) {
 	}
 	if installer.AreHooksInstalled() {
 		t.Fatal("expected Codex hooks to be removed")
+	}
+}
+
+func TestCodexLongContextRequestsAreTaggedByPromptSize(t *testing.T) {
+	source := NewCodexSource()
+	source.Reset()
+	if _, _, err := source.ParseUsageLine([]byte(`{"type":"turn_context","payload":{"model":"gpt-6-sol"}}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	line := func(input, cached int64) []byte {
+		return []byte(fmt.Sprintf(`{"type":"event_msg","timestamp":"2026-10-07T12:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":100,"total_tokens":%d}}}}`, input, cached, input+100))
+	}
+	cases := []struct {
+		input, cached int64
+		wantModel     string
+	}{
+		{input: 272_000, cached: 250_000, wantModel: "gpt-6-sol"},
+		// The threshold counts the whole prompt, cached input included.
+		{input: 272_001, cached: 270_000, wantModel: "gpt-6-sol:long-context"},
+	}
+	for _, tc := range cases {
+		event, ok, err := source.ParseUsageLine(line(tc.input, tc.cached))
+		if err != nil || !ok {
+			t.Fatalf("input %d: ok=%v err=%v", tc.input, ok, err)
+		}
+		if event.Model != tc.wantModel {
+			t.Errorf("input %d: model = %q, want %q", tc.input, event.Model, tc.wantModel)
+		}
+	}
+}
+
+func TestCodexLongContextPricing(t *testing.T) {
+	source := NewCodexSource()
+	published := map[string]ModelPricing{
+		"gpt-6-astra":   {InputPerMillion: 20, OutputPerMillion: 75, CacheReadPerMillion: 2, CacheCreatePerMillion: 25},
+		"gpt-6.1-sol":   {InputPerMillion: 4, OutputPerMillion: 15, CacheReadPerMillion: 0.2, CacheCreatePerMillion: 5},
+		"gpt-6-sol":     {InputPerMillion: 4, OutputPerMillion: 15, CacheReadPerMillion: 0.4, CacheCreatePerMillion: 5},
+		"gpt-6-luna":    {InputPerMillion: 0.2, OutputPerMillion: 0.75, CacheReadPerMillion: 0.02, CacheCreatePerMillion: 0.25},
+		"gpt-5.6-sol":   {InputPerMillion: 8, OutputPerMillion: 30, CacheReadPerMillion: 0.8, CacheCreatePerMillion: 10},
+		"gpt-5.6-terra": {InputPerMillion: 4, OutputPerMillion: 18, CacheReadPerMillion: 0.4, CacheCreatePerMillion: 5},
+		"gpt-5.6-luna":  {InputPerMillion: 0.4, OutputPerMillion: 1.8, CacheReadPerMillion: 0.04, CacheCreatePerMillion: 0.5},
+	}
+	for model, want := range published {
+		details := source.pricingDetailsForModel(model + CodexLongContextSuffix)
+		if details.estimated || details.pricing != want {
+			t.Errorf("%s long-context pricing = %+v (estimated=%v), want %+v", model, details.pricing, details.estimated, want)
+		}
+	}
+
+	// A model with no published long-context rate falls back to its
+	// short-context price, marked estimated because that understates.
+	fallback := source.pricingDetailsForModel("gpt-5-codex" + CodexLongContextSuffix)
+	if !fallback.estimated || fallback.pricing != codexPricing["gpt-5-codex"] {
+		t.Errorf("gpt-5-codex long-context fallback = %+v (estimated=%v)", fallback.pricing, fallback.estimated)
 	}
 }

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.34] - 2026-10-07
+
+### Fixed
+- **Codex long-context requests were priced at the short-context rate**: OpenAI bills a request whose prompt exceeds 272K input tokens (cached input included) at roughly twice the input and 1.5 times the output rate. Codex logs each request's prompt size, so ccdash now prices such requests from OpenAI's published long-context table and shows them as their own row (`gpt-6-sol >272K`; `gpt-6-sol:long-context` in JSON and exports). A model with no published long-context rate falls back to its short-context price, marked `?`. None of this workspace's 4,078 most recent Codex requests crossed the threshold, so current totals are unchanged.
+
 ## [1.1.33] - 2026-10-07
 
 ### Fixed

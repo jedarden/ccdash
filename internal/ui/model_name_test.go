@@ -11,7 +11,9 @@ func TestShortenModelName(t *testing.T) {
 		// Live model IDs pulled from a real ~/.ccdash/tokens.db on 2026-08-28 —
 		// the whole point of the generic parse is that these needed no
 		// per-model code change to display their version correctly.
-		"claude-fable-5":            "Fable 5",
+		"claude-fable-5": "Fable 5",
+		// Codex requests above 272K are tracked under a tagged id.
+		"gpt-6-sol:long-context":    "gpt-6-sol >272K",
 		"claude-haiku-4-5-20251001": "Haiku 4.5",
 		"claude-opus-4-7":           "Opus 4.7",
 		"claude-opus-4-8":           "Opus 4.8",
