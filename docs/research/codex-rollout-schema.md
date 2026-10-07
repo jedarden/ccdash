@@ -1,3 +1,6 @@
+> **Reference.** A Codex rollout sample captured in August 2026. The parser in
+> `internal/metrics/codex.go` is authoritative if Codex changes its format.
+
 # Codex rollout JSONL usage schema
 
 Captured from a live Codex CLI rollout on 2026-08-13. Codex stores the

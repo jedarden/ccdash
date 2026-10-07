@@ -56,6 +56,67 @@ query, while background ingestion is protected by the SQLite/cache locking
 model. This keeps slow transcript I/O out of the render path and lets all
 instances see the same token history.
 
+## Token cache: events and summaries
+
+`~/.ccdash/tokens.db` holds two kinds of rows per transcript file:
+
+- `token_events`: one row per usage line of a file that is still being
+  written, keyed by file and line number.
+- `file_aggregates`: a summary of a file's lines, with per-model totals and
+  `covered_lines`, the number of leading lines it holds.
+
+When a file has been idle past the completion threshold, its events are
+merged into its summary and deleted, in one write-locked transaction. If the
+file grows again (a resumed session), the summary is flagged active and new
+lines arrive as events; totals count the summary plus those events. Event
+inserts skip any line at or below `covered_lines`, so a second ccdash process
+reading the same file cannot store a summarised line twice. A rewritten file
+(fewer lines than were read) drops its summary and events and is re-read from
+line 1. Schema 5 repaired caches written before these rules (see
+`CHANGELOG.md`, v1.2.2).
+
+Token totals for a window are the summaries whose latest event is in the
+window plus the events in it. A summary counts as a whole, so a long-running
+transcript that started before the window contributes all of its lines.
+
+## Costs
+
+Prices are per model per million tokens, kept in tables per source:
+`internal/metrics/tokens.go` (Claude and GLM) and
+`internal/metrics/codex.go` (OpenAI), each row commented with where its price
+came from. Codex requests whose prompt exceeds 272K tokens are recorded as
+`<model>:long-context` and priced from OpenAI's long-context table.
+`pricing.models` in `~/.ccdash/config.yaml` overrides any row. A model priced
+by a family fallback, or with no known price, is marked estimated (`?` in the
+panel, `pricing_estimated` in JSON); unknown models count as $0 rather than a
+guess.
+
+Two figures are derived from the same data:
+
+- **Weekly projection** (`metrics.ProjectWeekCost`): in the default
+  Monday-09:00 window, after the first day, cost x 7 days / elapsed.
+- **Per-session cost** (`TokenCollector.SessionCosts`): a hook-tracked session's
+  spend, found through the transcript named after its session ID
+  (`<id>.jsonl` for Claude Code, `rollout-<ts>-<id>.jsonl` for Codex).
+  Sessions without such a transcript get no figure.
+
+## Headless modes
+
+The CLI reuses the collectors without Bubble Tea (`cmd/ccdash`):
+
+- `--once` takes one snapshot. Session status needs two pane samples, so it
+  takes a baseline, runs the slower collectors, and samples sessions again at
+  least 2s later. Rates that need two samples are `null`.
+- `--watch --json` streams a snapshot per interval as JSON lines, with the
+  rates measured.
+- `--attention` collects sessions only and exits 1 if any is ASKING.
+- `--doctor` checks data sources, the cache and lease, config, hooks (and
+  `jq`, which they need) and tmux, without collecting metrics.
+
+`--once` and `--watch` share one versioned JSON schema (`schema_version`,
+golden-tested in `cmd/ccdash/testdata`). Fields are only ever added within a
+version.
+
 ## Render loop
 
 `Dashboard.Init` starts an immediate collection and a two-second Bubble Tea
@@ -69,3 +130,9 @@ and bounds the final frame to the terminal dimensions. The Sessions panel
 groups interactive sessions before workers; the other panels render the latest
 collector snapshots. A one-shot CLI mode uses the same collectors without
 starting Bubble Tea.
+
+## Releases
+
+Every push to `main` runs the checks (gofmt, vet, the test suite, build) on
+Argo Workflows; a push that changes the binary's inputs is tagged and
+released. See [`notes/release-pipeline.md`](notes/release-pipeline.md).

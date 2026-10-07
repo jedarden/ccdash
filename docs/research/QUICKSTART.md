@@ -1,3 +1,8 @@
+> **Historical.** Research for the worker/session visualization that shipped in
+> v1.1.20 and has changed since. The running system is described in
+> [`../architecture.md`](../architecture.md); where this file disagrees, that and
+> the code are authoritative.
+
 # Quick Start: Implementing Worker Visualization in ccdash
 
 This guide provides step-by-step instructions for implementing worker visualization in ccdash, starting with the simplest approach (Phase 1) and progressively adding features.

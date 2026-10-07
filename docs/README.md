@@ -9,7 +9,7 @@ material here. Start with the page that matches the question:
 | Runtime components and data flow | [`architecture.md`](architecture.md) |
 | Accepted or proposed design decisions | [`adrs/README.md`](adrs/README.md) |
 | Historical research for the shipped worker/session visualization | [`research/README.md`](research/README.md) |
-| Small operational or implementation notes | [`notes/README.md`](notes/README.md) |
+| How releases are built, and what to do when CI fails | [`notes/release-pipeline.md`](notes/release-pipeline.md) |
 | Current implementation plan and review backlog | [`plan/plan.md`](plan/plan.md) |
 
 ## Layout
@@ -20,9 +20,8 @@ docs/
 ├── README.md             This index
 ├── architecture.md       Current collectors, cache, and render loop
 ├── adrs/                 Architecture decision records
-├── images/               Documentation assets
-├── k8s/                  CI workflow reference material
-├── notes/                Short operational and implementation notes
+├── images/               README screenshot and the vhs tape that records it
+├── notes/                Short operational notes (release pipeline)
 ├── plan/plan.md          Living implementation plan
 └── research/             Historical research and shipped-feature rationale
 ```

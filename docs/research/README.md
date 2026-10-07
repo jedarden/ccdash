@@ -29,6 +29,9 @@ ordering, section layout, and compact rows:
 
 - [`codex-rollout-schema.md`](codex-rollout-schema.md) — captured Codex
   rollout usage shape used by the Codex source.
+- [`ci-migration-2026-08.md`](ci-migration-2026-08.md) — the original move from
+  GitHub Actions to Argo Workflows (superseded by
+  [`../notes/release-pipeline.md`](../notes/release-pipeline.md)).
 
 Research files may describe earlier names, dimensions, or proposed phases.
 When they disagree with the implementation, the source code and

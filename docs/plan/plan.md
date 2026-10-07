@@ -336,7 +336,7 @@ make build      # Build binary
 make install    # Install to ~/.local/bin
 make test       # Run tests
 make clean      # Clean artifacts
-make release    # Create release build
+make cross-build # Cross-compile for local testing (releases come from CI)
 ```
 
 ### Versioning
@@ -378,7 +378,7 @@ Releases published to GitHub Releases with:
 
 > Full text also lives at `docs/adrs/0006-push-notifications-for-sessions-needing-human-input.md` to keep this repo's existing `docs/adrs/` index (ADRs 0001–0005) intact; this section is the canonical copy per the fleet-wide artifact-improvement review convention.
 
-**Status:** Proposed (2026-07-20)
+**Status:** Accepted (implemented in v1.1.0, 2026-08-17)
 
 ### Context
 
@@ -425,7 +425,7 @@ Add an optional, opt-in outbound notifier to ccdash:
 
 > Full text also lives at `docs/adrs/0007-support-codex-cli-alongside-claude-code.md` to keep this repo's existing `docs/adrs/` index intact; this section is the canonical copy per the fleet-wide artifact-improvement review convention.
 
-**Status:** Proposed (2026-08-12)
+**Status:** Accepted (implemented in v1.1.0, 2026-08-17)
 
 ### Context
 

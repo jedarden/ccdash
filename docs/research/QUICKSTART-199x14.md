@@ -1,3 +1,8 @@
+> **Historical.** Research for the worker/session visualization that shipped in
+> v1.1.20 and has changed since. The running system is described in
+> [`../architecture.md`](../architecture.md); where this file disagrees, that and
+> the code are authoritative.
+
 # Quick Start for 199x14 Display - REVISED
 
 **IMPORTANT:** This guide is specifically for **199x14 displays** (199 cols × 14 rows).

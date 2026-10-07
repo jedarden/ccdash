@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-12)
+Accepted (proposed 2026-08-12; implemented in v1.1.0, 2026-08-17; OpenCode added as a third source in v1.1.19)
 
 ## Context
 

@@ -1,3 +1,6 @@
+> **Historical.** The original move from GitHub Actions to Argo Workflows. The
+> pipeline has been rebuilt since; see [`../notes/release-pipeline.md`](../notes/release-pipeline.md).
+
 # CI Migration to Argo Workflows (bf-2t2)
 
 Date: 2025-01-09
