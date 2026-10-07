@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-10-07
+
+### Changed
+- **Internal: UI code split by concern.** `internal/ui/dashboard.go` (2,944 lines) is now the model, update and view (542 lines), with layout, each panel, keys, overlays, the status bar and helpers in their own files. Every declaration moved unchanged; no behaviour change.
+
 ## [1.2.3] - 2026-10-07
 
 ### Added
