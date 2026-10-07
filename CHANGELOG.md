@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.40] - 2026-10-07
+
+### Changed
+- **Sessions header**: shows the session count only. It used to show `(sessions/processes)` when they differed, but the process figure counts every `claude` process on the host, so it could read `37/36 procs` and meant nothing. `running_processes` stays in `--once --json`; the README now says what it counts.
+- **Legacy Codex prices removed**: `gpt-5-codex`, `gpt-5.2-codex` and `codex-mini-latest` are not on OpenAI's current pricing page and never appeared in this workspace's usage, so their prices could not be sourced. A request on one of them now shows as unpriced (`?`). `gpt-5.3-codex` is kept, verified against the page.
+
 ## [1.1.39] - 2026-10-07
 
 ### Fixed

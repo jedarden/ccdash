@@ -218,21 +218,14 @@ var codexPricing = map[string]ModelPricing{
 		InputPerMillion: 0.20, OutputPerMillion: 1.20,
 		CacheReadPerMillion: 0.02, CacheCreatePerMillion: 0.25,
 	},
-	"gpt-5-codex": {
-		InputPerMillion: 1.25, OutputPerMillion: 10.00,
-		CacheReadPerMillion: 0.125, CacheCreatePerMillion: 1.5625,
-	},
+	// gpt-5.3-codex is the one Codex-specific model on the same page
+	// (Specialized models). gpt-5-codex, gpt-5.2-codex and codex-mini-latest
+	// were removed 2026-10-07: not on the page and never seen in this
+	// workspace's token history, so a price for them could not be sourced.
+	// Any use now shows as an unpriced model ('?').
 	"gpt-5.3-codex": {
 		InputPerMillion: 1.75, OutputPerMillion: 14.00,
 		CacheReadPerMillion: 0.175, CacheCreatePerMillion: 2.1875,
-	},
-	"gpt-5.2-codex": {
-		InputPerMillion: 1.75, OutputPerMillion: 14.00,
-		CacheReadPerMillion: 0.175, CacheCreatePerMillion: 2.1875,
-	},
-	"codex-mini-latest": {
-		InputPerMillion: 1.50, OutputPerMillion: 6.00,
-		CacheReadPerMillion: 0.15, CacheCreatePerMillion: 1.875,
 	},
 }
 

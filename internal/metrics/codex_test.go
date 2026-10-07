@@ -143,8 +143,18 @@ func TestCodexLongContextPricing(t *testing.T) {
 
 	// A model with no published long-context rate falls back to its
 	// short-context price, marked estimated because that understates.
-	fallback := source.pricingDetailsForModel("gpt-5-codex" + CodexLongContextSuffix)
-	if !fallback.estimated || fallback.pricing != codexPricing["gpt-5-codex"] {
-		t.Errorf("gpt-5-codex long-context fallback = %+v (estimated=%v)", fallback.pricing, fallback.estimated)
+	fallback := source.pricingDetailsForModel("gpt-5.3-codex" + CodexLongContextSuffix)
+	if !fallback.estimated || fallback.pricing != codexPricing["gpt-5.3-codex"] {
+		t.Errorf("gpt-5.3-codex long-context fallback = %+v (estimated=%v)", fallback.pricing, fallback.estimated)
+	}
+}
+
+func TestUnsourcedCodexModelsAreUnpriced(t *testing.T) {
+	source := NewCodexSource()
+	for _, model := range []string{"gpt-5-codex", "gpt-5.2-codex", "codex-mini-latest"} {
+		details := source.pricingDetailsForModel(model)
+		if !details.estimated || details.pricing != (ModelPricing{}) {
+			t.Errorf("%s = %+v (estimated=%v), want unpriced and marked", model, details.pricing, details.estimated)
+		}
 	}
 }
