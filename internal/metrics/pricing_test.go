@@ -151,7 +151,7 @@ func TestCurrentClaudeModelsHaveExactPricing(t *testing.T) {
 }
 
 func TestUnknownPaidModelsAreMarkedEstimated(t *testing.T) {
-	codex := NewCodexSource().pricingDetailsForModel("gpt-6-luna")
+	codex := NewCodexSource().pricingDetailsForModel("gpt-7-preview")
 	if !codex.estimated || codex.pricing != (ModelPricing{}) {
 		t.Errorf("unknown Codex model = %+v, want zero pricing marked estimated", codex)
 	}

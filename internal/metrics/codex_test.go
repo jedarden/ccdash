@@ -40,9 +40,21 @@ func TestCodexSourceIgnoresRecordsWithoutModelOrUsage(t *testing.T) {
 
 func TestCodexPricing(t *testing.T) {
 	source := NewCodexSource()
-	pricing := source.PricingForModel("gpt-5.6-luna")
-	if pricing.InputPerMillion != 1 || pricing.CacheReadPerMillion != 0.1 || pricing.OutputPerMillion != 6 {
-		t.Fatalf("unexpected Luna pricing: %+v", pricing)
+	// OpenAI standard-tier, short-context rates (see codexPricing).
+	published := map[string]ModelPricing{
+		"gpt-6-astra":   {InputPerMillion: 10, OutputPerMillion: 50, CacheReadPerMillion: 1, CacheCreatePerMillion: 12.5},
+		"gpt-6.1-sol":   {InputPerMillion: 2, OutputPerMillion: 10, CacheReadPerMillion: 0.1, CacheCreatePerMillion: 2.5},
+		"gpt-6-sol":     {InputPerMillion: 2, OutputPerMillion: 10, CacheReadPerMillion: 0.2, CacheCreatePerMillion: 2.5},
+		"gpt-6-luna":    {InputPerMillion: 0.1, OutputPerMillion: 0.5, CacheReadPerMillion: 0.01, CacheCreatePerMillion: 0.125},
+		"gpt-5.6-sol":   {InputPerMillion: 4, OutputPerMillion: 20, CacheReadPerMillion: 0.4, CacheCreatePerMillion: 5},
+		"gpt-5.6-terra": {InputPerMillion: 2, OutputPerMillion: 12, CacheReadPerMillion: 0.2, CacheCreatePerMillion: 2.5},
+		"gpt-5.6-luna":  {InputPerMillion: 0.2, OutputPerMillion: 1.2, CacheReadPerMillion: 0.02, CacheCreatePerMillion: 0.25},
+	}
+	for model, want := range published {
+		details := source.pricingDetailsForModel(model)
+		if details.estimated || details.pricing != want {
+			t.Errorf("%s pricing = %+v (estimated=%v), want %+v", model, details.pricing, details.estimated, want)
+		}
 	}
 	if unknown := source.PricingForModel("provider-private-model"); unknown != (ModelPricing{}) {
 		t.Fatalf("unknown Codex models should not use Claude pricing: %+v", unknown)

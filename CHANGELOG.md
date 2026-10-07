@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.33] - 2026-10-07
+
+### Fixed
+- **Codex costs were wrong in both directions**: the OpenAI price table had `gpt-5.6-luna` at five times its published rate ($1.00/$6.00 per 1M tokens instead of $0.20/$1.20), with `gpt-5.6-sol` and `gpt-5.6-terra` also overstated, while `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol` and `gpt-6-astra` had no entry and counted as $0. All rows now match OpenAI's published standard-tier, short-context rates (checked 2026-10-07). On this workspace's last 7 days the Codex total moved from $1,597 to $917. Requests above 272K input tokens are billed at a higher long-context rate that ccdash does not model, so those are slightly understated.
+
 ## [1.1.31] - 2026-10-06
 
 ### Fixed

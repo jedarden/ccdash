@@ -136,18 +136,40 @@ func (s *CodexSource) ParseUsageLine(raw []byte) (*TokenEvent, bool, error) {
 
 // codexPricing is maintained separately from Claude pricing because OpenAI's
 // model and cache rates have a different release cadence.
+//
+// The gpt-5.6 and gpt-6 rows are OpenAI's published standard-tier,
+// short-context (<=272K input tokens) rates, checked 2026-10-07 at
+// https://developers.openai.com/api/docs/pricing. Long-context requests are
+// billed at roughly 2x input and 1.5x output; that tier is not modelled, so
+// costs for prompts above 272K tokens are understated.
 var codexPricing = map[string]ModelPricing{
-	"gpt-5.6-luna": {
-		InputPerMillion: 1.00, OutputPerMillion: 6.00,
-		CacheReadPerMillion: 0.10, CacheCreatePerMillion: 1.25,
+	"gpt-6-astra": {
+		InputPerMillion: 10.00, OutputPerMillion: 50.00,
+		CacheReadPerMillion: 1.00, CacheCreatePerMillion: 12.50,
 	},
-	"gpt-5.6-terra": {
-		InputPerMillion: 2.50, OutputPerMillion: 15.00,
-		CacheReadPerMillion: 0.25, CacheCreatePerMillion: 3.125,
+	"gpt-6.1-sol": {
+		InputPerMillion: 2.00, OutputPerMillion: 10.00,
+		CacheReadPerMillion: 0.10, CacheCreatePerMillion: 2.50,
+	},
+	"gpt-6-sol": {
+		InputPerMillion: 2.00, OutputPerMillion: 10.00,
+		CacheReadPerMillion: 0.20, CacheCreatePerMillion: 2.50,
+	},
+	"gpt-6-luna": {
+		InputPerMillion: 0.10, OutputPerMillion: 0.50,
+		CacheReadPerMillion: 0.01, CacheCreatePerMillion: 0.125,
 	},
 	"gpt-5.6-sol": {
-		InputPerMillion: 5.00, OutputPerMillion: 30.00,
-		CacheReadPerMillion: 0.50, CacheCreatePerMillion: 6.25,
+		InputPerMillion: 4.00, OutputPerMillion: 20.00,
+		CacheReadPerMillion: 0.40, CacheCreatePerMillion: 5.00,
+	},
+	"gpt-5.6-terra": {
+		InputPerMillion: 2.00, OutputPerMillion: 12.00,
+		CacheReadPerMillion: 0.20, CacheCreatePerMillion: 2.50,
+	},
+	"gpt-5.6-luna": {
+		InputPerMillion: 0.20, OutputPerMillion: 1.20,
+		CacheReadPerMillion: 0.02, CacheCreatePerMillion: 0.25,
 	},
 	"gpt-5-codex": {
 		InputPerMillion: 1.25, OutputPerMillion: 10.00,

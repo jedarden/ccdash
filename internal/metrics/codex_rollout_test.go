@@ -52,10 +52,10 @@ func TestCodexRolloutAggregationFixtures(t *testing.T) {
 		cacheReadTokens:     1950,
 		cacheCreationTokens: 350,
 		prompts:             4,
-		totalCost:           0.01027,
+		totalCost:           0.006904,
 		models: map[string]codexModelAggregateWant{
-			"gpt-5.6-luna":  {inputTokens: 850, outputTokens: 80, cacheReadTokens: 650, cacheCreationTokens: 100, cost: 0.00152},
-			"gpt-5.6-sol":   {inputTokens: 800, outputTokens: 100, cacheReadTokens: 1000, cacheCreationTokens: 200, cost: 0.00875},
+			"gpt-5.6-luna":  {inputTokens: 850, outputTokens: 80, cacheReadTokens: 650, cacheCreationTokens: 100, cost: 0.000304},
+			"gpt-5.6-sol":   {inputTokens: 800, outputTokens: 100, cacheReadTokens: 1000, cacheCreationTokens: 200, cost: 0.0066},
 			"gpt-9-private": {inputTokens: 550, outputTokens: 80, cacheReadTokens: 300, cacheCreationTokens: 50, cost: 0},
 		},
 	}
@@ -92,9 +92,9 @@ func TestCodexRolloutAggregationFixtures(t *testing.T) {
 		cacheReadTokens:     500,
 		cacheCreationTokens: 100,
 		prompts:             1,
-		totalCost:           0.017375,
+		totalCost:           0.0133,
 		models: map[string]codexModelAggregateWant{
-			"gpt-5.6-sol": {inputTokens: 2400, outputTokens: 150, cacheReadTokens: 500, cacheCreationTokens: 100, cost: 0.017375},
+			"gpt-5.6-sol": {inputTokens: 2400, outputTokens: 150, cacheReadTokens: 500, cacheCreationTokens: 100, cost: 0.0133},
 		},
 	})
 }
