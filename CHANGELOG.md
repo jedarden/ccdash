@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-10-11
+
+### Fixed
+- **Haiku 5.5 showed estimated pricing**: added its exact rates for prompts up to 100K tokens ($0.10 input / $0.50 output per MTok, $0.01 cache reads / $0.125 cache writes). Existing cached usage is repriced automatically. Per-request tiering above 100K is not yet supported; such requests would cost five times these rates.
+- **Claude Code's `<synthetic>` placeholder showed as unpriced**: its zero-token usage now has an exact $0 price.
+
 ## [1.2.4] - 2026-10-07
 
 ### Changed

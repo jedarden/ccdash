@@ -2,10 +2,12 @@ package metrics
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetPricingForModel(t *testing.T) {
@@ -135,6 +137,7 @@ func TestCurrentClaudeModelsHaveExactPricing(t *testing.T) {
 	cases := map[string]ModelPricing{
 		"claude-opus-5-5":           {InputPerMillion: 4, OutputPerMillion: 20, CacheReadPerMillion: 0.20, CacheCreatePerMillion: 5},
 		"claude-sonnet-5-5":         {InputPerMillion: 2, OutputPerMillion: 10, CacheReadPerMillion: 0.20, CacheCreatePerMillion: 2.50},
+		"claude-haiku-5-5":          {InputPerMillion: 0.10, OutputPerMillion: 0.50, CacheReadPerMillion: 0.01, CacheCreatePerMillion: 0.125},
 		"claude-haiku-4-5":          {InputPerMillion: 1, OutputPerMillion: 5, CacheReadPerMillion: 0.10, CacheCreatePerMillion: 1.25},
 		"claude-haiku-4-5-20251001": {InputPerMillion: 1, OutputPerMillion: 5, CacheReadPerMillion: 0.10, CacheCreatePerMillion: 1.25},
 		"claude-fable-5-1":          {InputPerMillion: 10, OutputPerMillion: 50, CacheReadPerMillion: 0.25, CacheCreatePerMillion: 12.50},
@@ -146,6 +149,70 @@ func TestCurrentClaudeModelsHaveExactPricing(t *testing.T) {
 		}
 		if got.pricing != want {
 			t.Errorf("%s: pricing = %+v, want %+v", model, got.pricing, want)
+		}
+	}
+}
+
+func TestNewModelPricingThroughCollector(t *testing.T) {
+	collector := &TokenCollector{sources: []Source{NewClaudeSource(), &OpenCodeSource{}}}
+	cases := []struct {
+		source string
+		model  string
+		want   ModelPricing
+	}{
+		{"claude", "claude-haiku-5-5", ModelPricing{InputPerMillion: 0.10, OutputPerMillion: 0.50, CacheReadPerMillion: 0.01, CacheCreatePerMillion: 0.125}},
+		{"claude", "<synthetic>", ModelPricing{}},
+		{"claude", "glm-5.3", ModelPricing{InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheReadPerMillion: 0.26}},
+		{"opencode", "zai/glm-5.3", ModelPricing{InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheReadPerMillion: 0.26}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.source+"/"+tc.model, func(t *testing.T) {
+			got, estimated := collector.pricingForModel(tc.source, tc.model)
+			if estimated || got != tc.want {
+				t.Fatalf("pricing = %+v (estimated=%v), want %+v (exact)", got, estimated, tc.want)
+			}
+		})
+	}
+}
+
+func TestCachedHaiku55AndSyntheticUsagePricing(t *testing.T) {
+	cache := newTestTokenCache(t)
+	t.Cleanup(func() { _ = cache.Close() })
+	collector := &TokenCollector{
+		cache:      cache,
+		sources:    []Source{NewClaudeSource()},
+		sourceDirs: map[string][]string{"claude": {t.TempDir()}},
+	}
+	// Regression fixture: one request below 100K prompt tokens, already
+	// summarised by the cache. Pricing must update without replaying logs.
+	now := time.Now()
+	if err := cache.InsertTokenEventBatch([]TokenEvent{
+		{Timestamp: now, Model: "claude-haiku-5-5", Source: "claude", SourceFile: "haiku.jsonl", LineNumber: 1,
+			InputTokens: 2, OutputTokens: 4, CacheReadTokens: 23_836, CacheCreationTokens: 18_458},
+		{Timestamp: now, Model: "<synthetic>", Source: "claude", SourceFile: "haiku.jsonl", LineNumber: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkFileComplete("haiku.jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := collector.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.ModelUsages) != 2 {
+		t.Fatalf("model usages = %+v, want Haiku and synthetic", metrics.ModelUsages)
+	}
+	for _, usage := range metrics.ModelUsages {
+		if usage.PricingEstimated {
+			t.Errorf("%s: cached usage must have exact pricing", usage.Model)
+		}
+		wantCost := 0.0
+		if usage.Model == "claude-haiku-5-5" {
+			wantCost = 0.00254781
+		}
+		if math.Abs(usage.Cost-wantCost) > 1e-12 {
+			t.Errorf("%s: cost = %.12f, want %.12f", usage.Model, usage.Cost, wantCost)
 		}
 	}
 }

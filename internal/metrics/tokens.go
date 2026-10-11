@@ -793,6 +793,17 @@ var modelPricing = map[string]ModelPricing{
 		CacheReadPerMillion:   0.20,
 		CacheCreatePerMillion: 2.50,
 	},
+	// Haiku 5.5, prompts up to 100K tokens (claude-api skill pricing
+	// table, cached 2026-10-06). Per-request >100K tiering is not yet
+	// supported; those requests would cost 5x these rates.
+	"claude-haiku-5-5": {
+		InputPerMillion:       0.10,
+		OutputPerMillion:      0.50,
+		CacheReadPerMillion:   0.01,
+		CacheCreatePerMillion: 0.125,
+	},
+	// Claude Code's zero-token placeholder is free, including cached rows.
+	"<synthetic>": {},
 	// Claude Haiku 4.5 pricing. The dated id Claude Code reports is
 	// claude-haiku-4-5-20251001; the -20250929 key is kept for older logs.
 	"claude-haiku-4-5":          claudeHaiku45Pricing,
