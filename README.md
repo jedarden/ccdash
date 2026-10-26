@@ -12,11 +12,17 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## Quick start
 
+**Prerequisites:** the binary install below needs nothing but `curl`.
+Go 1.24 or newer is required only for `go install`; `jq` is required only by
+the optional hooks in step 2, whose scripts use it to write session state;
+tmux is optional, for pane-based session tracking.
+
 ```bash
-# 1. Install (or download a binary from the releases page)
+# 1. Install: copy the checksum-verified script from "Pre-built binary" below,
+#    or, with Go 1.24+:
 go install github.com/jedarden/ccdash/cmd/ccdash@latest
 
-# 2. Optional: hooks give exact WORKING/ASKING status and per-session cost
+# 2. Optional: hooks give exact WORKING/ASKING status and per-session cost (needs jq)
 ccdash --install-hooks          # Claude Code
 ccdash --install-codex-hooks    # Codex CLI
 
@@ -26,6 +32,46 @@ ccdash
 
 If a panel is empty or a status looks wrong, run `ccdash --doctor`: it checks
 each data source, the cache, your config and the hooks, and says what to fix.
+On a machine with no agent data yet, [here is what that shows](#what-youll-see-on-a-fresh-machine).
+
+### What you'll see on a fresh machine
+
+On a machine with no Claude Code, Codex or OpenCode data, everything still
+runs — there is just nothing to show yet:
+
+- `ccdash --once --json` exits 0 with `"schema_version": 1` and an empty token
+  side: `"total_cost": 0`, `"total_tokens": 0`, `"model_usages": []`, and a
+  `null` `tokens.rate` (a one-shot run never has a second sample to rate
+  against).
+- `ccdash --doctor` exits 1, because it counts the missing usage data as its
+  one `FAIL`. That is expected on a new install, not a sign of a broken one:
+
+```
+ccdash doctor (version 1.2.5)
+
+  OK    config             ~/.ccdash/config.yaml not present - using defaults
+  -     claude             ~/.claude/projects not found
+  -     codex              ~/.codex/sessions not found
+  -     opencode           ~/.local/share/opencode/opencode.db not found
+  FAIL  token sources      no Claude, Codex or OpenCode usage data found - the token panel will be empty
+  OK    cache              ~/.ccdash/tokens.db (4.0 KiB), schema v5, 0 recent events, 0 summarised files
+  -     collector          no dashboard instance has held the collector lease
+  WARN  claude hooks       not installed - run ccdash --install-hooks for accurate ASKING/WORKING status
+  WARN  codex hooks        not installed - run ccdash --install-codex-hooks
+  OK    tmux               available
+
+1 problem(s), 2 warning(s)
+```
+
+(The `cache` line above is from a run that followed one `--once` snapshot; on
+a home where nothing has run yet it reads `~/.ccdash/tokens.db not created
+yet - it is built on the first run`.)
+
+Session rows come from inspecting your tmux server, not from agent data: a
+machine that already runs other work in tmux shows those sessions in
+`ccdash --once --json` (`sessions.total` > 0) even with no usage data, and a
+machine without tmux simply shows none. The token panel stays empty until one
+of the three supported harnesses has written usage data.
 
 ---
 
@@ -59,7 +105,42 @@ Session tracking has two modes: tmux pane inspection (automatic) and hook-based 
 
 ### Pre-built binary
 
-Download the latest release from the [releases page](https://github.com/jedarden/ccdash/releases), make it executable, and move it to your PATH.
+Paste this into a terminal (macOS or Linux; amd64 or arm64). It downloads the
+latest release, verifies its SHA-256 checksum, and installs it to
+`~/.local/bin`:
+
+```bash
+(
+  set -euo pipefail
+  cd "$(mktemp -d)"
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')   # linux / darwin
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+  base="https://github.com/jedarden/ccdash/releases/latest/download/ccdash-${os}-${arch}"
+  curl -fL -o ccdash "$base"
+  curl -fsSL -o ccdash.sha256 "$base.sha256"
+  expected=$(cut -d ' ' -f1 < ccdash.sha256)
+  if [ "$(uname -s)" = "Darwin" ]; then
+    printf '%s  %s\n' "$expected" ccdash | shasum -a 256 -c -   # prints "ccdash: OK"
+  else
+    printf '%s  %s\n' "$expected" ccdash | sha256sum -c -       # prints "ccdash: OK"
+  fi
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 ccdash "$HOME/.local/bin/ccdash"
+  "$HOME/.local/bin/ccdash" --version
+)
+```
+
+A checksum mismatch aborts the script before anything is installed. If the
+installed `ccdash --version` works but a later `ccdash` says "command not
+found", add `~/.local/bin` to your `PATH` — for example
+`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc` (or `~/.bashrc`),
+then start a new shell. Every release also publishes a combined `SHA256SUMS`
+file for manual verification — see the
+[releases page](https://github.com/jedarden/ccdash/releases).
 
 ### Using Go
 
@@ -68,6 +149,10 @@ Requires Go 1.24.0 or newer, as specified in `go.mod`.
 ```bash
 go install github.com/jedarden/ccdash/cmd/ccdash@latest
 ```
+
+`go install` builds from source, so the binary reports `ccdash version dev`:
+the release version stamp is applied by the release pipeline's linker flags,
+and only the published release binaries carry it.
 
 ### From source
 
