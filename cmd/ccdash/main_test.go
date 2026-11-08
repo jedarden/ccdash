@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,24 +14,9 @@ import (
 )
 
 func TestHelpMatchesDashboardKeysAndSessionStatuses(t *testing.T) {
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create help output pipe: %v", err)
-	}
-	os.Stdout = writer
-	printHelp()
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close help output pipe: %v", err)
-	}
-	os.Stdout = oldStdout
-	output, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		t.Fatalf("read help output: %v", err)
-	}
+	output := string(captureStdout(t, printHelp))
 
-	shortcutLines := helpSectionLines(t, string(output), "KEYBOARD SHORTCUTS:")
+	shortcutLines := helpSectionLines(t, output, "KEYBOARD SHORTCUTS:")
 	wantShortcuts := ui.DashboardKeyboardShortcuts()
 	if len(shortcutLines) != len(wantShortcuts) {
 		t.Fatalf("help has %d shortcut lines, want %d", len(shortcutLines), len(wantShortcuts))
@@ -44,7 +28,7 @@ func TestHelpMatchesDashboardKeysAndSessionStatuses(t *testing.T) {
 		}
 	}
 
-	statusLines := helpSectionLines(t, string(output), "STATUS INDICATORS:")
+	statusLines := helpSectionLines(t, output, "STATUS INDICATORS:")
 	statuses := metrics.SessionStatuses()
 	if len(statusLines) != len(statuses) {
 		t.Fatalf("help has %d status lines, want %d", len(statusLines), len(statuses))
@@ -172,20 +156,10 @@ func TestRunOnceReadsTokenCacheFromHomeRegardlessOfWorkingDirectory(t *testing.T
 	if err := os.Chdir(workingDir); err != nil {
 		t.Fatal(err)
 	}
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = writer
-	code := runOnceMode(true, "")
-	_ = writer.Close()
-	os.Stdout = oldStdout
-	output, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		t.Fatalf("read --once output: %v", err)
-	}
+	var code int
+	output := captureStdout(t, func() {
+		code = runOnceMode(true, "")
+	})
 	if code != 0 {
 		t.Fatalf("runOnceMode exit code = %d, output: %s", code, output)
 	}

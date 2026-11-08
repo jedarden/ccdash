@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-11-08
+
+### Fixed
+- **Test suite could deadlock on pipe-memory-pressured hosts**: the stdout-capturing tests swapped `os.Stdout` for an `os.Pipe` and only read it back after the code under test returned. When a host has exhausted its pipe-memory allowance (`fs.pipe-user-pages-soft`), the kernel hands out new pipes with 8KiB buffers, and a snapshot larger than that blocks inside its single write - so `go test ./cmd/ccdash/` hung past its timeout on such a host while CI stayed green. A shared `captureStdout` helper now drains the pipe from a goroutine started before the code under test runs, which stays correct at any snapshot size or pipe buffer.
+
 ## [1.2.5] - 2026-10-11
 
 ### Fixed

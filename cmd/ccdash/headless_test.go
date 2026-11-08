@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,57 @@ import (
 
 	"github.com/jedarden/ccdash/internal/metrics"
 )
+
+// captureStdout redirects os.Stdout to a pipe for the duration of run and
+// returns everything written to it.
+//
+// The drain goroutine is started before run: a host under pipe-memory
+// pressure (fs.pipe-user-pages-soft exhausted by other processes' fds) gets
+// new pipes with buffers as small as 8KiB, and a snapshot larger than that
+// buffer blocks inside its single write until something reads. Waiting for
+// run to return before reading deadlocked TestRunOnceAppliesSinceWindow on
+// exactly such a host while CI stayed green, because the drain must race the
+// write, not follow it.
+func captureStdout(t *testing.T, run func()) []byte {
+	t.Helper()
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+
+	type captured struct {
+		output  []byte
+		readErr error
+	}
+	// Buffered so the goroutine finishes without a receiver even if run
+	// panicked or exited via t.Fatal.
+	done := make(chan captured, 1)
+	go func() {
+		out, err := io.ReadAll(reader)
+		_ = reader.Close()
+		done <- captured{output: out, readErr: err}
+	}()
+
+	defer func() {
+		os.Stdout = oldStdout
+		// Ends the drain if run did not return normally; closing an
+		// already-closed writer is a harmless no-op error.
+		_ = writer.Close()
+	}()
+
+	run()
+
+	if err := writer.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("close captured stdout pipe: %v", err)
+	}
+	result := <-done
+	if result.readErr != nil {
+		t.Fatalf("read captured stdout: %v", result.readErr)
+	}
+	return result.output
+}
 
 func TestParseSince(t *testing.T) {
 	location := time.FixedZone("EDT", -4*60*60)
@@ -105,22 +157,10 @@ func TestJSONExportAppliesSinceToCachedAggregates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = writer
-	exportErr := exportJSONSince(cache, since)
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = oldStdout
-	output, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var exportErr error
+	output := captureStdout(t, func() {
+		exportErr = exportJSONSince(cache, since)
+	})
 	if exportErr != nil {
 		t.Fatalf("exportJSONSince: %v", exportErr)
 	}
@@ -162,22 +202,10 @@ func TestRunOnceAppliesSinceWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = writer
-	code := runOnceModeWithOptions(true, "", since, false)
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = oldStdout
-	output, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var code int
+	output := captureStdout(t, func() {
+		code = runOnceModeWithOptions(true, "", since, false)
+	})
 	if code != 0 {
 		t.Fatalf("runOnceModeWithOptions exit code = %d, output: %s", code, output)
 	}
@@ -216,24 +244,9 @@ func TestAttentionListsAskingSessionsAndSetsExitCode(t *testing.T) {
 }
 
 func TestHelpDocumentsHeadlessFlags(t *testing.T) {
-	var output bytes.Buffer
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	printHelp()
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = old
-	if _, err := output.ReadFrom(r); err != nil {
-		t.Fatal(err)
-	}
-	_ = r.Close()
+	output := string(captureStdout(t, printHelp))
 	for _, want := range []string{"--since=<window>", "--attention", "monday, today, 24h, 7d"} {
-		if !strings.Contains(output.String(), want) {
+		if !strings.Contains(output, want) {
 			t.Errorf("help output does not include %q", want)
 		}
 	}
